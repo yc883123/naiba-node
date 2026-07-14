@@ -1351,7 +1351,36 @@ async def save_custom_data_handler(request):
         # 添加更新时间
         from datetime import datetime
         custom_data['updated_at'] = datetime.now().isoformat()
-        
+
+        # 如果 custom_preview_image_path 被清空，删除磁盘上对应的 .custom.preview.* 文件
+        new_image_path = custom_data.get('custom_preview_image_path', None)
+        if new_image_path is not None and (not new_image_path or new_image_path.strip() == ""):
+            # 读取旧数据，获取旧的图片路径
+            old_custom_data = load_custom_data(lora_path)
+            if old_custom_data:
+                old_image_path = old_custom_data.get('custom_preview_image_path', '')
+                if old_image_path and os.path.exists(old_image_path):
+                    try:
+                        os.remove(old_image_path)
+                        print(f"[Naiba] Deleted old custom preview image: {old_image_path}")
+                    except Exception as e:
+                        print(f"[Naiba] Warning: Failed to delete old custom preview image: {e}")
+
+            # 同时尝试删除所有可能的 .custom.preview.* 文件（以防路径不匹配）
+            lora_dir = os.path.dirname(lora_path)
+            lora_basename = os.path.splitext(os.path.basename(lora_path))[0]
+            custom_preview_extensions = [".custom.preview.webp", ".custom.preview.png",
+                                         ".custom.preview.jpg", ".custom.preview.jpeg",
+                                         ".custom.preview.gif"]
+            for ext in custom_preview_extensions:
+                candidate = os.path.join(lora_dir, lora_basename + ext)
+                if os.path.exists(candidate):
+                    try:
+                        os.remove(candidate)
+                        print(f"[Naiba] Deleted custom preview file: {candidate}")
+                    except Exception as e:
+                        print(f"[Naiba] Warning: Failed to delete {candidate}: {e}")
+
         # 保存自定义数据
         if save_custom_data(lora_path, custom_data):
             # 清除该LoRA的图片缓存，确保前端能加载最新预览图

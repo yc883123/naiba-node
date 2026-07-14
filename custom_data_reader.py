@@ -58,21 +58,11 @@ def load_custom_data(lora_path):
     return None
 
 
-def load_civitai_metadata(lora_path):
-    """加载 LoRA 文件对应的 .civitai.info.json 元数据（用于获取预览图路径）"""
-    base_path = os.path.splitext(lora_path)[0]
-    info_path = base_path + ".civitai.info.json"
-    
-    try:
-        if os.path.exists(info_path):
-            with open(info_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    return data
-    except Exception as e:
-        print(f"[CustomDataReader] Failed to load civitai metadata: {e}")
-    
-    return None
+
+
+
+
+
 
 
 # 支持的静态图片格式（可转换为ComfyUI IMAGE tensor）
@@ -98,20 +88,8 @@ def is_supported_image(file_path):
         return False, f"不支持的图片格式: {ext}"
 
 
-def find_preview_image(lora_path):
-    """查找 LoRA 文件对应的预览图（仅返回支持的静态图片格式）"""
-    base_path = os.path.splitext(lora_path)[0]
-    # 优先级：.preview.* > .custom.preview.* > 直接扩展名
-    extensions = [".preview.webp", ".preview.png", ".preview.jpg", ".preview.jpeg",
-                  ".custom.preview.webp", ".custom.preview.png", ".custom.preview.jpg", ".custom.preview.jpeg",
-                  ".webp", ".png", ".jpg", ".jpeg"]
-    
-    for ext in extensions:
-        preview_path = base_path + ext
-        if os.path.exists(preview_path):
-            return preview_path
-    
-    return None
+
+
 
 
 class CustomDataReader:
@@ -139,7 +117,7 @@ class CustomDataReader:
         "自定义数据读取节点 - 读取 LoRA 文件对应的 .custom.info.json 自定义数据。\n"
         "输入：连接 LoRA 加载器的 lora_names 输出端口。\n"
         "输出：预览图片（多LoRA时输出batch）、自定义提示词、模型介绍、下载链接、NSFW级别、原始JSON。\n"
-        "预览图优先级：Civitai预览图 > 自定义预览图 > 空白占位。"
+        "预览图仅读取自定义预览图，无自定义预览图时输出空白占位。"
     )
     SEARCH_ALIASES = ["naiba", "custom data", "自定义数据", "custom prompt", "自定义提示词"]
     
@@ -201,41 +179,25 @@ class CustomDataReader:
         # 加载自定义数据
         custom_data = load_custom_data(lora_path)
         
-        # 获取预览图（优先级：Civitai预览 > 自定义预览 > 空白）
+        # 获取预览图：仅使用自定义预览图，无则空白占位
         preview_image = self.EMPTY_IMAGE
-        
-        # 首先尝试Civitai预览图
-        civitai_metadata = load_civitai_metadata(lora_path)
-        civitai_preview_path = None
-        if civitai_metadata:
-            civitai_preview_path = civitai_metadata.get("preview_path", "")
-            if civitai_preview_path and not os.path.exists(civitai_preview_path):
-                civitai_preview_path = None
-        
-        # 如果没有Civitai预览图，查找本地预览图
-        if not civitai_preview_path:
-            civitai_preview_path = find_preview_image(lora_path)
-        
-        # 如果有Civitai预览图，使用它
-        if civitai_preview_path:
-            is_supported, _ = is_supported_image(civitai_preview_path)
-            if is_supported:
-                preview_image = load_image_as_tensor(civitai_preview_path)
-        
-        # 如果没有Civitai预览图，尝试自定义预览图
-        if preview_image is self.EMPTY_IMAGE and custom_data:
-            custom_preview_path = custom_data.get("custom_preview_image_path", "")
-            # 如果JSON中没有指定路径，自动查找.custom.preview.*文件
-            if not custom_preview_path:
+
+        if custom_data:
+            if "custom_preview_image_path" in custom_data:
+                # 键存在：使用其值（空字符串表示用户已删除预览图，不应自动查找）
+                custom_preview_path = custom_data["custom_preview_image_path"]
+            else:
+                # 键不存在：自动查找 .custom.preview.* 文件作为 fallback
+                custom_preview_path = ""
                 base_path = os.path.splitext(lora_path)[0]
-                custom_preview_extensions = [".custom.preview.webp", ".custom.preview.png", 
+                custom_preview_extensions = [".custom.preview.webp", ".custom.preview.png",
                                            ".custom.preview.jpg", ".custom.preview.jpeg"]
                 for ext in custom_preview_extensions:
                     test_path = base_path + ext
                     if os.path.exists(test_path):
                         custom_preview_path = test_path
                         break
-            
+
             if custom_preview_path and os.path.exists(custom_preview_path):
                 is_supported, _ = is_supported_image(custom_preview_path)
                 if is_supported:
@@ -275,27 +237,26 @@ class CustomDataReader:
                 preview_images_raw.append(None)
                 continue
             
-            # 优先级：Civitai预览 > 自定义预览 > None
+            # 仅使用自定义预览图，无则空白占位
             preview_path = None
-            
-            # 首先尝试Civitai预览图
-            civitai_metadata = load_civitai_metadata(lora_path)
-            if civitai_metadata:
-                civitai_preview = civitai_metadata.get("preview_path", "")
-                if civitai_preview and os.path.exists(civitai_preview):
-                    preview_path = civitai_preview
-            
-            # 如果没有Civitai预览图，查找本地预览图
-            if not preview_path:
-                preview_path = find_preview_image(lora_path)
-            
-            # 如果还没有，尝试自定义预览图
-            if not preview_path:
-                custom_data = load_custom_data(lora_path)
-                if custom_data:
-                    custom_preview = custom_data.get("custom_preview_image_path", "")
-                    if custom_preview and os.path.exists(custom_preview):
-                        preview_path = custom_preview
+
+            custom_data = load_custom_data(lora_path)
+            if custom_data:
+                if "custom_preview_image_path" in custom_data:
+                    # 键存在：使用其值（空字符串表示用户已删除预览图）
+                    custom_preview = custom_data["custom_preview_image_path"]
+                else:
+                    # 键不存在：自动查找 .custom.preview.* 文件
+                    custom_preview = ""
+                    base = os.path.splitext(lora_path)[0]
+                    for ext in [".custom.preview.webp", ".custom.preview.png",
+                                ".custom.preview.jpg", ".custom.preview.jpeg"]:
+                        candidate = base + ext
+                        if os.path.exists(candidate):
+                            custom_preview = candidate
+                            break
+                if custom_preview and os.path.exists(custom_preview):
+                    preview_path = custom_preview
             
             # 检查预览图格式
             if preview_path:
