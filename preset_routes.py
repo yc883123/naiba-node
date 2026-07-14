@@ -7,6 +7,7 @@ import os
 import json
 import glob
 import time
+import asyncio
 import hashlib
 from pathlib import Path
 from aiohttp import web
@@ -85,7 +86,9 @@ image_cache = ImageCache(max_size=200, ttl=3600)  # 缓存200张图片，1小时
 # 预设存储目录
 PRESETS_DIR = os.path.join(os.path.dirname(__file__), "presets")
 PRESETS_EXAMPLE_DIR = os.path.join(os.path.dirname(__file__), "presets.example")
+PRESETS_IMAGES_DIR = os.path.join(PRESETS_DIR, "images")
 os.makedirs(PRESETS_DIR, exist_ok=True)
+os.makedirs(PRESETS_IMAGES_DIR, exist_ok=True)
 
 # 首次使用时，如果presets目录为空，自动复制示例预设
 def init_default_presets():
@@ -144,6 +147,60 @@ def validate_preset_name(name: str) -> tuple[bool, str]:
         return False, f"路径遍历攻击被拒绝: {name}"
     
     return True, ""
+
+
+# ============================================================
+# SHA256 计算（保存预设时自动写入，导入时用于匹配改名文件）
+# ============================================================
+# name -> sha256 hex 缓存，避免重复扫描本地 LoRA（I/O 密集）
+_SHA256_CACHE = {}
+
+
+def compute_lora_sha256(lora_name):
+    """计算指定 LoRA 文件的 SHA256（分块读取），失败返回 None"""
+    try:
+        lora_path = folder_paths.get_full_path("loras", lora_name)
+        if not lora_path or not os.path.exists(lora_path):
+            return None
+        h = hashlib.sha256()
+        with open(lora_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception as e:
+        print(f"[Naiba] SHA256 计算失败 {lora_name}: {e}")
+        return None
+
+
+async def compute_lora_sha256_async(lora_name):
+    """非阻塞计算 SHA256（worker 线程执行，避免阻塞事件循环）"""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, compute_lora_sha256, lora_name)
+
+
+def delete_preset_image(name):
+    """删除指定预设的封面图（若存在）"""
+    try:
+        for f in os.listdir(PRESETS_IMAGES_DIR):
+            if os.path.splitext(f)[0] == name:
+                os.remove(os.path.join(PRESETS_IMAGES_DIR, f))
+    except Exception as e:
+        print(f"[Naiba] 删除预设封面失败 {name}: {e}")
+
+
+def rename_preset_image(old_name, new_name):
+    """原子重命名预设封面图（若存在）"""
+    try:
+        for f in os.listdir(PRESETS_IMAGES_DIR):
+            if os.path.splitext(f)[0] == old_name:
+                ext = os.path.splitext(f)[1]
+                os.replace(
+                    os.path.join(PRESETS_IMAGES_DIR, f),
+                    os.path.join(PRESETS_IMAGES_DIR, f"{new_name}{ext}"),
+                )
+                break
+    except Exception as e:
+        print(f"[Naiba] 重命名预设封面失败 {old_name}->{new_name}: {e}")
 
 
 # ============================================================
@@ -209,6 +266,16 @@ async def save_preset_handler(request):
         if not isinstance(data, list):
             return web.json_response({"error": "数据格式错误，需要是数组"}, status=400)
         
+        # 为每个 LoRA 条目计算并写入 SHA256（非阻塞，避免卡住事件循环）
+        for entry in data:
+            if isinstance(entry, dict) and entry.get("name"):
+                try:
+                    sha = await compute_lora_sha256_async(entry["name"])
+                    if sha:
+                        entry["sha256"] = sha
+                except Exception:
+                    pass
+        
         file_path = os.path.join(PRESETS_DIR, f"{name}.json")
         
         # 保存预设
@@ -218,6 +285,83 @@ async def save_preset_handler(request):
         return web.json_response({"success": True})
     except Exception as e:
         print(f"Error saving preset: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+# ============================================================
+# API 路由：解析/校验预设（导入时按 sha256 匹配改名文件）
+# ============================================================
+@PromptServer.instance.routes.post('/naiba/presets/resolve')
+async def resolve_preset_handler(request):
+    """导入预设时校验并匹配本地 LoRA 文件（支持 sha256 定位改名文件）"""
+    try:
+        body = await request.json()
+        data = body.get('data', [])
+        if not isinstance(data, list):
+            return web.json_response({"error": "数据格式错误，需要是数组"}, status=400)
+
+        resolved = []
+        unmatched = []
+
+        # 收集本地全部 LoRA 路径（用于 sha256 匹配）
+        lora_dirs = folder_paths.get_folder_paths("loras")
+        local_lora_paths = []
+        for lora_dir in lora_dirs:
+            if not os.path.exists(lora_dir):
+                continue
+            for root, _dirs, files in os.walk(lora_dir):
+                for file in files:
+                    if file.lower().endswith(('.safetensors', '.pt', '.ckpt', '.pth')):
+                        local_lora_paths.append(os.path.join(root, file))
+
+        async def sha_of(path):
+            key = os.path.realpath(path)
+            if key in _SHA256_CACHE:
+                return _SHA256_CACHE[key]
+            loop = asyncio.get_event_loop()
+
+            def _hash():
+                h = hashlib.sha256()
+                with open(path, 'rb') as f:
+                    for chunk in iter(lambda: f.read(1024 * 1024), b''):
+                        h.update(chunk)
+                return h.hexdigest()
+
+            digest = await loop.run_in_executor(None, _hash)
+            _SHA256_CACHE[key] = digest
+            return digest
+
+        for entry in data:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name", "")
+            sha = entry.get("sha256", "")
+            matched_entry = None
+
+            # 1) 按 name 直接定位（最快）
+            resolved_path = folder_paths.get_full_path("loras", name) if name else None
+            if resolved_path and os.path.exists(resolved_path):
+                matched_entry = entry
+            # 2) 按 sha256 在本地扫描匹配（改名也能定位）
+            elif sha:
+                for path in local_lora_paths:
+                    try:
+                        if await sha_of(path) == sha:
+                            rel = os.path.relpath(path, lora_dirs[0]) if lora_dirs else path
+                            matched_entry = dict(entry)
+                            matched_entry["name"] = rel
+                            break
+                    except Exception:
+                        continue
+
+            if matched_entry is not None:
+                resolved.append(matched_entry)
+            else:
+                unmatched.append({"name": name, "sha256": sha})
+
+        return web.json_response({"resolved": resolved, "unmatched": unmatched})
+    except Exception as e:
+        print(f"Error resolving preset: {e}")
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -242,6 +386,8 @@ async def delete_preset_handler(request):
     
     try:
         os.remove(file_path)
+        # 同步删除该预设的封面图
+        delete_preset_image(name)
         return web.json_response({"success": True})
     except Exception as e:
         print(f"Error deleting preset {name}: {e}")
@@ -282,10 +428,96 @@ async def rename_preset_handler(request):
         
         # 原子重命名
         os.replace(old_path, new_path)
+        # 同步重命名封面图（若存在）
+        rename_preset_image(old_name, new_name)
         return web.json_response({"success": True})
     except Exception as e:
         print(f"Error renaming preset: {e}")
         return web.json_response({"error": str(e)}, status=500)
+
+
+# ============================================================
+# API 路由：上传预设封面图（独立目录，与 LoRA 预览图隔离）
+# ============================================================
+@PromptServer.instance.routes.post('/naiba/presets/upload-image')
+async def upload_preset_image_handler(request):
+    """上传预设封面图到 presets/images/（与 LoRA 预览图目录隔离，互不冲突）"""
+    try:
+        reader = await request.multipart()
+        preset_name = None
+        image_data = None
+        image_filename = None
+        while True:
+            part = await reader.next()
+            if part is None:
+                break
+            if part.name == 'name':
+                preset_name = (await part.read()).decode('utf-8').strip()
+            elif part.name == 'file':
+                image_data = await part.read()
+                image_filename = part.filename
+
+        if not preset_name:
+            return web.json_response({"error": "预设名称缺失"}, status=400)
+        if not image_data:
+            return web.json_response({"error": "未提供图片"}, status=400)
+
+        # 复用预设名称安全校验（拒绝路径遍历）
+        is_valid, error_msg = validate_preset_name(preset_name)
+        if not is_valid:
+            return web.json_response({"error": error_msg}, status=400)
+
+        ext = os.path.splitext(image_filename)[1].lower() if image_filename else '.webp'
+        if ext not in ['.png', '.jpg', '.jpeg', '.webp', '.gif']:
+            ext = '.webp'
+
+        image_path = os.path.join(PRESETS_IMAGES_DIR, f"{preset_name}{ext}")
+        with open(image_path, 'wb') as f:
+            f.write(image_data)
+
+        return web.json_response({"success": True, "filename": f"{preset_name}{ext}"})
+    except Exception as e:
+        print(f"Error uploading preset image: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+# ============================================================
+# API 路由：获取预设封面图
+# ============================================================
+@PromptServer.instance.routes.get('/naiba/presets/image')
+async def get_preset_image_handler(request):
+    """获取预设封面图（404 表示无封面，前端显示占位图）"""
+    name = request.query.get('name', '').strip()
+    if not name:
+        return web.Response(status=400, text="Missing preset name")
+
+    is_valid, error_msg = validate_preset_name(name)
+    if not is_valid:
+        return web.Response(status=400, text=error_msg)
+
+    try:
+        for f in os.listdir(PRESETS_IMAGES_DIR):
+            if os.path.splitext(f)[0] == name:
+                image_path = os.path.join(PRESETS_IMAGES_DIR, f)
+                with open(image_path, 'rb') as fh:
+                    image_data = fh.read()
+                ext = os.path.splitext(f)[1].lower()
+                mime_type_map = {
+                    '.png': 'image/png',
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.webp': 'image/webp',
+                    '.gif': 'image/gif',
+                }
+                content_type = mime_type_map.get(ext, 'image/webp')
+                return web.Response(
+                    body=image_data,
+                    content_type=content_type,
+                    headers={'Cache-Control': 'max-age=3600'}
+                )
+        return web.Response(status=404, text="No preset image")
+    except Exception as e:
+        return web.Response(status=500, text=str(e))
 
 
 # ============================================================
@@ -1152,7 +1384,7 @@ async def get_favorite_image_handler(request):
         return web.Response(status=500, text=str(e))
 
 
-print("✅ Naiba Routes loaded: /naiba/presets/*, /naiba/lora/preview, /naiba/lora/civitai-sync, /naiba/lora/batch-sync, /naiba/lora/metadata, /naiba/cache/*, /naiba/lora/favorites/*, /naiba/lora/detail, /naiba/lora/custom-data/*")
+print("✅ Naiba Routes loaded: /naiba/presets/*, /naiba/presets/resolve, /naiba/presets/upload-image, /naiba/presets/image, /naiba/lora/preview, /naiba/lora/civitai-sync, /naiba/lora/batch-sync, /naiba/lora/metadata, /naiba/cache/*, /naiba/lora/favorites/*, /naiba/lora/detail, /naiba/lora/custom-data/*")
 
 
 # ============================================================

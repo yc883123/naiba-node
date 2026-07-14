@@ -20,6 +20,62 @@ const C = {
     btnBorder: "#2a3a5c",
 };
 
+// ========== 模块级单例浮动预览（卡片与下拉选项共用） ==========
+// 仅创建一次 DOM 浮层，悬停切换时只改 img.src（浏览器按 URL 缓存），避免重复建DOM与多浮层叠加
+let _loraFloatPreview = null;
+function getPreviewEl() {
+    if (!_loraFloatPreview) {
+        const wrap = document.createElement("div");
+        wrap.style.cssText = `
+            position:fixed;z-index:10002;pointer-events:none;display:none;
+            width:160px;border-radius:6px;overflow:hidden;
+            background:rgba(15,23,41,0.95);border:1px solid ${C.accent};
+            box-shadow:0 6px 24px rgba(0,0,0,0.6);
+        `;
+        const img = document.createElement("img");
+        img.style.cssText = "width:100%;display:block;";
+        const ph = document.createElement("div");
+        ph.textContent = "无预览图";
+        ph.style.cssText = `display:none;padding:12px;color:${C.textDim};font-size:11px;text-align:center;`;
+        wrap.appendChild(img);
+        wrap.appendChild(ph);
+        img.onerror = () => { img.style.display = "none"; ph.style.display = "block"; };
+        img.onload = () => { img.style.display = "block"; ph.style.display = "none"; };
+        wrap._img = img;
+        document.body.appendChild(wrap);
+        _loraFloatPreview = wrap;
+    }
+    return _loraFloatPreview;
+}
+
+function showLoraFloatPreview(name) {
+    if (!name) return;
+    const wrap = getPreviewEl();
+    if (wrap._name !== name) {
+        wrap._name = name;
+        wrap._img.src = `/naiba/lora/preview?name=${encodeURIComponent(name)}`;
+    }
+    wrap.style.display = "block";
+}
+
+function placeLoraFloatPreview(e) {
+    const wrap = _loraFloatPreview;
+    if (!wrap || wrap.style.display === "none") return;
+    const rect = wrap.getBoundingClientRect();
+    const x = Math.min(e.clientX + 16, window.innerWidth - rect.width - 8);
+    const y = Math.min(e.clientY + 16, window.innerHeight - rect.height - 8);
+    wrap.style.left = x + "px";
+    wrap.style.top = y + "px";
+}
+
+function hideLoraFloatPreview() {
+    const wrap = _loraFloatPreview;
+    if (wrap) {
+        wrap.style.display = "none";
+        wrap._name = null;
+    }
+}
+
 // ========== 工具函数 ==========
 
 function createToggle(initial, onChange) {
@@ -74,8 +130,17 @@ function createNumberInput(value, min, max, step, onChange) {
         input.value = v;
         onChange(v);
     });
-    // 阻止滚轮改变数值
-    input.addEventListener("wheel", (e) => e.preventDefault());
+    // 滚轮快速调整权重（阻止画布滚动/缩放）
+    input.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        const dir = e.deltaY < 0 ? 1 : -1;
+        let v = parseFloat(input.value);
+        if (isNaN(v)) v = 0;
+        v = Math.max(min, Math.min(max, v + dir * step));
+        v = parseFloat(v.toFixed(4)); // 修正浮点误差
+        input.value = v;
+        onChange(v);
+    }, { passive: false });
     wrap.appendChild(input);
     return { el: wrap, getValue: () => parseFloat(input.value), setValue: (v) => { input.value = v; } };
 }
@@ -178,11 +243,19 @@ function createFilterableSelect(options, selected, onChange) {
                 color:${C.text};transition:background 0.1s;
                 ${opt === currentValue ? `background:rgba(108,92,231,0.2);` : ""}
             `;
-            optEl.addEventListener("mouseenter", () => { 
-                if (opt !== currentValue) optEl.style.background = "rgba(108,92,231,0.15)"; 
+            optEl.addEventListener("mouseenter", (e) => { 
+                if (opt !== currentValue) optEl.style.background = "rgba(108,92,231,0.15)";
+                if (opt) {
+                    showLoraFloatPreview(opt);
+                    placeLoraFloatPreview(e);
+                }
+            });
+            optEl.addEventListener("mousemove", (e) => { 
+                if (opt) placeLoraFloatPreview(e); 
             });
             optEl.addEventListener("mouseleave", () => { 
-                if (opt !== currentValue) optEl.style.background = "transparent"; 
+                if (opt !== currentValue) optEl.style.background = "transparent";
+                hideLoraFloatPreview();
             });
             optEl.addEventListener("click", () => {
                 currentValue = opt;
@@ -239,6 +312,7 @@ function createFilterableSelect(options, selected, onChange) {
         if (!isOpen) return;
         isOpen = false;
         dropdown.style.display = "none";
+        hideLoraFloatPreview(); // 避免浮层残留
         updateDisplay(); // 恢复显示当前值
     };
     
@@ -454,7 +528,7 @@ app.registerExtension({
             addButton.textContent = "+ Add LoRA";
             addButton.style.cssText = `
                 display:flex;align-items:center;justify-content:center;
-                width:100%;padding:8px 0;background:transparent;
+                box-sizing:border-box;width:100%;padding:8px 0;background:transparent;
                 border:1px dashed ${C.btnBorder};border-radius:6px;
                 color:${C.textDim};font-size:12px;cursor:pointer;transition:all 0.2s;
             `;
@@ -470,18 +544,17 @@ app.registerExtension({
             });
             panel.appendChild(addButton);
 
-            // ========== 节点尺寸自适应 ==========
-            node.onResize = function () {
+            // ========== 节点尺寸自适应（直接测量面板真实渲染高度） ==========
+            const measureAndResize = () => {
                 let [w, h] = node.size;
-                
+
                 // 更新panel宽度以适应节点宽度
-                // 减去节点的左右边距（LiteGraph节点有内部padding）
-                const nodePadding = 10; // 节点内部的左右padding
+                const nodePadding = 10;
                 const panelWidth = Math.max(200, w - nodePadding * 2);
                 panel.style.width = panelWidth + "px";
                 panel.style.maxWidth = panelWidth + "px";
-                
-                // 计算widget高度（model、clip、lora_data）
+
+                // widget 高度（排除面板自身）
                 let widgetHeight = 0;
                 if (node.widgets) {
                     for (const widget of node.widgets) {
@@ -489,29 +562,37 @@ app.registerExtension({
                         widgetHeight += (widget.computeSize ? widget.computeSize(w)[1] : 26) + 4;
                     }
                 }
-                
-                // 计算panel内容高度
-                // 每个Lora条目大约40px高（单行布局）
-                const entryHeight = 40;
-                const entryCount = node._loraEntries ? node._loraEntries.length : 0;
-                const entriesHeight = entryCount * (entryHeight + 4); // 4px gap
-                
-                // 工具栏和按钮的高度
-                const toolbarHeight = 30;
-                const addButtonHeight = 40;
-                const panelPadding = 20;
-                
-                const panelContentHeight = entriesHeight + toolbarHeight + addButtonHeight + panelPadding;
-                
-                // 最小高度：没有Lora时的基本高度
+
+                // 直接测量面板实际渲染高度（含 padding、gap、子元素），
+                // 避免逐项硬编码漏算 flex gap 导致节点偏低、Add 按钮溢出
+                const panelHeight = panel.offsetHeight;
                 const minPanelHeight = 80;
-                const actualPanelHeight = Math.max(panelContentHeight, minPanelHeight);
-                
+                const actualPanelHeight = Math.max(panelHeight, minPanelHeight);
+
                 const targetHeight = widgetHeight + actualPanelHeight + 10;
-                
-                // 始终设置为目标高度
+
+                // 始终贴合内容高度（确保 Add 按钮被节点矩形完整包裹）
                 node.size = [w, targetHeight];
             };
+
+            node.onResize = function () {
+                measureAndResize();
+            };
+
+            // 监听面板尺寸变化（条目增删/恢复）驱动节点高度，从根上消除按钮溢出回归
+            let _resizeRaf = null;
+            const _onPanelResize = () => {
+                if (_resizeRaf) cancelAnimationFrame(_resizeRaf);
+                _resizeRaf = requestAnimationFrame(() => {
+                    measureAndResize();
+                    node.graph?.setDirtyCanvas(true, true);
+                });
+            };
+            if (typeof ResizeObserver !== "undefined") {
+                const _ro = new ResizeObserver(_onPanelResize);
+                _ro.observe(panel);
+                node._loraPanelRO = _ro;
+            }
 
             // ========== 创建Lora条目 ==========
             node._createLoraEntryDOM = function (data) {
@@ -589,6 +670,16 @@ app.registerExtension({
                         card.style.opacity = "1";
                     }
                 };
+
+                // 悬浮封面预览（复用单例浮层 /naiba/lora/preview）
+                card.addEventListener("mouseenter", (e) => {
+                    if (entry.name) {
+                        showLoraFloatPreview(entry.name);
+                        placeLoraFloatPreview(e);
+                    }
+                });
+                card.addEventListener("mousemove", (e) => { placeLoraFloatPreview(e); });
+                card.addEventListener("mouseleave", () => { hideLoraFloatPreview(); });
 
                 entry.dom = card;
                 return entry;

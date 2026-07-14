@@ -505,6 +505,22 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 
 ## 更新日志
 
+### v2.2.0
+- 可视化 LoRA 加载器（Visual LoRA Loader）UI 重构
+  - 卡片化显示区：每个 LoRA 独立卡片，展示名称、启停开关、权重滑块、删除按钮
+  - 权重滑块：鼠标滚轮微调 `strength_model` / `strength_clip`，支持直接输入数值
+  - 启停开关：一键切换 LoRA 启用状态，关闭后卡片变暗并跳过加载
+  - 删除按钮：直接移除单个 LoRA，改动实时写回 `lora_data`
+- 预设系统增强
+  - 预设封面图：支持为预设设置封面（上传/预览），新增 `/naiba/presets/upload-image` 与 `/naiba/presets/image` 路由
+  - 预设搜索过滤：预设列表支持按名称实时筛选
+  - 预设解析：新增 `/naiba/presets/resolve` 路由，导入时自动匹配本地 LoRA 并标记未匹配项
+- Multi LoRA Loader 下拉体验优化
+  - 下拉选项悬停预览封面图，无需选中即可预览
+  - 节点尺寸自适应：修复 Add 按钮溢出问题，改用 `panel.offsetHeight` 真实测量 + `ResizeObserver` 实时更新节点高度，`box-sizing:border-box` 防止内边距溢出
+- 后端简化
+  - 移除 MultiLoraLoader / MultiLoraLoaderOnlyModel 的 `output_lora_names` 冗余参数，始终输出已启用 LoRA 名称列表
+
 ### v2.1.0
 - 新增 Power LoRA Config Reader 节点
   - 读取画布上 LoRA 加载器节点的配置信息，转换为 naiba 预设格式 JSON

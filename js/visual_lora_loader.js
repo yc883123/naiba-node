@@ -686,7 +686,7 @@ function createVisualLoraModal(node, loraList) {
                 // 图片预览区域
                 const preview = document.createElement("div");
                 preview.style.cssText = `
-                    width:100%;height:120px;background:${COLORS.inputBg};
+                    width:100%;aspect-ratio:1/1;background:${COLORS.inputBg};
                     border-radius:4px;margin-bottom:8px;display:flex;
                     align-items:center;justify-content:center;
                     color:${COLORS.textDim};font-size:12px;overflow:hidden;
@@ -696,7 +696,7 @@ function createVisualLoraModal(node, loraList) {
                 // 尝试加载预览图 - 使用本地匹配 API
                 const previewImg = document.createElement("img");
                 previewImg.style.cssText = `
-                    width:100%;height:100%;object-fit:cover;
+                    width:100%;height:100%;object-fit:contain;
                 `;
                 
                 // 图片加载失败时显示文字提示，但保留其他元素（收藏按钮、红叉按钮）
@@ -764,25 +764,14 @@ function createVisualLoraModal(node, loraList) {
                     margin-top:4px;
                 `;
 
-                // 选中状态
-                const checkmark = document.createElement("div");
-                checkmark.textContent = selectedLoras.has(lora) ? "✓" : "";
-                checkmark.style.cssText = `
-                    position:absolute;top:8px;right:8px;
-                    width:20px;height:20px;background:${COLORS.accent};
-                    border-radius:50%;display:flex;align-items:center;
-                    justify-content:center;color:white;font-size:12px;
-                `;
-
                 card.appendChild(preview);
                 card.appendChild(name);
                 card.appendChild(path);
-                card.appendChild(checkmark);
 
                 // 权重控制区域（初始隐藏，选中时显示）
                 const weightControls = document.createElement("div");
                 weightControls.style.cssText = `
-                    display:${selectedLoras.has(lora) ? "flex" : "none"};
+                    display:flex;
                     align-items:center;gap:6px;margin-top:8px;
                     padding-top:8px;border-top:1px solid ${COLORS.border};
                 `;
@@ -840,87 +829,97 @@ function createVisualLoraModal(node, loraList) {
 
                 card.appendChild(weightControls);
 
-                // 已选中时显示删除按钮和启用开关
-                if (isSelected) {
-                    // 删除按钮（左上角）
-                    const deleteBtn = document.createElement("div");
-                    deleteBtn.style.cssText = `
-                        position:absolute;top:8px;left:8px;z-index:10;
-                        width:24px;height:24px;border-radius:50%;
-                        display:flex;align-items:center;justify-content:center;
-                        cursor:pointer;font-size:14px;font-weight:bold;
-                        background:rgba(255,107,107,0.8);backdrop-filter:blur(4px);
-                        color:white;transition:all 0.2s;
+                // 删除按钮（左上角，常显）
+                const deleteBtn = document.createElement("div");
+                deleteBtn.style.cssText = `
+                    position:absolute;top:8px;left:8px;z-index:10;
+                    width:24px;height:24px;border-radius:50%;
+                    display:flex;align-items:center;justify-content:center;
+                    cursor:pointer;font-size:14px;font-weight:bold;
+                    background:rgba(255,107,107,0.8);backdrop-filter:blur(4px);
+                    color:white;transition:all 0.2s;
+                `;
+                deleteBtn.textContent = "×";
+                deleteBtn.title = "移除选中";
+                deleteBtn.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    selectedLoras.delete(lora);
+                    updateSelectedCount();
+                    renderLoraList();
+                });
+                deleteBtn.addEventListener("mouseenter", () => {
+                    deleteBtn.style.transform = "scale(1.1)";
+                    deleteBtn.style.background = "rgba(255,107,107,1)";
+                });
+                deleteBtn.addEventListener("mouseleave", () => {
+                    deleteBtn.style.transform = "scale(1)";
+                    deleteBtn.style.background = "rgba(255,107,107,0.8)";
+                });
+                preview.appendChild(deleteBtn);
+
+                // 启用/禁用开关（常显，无圆点，高亮 div 表达状态）
+                const toggleRow = document.createElement("div");
+                toggleRow.style.cssText = `
+                    display:flex;align-items:center;justify-content:space-between;
+                    margin-top:6px;padding:4px 6px;
+                    background:${COLORS.inputBg};border-radius:4px;
+                `;
+
+                const toggleLabel = document.createElement("span");
+                toggleLabel.textContent = isEnabled ? "已启用" : "已禁用";
+                toggleLabel.style.cssText = `
+                    font-size:10px;color:${isEnabled ? COLORS.success : COLORS.disabled};
+                `;
+
+                const toggleSwitch = document.createElement("div");
+                toggleSwitch.style.cssText = `
+                    width:32px;height:16px;border-radius:8px;
+                    background:${isEnabled ? COLORS.success : COLORS.disabled};
+                    border:1px solid ${isEnabled ? COLORS.success : COLORS.disabled};
+                    position:relative;cursor:pointer;transition:all 0.2s;
+                `;
+                const paintSwitch = (on) => {
+                    toggleSwitch.style.background = on ? COLORS.success : COLORS.disabled;
+                    toggleSwitch.style.borderColor = on ? COLORS.success : COLORS.disabled;
+                    const knob = document.createElement("div");
+                    knob.style.cssText = `
+                        width:12px;height:12px;border-radius:50%;background:white;
+                        position:absolute;top:1px;${on ? "left:17px;" : "left:1px;"};
+                        transition:all 0.2s;pointer-events:none;
                     `;
-                    deleteBtn.textContent = "×";
-                    deleteBtn.title = "移除选中";
-                    deleteBtn.addEventListener("click", (e) => {
-                        e.stopPropagation();
-                        selectedLoras.delete(lora);
-                        updateSelectedCount();
-                        renderLoraList();
-                    });
-                    deleteBtn.addEventListener("mouseenter", () => {
-                        deleteBtn.style.transform = "scale(1.1)";
-                        deleteBtn.style.background = "rgba(255,107,107,1)";
-                    });
-                    deleteBtn.addEventListener("mouseleave", () => {
-                        deleteBtn.style.transform = "scale(1)";
-                        deleteBtn.style.background = "rgba(255,107,107,0.8)";
-                    });
-                    preview.appendChild(deleteBtn);
+                    toggleSwitch.innerHTML = "";
+                    toggleSwitch.appendChild(knob);
+                };
+                paintSwitch(isEnabled);
 
-                    // 启用/禁用开关（预览区底部）
-                    const toggleRow = document.createElement("div");
-                    toggleRow.style.cssText = `
-                        display:flex;align-items:center;justify-content:space-between;
-                        margin-top:6px;padding:4px 6px;
-                        background:${COLORS.inputBg};border-radius:4px;
-                    `;
-
-                    const toggleLabel = document.createElement("span");
-                    toggleLabel.textContent = isEnabled ? "已启用" : "已禁用";
-                    toggleLabel.style.cssText = `
-                        font-size:10px;color:${isEnabled ? COLORS.success : COLORS.disabled};
-                    `;
-
-                    const toggleSwitch = document.createElement("div");
-                    toggleSwitch.style.cssText = `
-                        width:32px;height:16px;border-radius:8px;
-                        background:${isEnabled ? COLORS.success : COLORS.disabled};
-                        position:relative;cursor:pointer;transition:all 0.2s;
-                    `;
-                    const toggleDot = document.createElement("div");
-                    toggleDot.style.cssText = `
-                        width:12px;height:12px;border-radius:50%;
-                        background:white;position:absolute;top:2px;
-                        transition:all 0.2s;
-                        ${isEnabled ? "left:18px;" : "left:2px;"}
-                    `;
-                    toggleSwitch.appendChild(toggleDot);
-
-                    toggleSwitch.addEventListener("click", (e) => {
-                        e.stopPropagation();
-                        const config = selectedLoras.get(lora);
-                        if (config) {
-                            config.enabled = !config.enabled;
-                            renderLoraList();
-                        }
-                    });
-
-                    toggleRow.appendChild(toggleLabel);
-                    toggleRow.appendChild(toggleSwitch);
-                    card.appendChild(toggleRow);
-                }
-
-                card.addEventListener("click", () => {
+                toggleSwitch.addEventListener("click", (e) => {
+                    e.stopPropagation();
                     if (!selectedLoras.has(lora)) {
                         selectedLoras.set(lora, {
                             strength_model: parseFloat(mInput.value) || 1.0,
                             strength_clip: parseFloat(cInput.value) || 1.0,
                             enabled: true
                         });
-                        weightControls.style.display = "flex";
+                    } else {
+                        const config = selectedLoras.get(lora);
+                        config.enabled = !config.enabled;
+                    }
+                    renderLoraList();
+                });
+
+                toggleRow.appendChild(toggleLabel);
+                toggleRow.appendChild(toggleSwitch);
+                card.appendChild(toggleRow);
+
+                card.addEventListener("click", () => {
+                    if (selectedLoras.has(lora)) {
+                        selectedLoras.delete(lora);
+                    } else {
+                        selectedLoras.set(lora, {
+                            strength_model: parseFloat(mInput.value) || 1.0,
+                            strength_clip: parseFloat(cInput.value) || 1.0,
+                            enabled: true
+                        });
                     }
                     updateSelectedCount();
                     renderLoraList();
@@ -1008,11 +1007,9 @@ function createVisualLoraModal(node, loraList) {
                     favBtn.style.transform = "scale(1)";
                 });
 
-                // 权重控制（如果已选中）
-                let weightControls = null;
-                if (selectedLoras.has(lora)) {
-                    weightControls = document.createElement("div");
-                    weightControls.style.cssText = "display:flex;align-items:center;gap:8px;";
+                // 权重控制（常显）
+                const weightControls = document.createElement("div");
+                weightControls.style.cssText = "display:flex;align-items:center;gap:8px;";
 
                     const mLabel = document.createElement("span");
                     mLabel.textContent = "M:";
@@ -1056,72 +1053,82 @@ function createVisualLoraModal(node, loraList) {
                     weightControls.appendChild(mInput);
                     weightControls.appendChild(cLabel);
                     weightControls.appendChild(cInput);
-                }
 
                 item.appendChild(checkbox);
                 item.appendChild(name);
                 item.appendChild(path);
                 item.appendChild(favBtn);
 
-                // 已选中时显示删除按钮和启用开关
-                if (isSelected) {
-                    // 启用/禁用开关
-                    const toggleSwitch = document.createElement("div");
-                    toggleSwitch.style.cssText = `
-                        width:32px;height:16px;border-radius:8px;flex-shrink:0;
-                        background:${isEnabled ? COLORS.success : COLORS.disabled};
-                        position:relative;cursor:pointer;transition:all 0.2s;
+                // 启用/禁用开关（常显，无圆点）
+                const toggleSwitch = document.createElement("div");
+                toggleSwitch.style.cssText = `
+                    width:32px;height:16px;border-radius:8px;flex-shrink:0;
+                    background:${isEnabled ? COLORS.success : COLORS.disabled};
+                    border:1px solid ${isEnabled ? COLORS.success : COLORS.disabled};
+                    position:relative;cursor:pointer;transition:all 0.2s;
+                `;
+                const paintSwitchL = (on) => {
+                    toggleSwitch.style.background = on ? COLORS.success : COLORS.disabled;
+                    toggleSwitch.style.borderColor = on ? COLORS.success : COLORS.disabled;
+                    const knob = document.createElement("div");
+                    knob.style.cssText = `
+                        width:12px;height:12px;border-radius:50%;background:white;
+                        position:absolute;top:1px;${on ? "left:17px;" : "left:1px;"};
+                        transition:all 0.2s;pointer-events:none;
                     `;
-                    const toggleDot = document.createElement("div");
-                    toggleDot.style.cssText = `
-                        width:12px;height:12px;border-radius:50%;
-                        background:white;position:absolute;top:2px;
-                        transition:all 0.2s;
-                        ${isEnabled ? "left:18px;" : "left:2px;"}
-                    `;
-                    toggleSwitch.appendChild(toggleDot);
-                    toggleSwitch.title = isEnabled ? "点击禁用" : "点击启用";
-                    toggleSwitch.addEventListener("click", (e) => {
-                        e.stopPropagation();
+                    toggleSwitch.innerHTML = "";
+                    toggleSwitch.appendChild(knob);
+                };
+                paintSwitchL(isEnabled);
+                toggleSwitch.title = isEnabled ? "点击禁用" : "点击启用";
+                toggleSwitch.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    if (!selectedLoras.has(lora)) {
+                        selectedLoras.set(lora, {
+                            strength_model: parseFloat(mInput.value) || 1.0,
+                            strength_clip: parseFloat(cInput.value) || 1.0,
+                            enabled: true
+                        });
+                    } else {
                         const config = selectedLoras.get(lora);
-                        if (config) {
-                            config.enabled = !config.enabled;
-                            renderLoraList();
-                        }
-                    });
-                    item.appendChild(toggleSwitch);
+                        config.enabled = !config.enabled;
+                    }
+                    renderLoraList();
+                });
+                item.appendChild(toggleSwitch);
 
-                    // 删除按钮
-                    const deleteBtn = document.createElement("div");
-                    deleteBtn.style.cssText = `
-                        width:20px;height:20px;border-radius:50%;flex-shrink:0;
-                        display:flex;align-items:center;justify-content:center;
-                        cursor:pointer;font-size:12px;font-weight:bold;
-                        background:rgba(255,107,107,0.7);
-                        color:white;transition:all 0.2s;
-                    `;
-                    deleteBtn.textContent = "×";
-                    deleteBtn.title = "移除选中";
-                    deleteBtn.addEventListener("click", (e) => {
-                        e.stopPropagation();
-                        selectedLoras.delete(lora);
-                        updateSelectedCount();
-                        renderLoraList();
-                    });
-                    deleteBtn.addEventListener("mouseenter", () => {
-                        deleteBtn.style.background = "rgba(255,107,107,1)";
-                    });
-                    deleteBtn.addEventListener("mouseleave", () => {
-                        deleteBtn.style.background = "rgba(255,107,107,0.7)";
-                    });
-                    item.appendChild(deleteBtn);
-                }
+                // 删除按钮（常显）
+                const deleteBtn = document.createElement("div");
+                deleteBtn.style.cssText = `
+                    width:20px;height:20px;border-radius:50%;flex-shrink:0;
+                    display:flex;align-items:center;justify-content:center;
+                    cursor:pointer;font-size:12px;font-weight:bold;
+                    background:rgba(255,107,107,0.7);
+                    color:white;transition:all 0.2s;
+                `;
+                deleteBtn.textContent = "×";
+                deleteBtn.title = "移除选中";
+                deleteBtn.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    selectedLoras.delete(lora);
+                    updateSelectedCount();
+                    renderLoraList();
+                });
+                deleteBtn.addEventListener("mouseenter", () => {
+                    deleteBtn.style.background = "rgba(255,107,107,1)";
+                });
+                deleteBtn.addEventListener("mouseleave", () => {
+                    deleteBtn.style.background = "rgba(255,107,107,0.7)";
+                });
+                item.appendChild(deleteBtn);
 
                 if (weightControls) item.appendChild(weightControls);
 
                 item.addEventListener("click", (e) => {
                     if (e.target.tagName === "INPUT") return;
-                    if (!selectedLoras.has(lora)) {
+                    if (selectedLoras.has(lora)) {
+                        selectedLoras.delete(lora);
+                    } else {
                         selectedLoras.set(lora, {
                             strength_model: 1.0,
                             strength_clip: 1.0,
@@ -1315,34 +1322,134 @@ app.registerExtension({
             `;
             displayArea.innerHTML = "<div style='color:#888;'>未选择任何LoRA</div>";
 
-            // 更新显示区域的函数 - 附加到节点对象上，以便在模态框中调用
-            const updateDisplayArea = () => {
+            // 写回 lora_data
+            const writeBackLoraData = (data) => {
+                const w = node.widgets?.find((x) => x.name === "lora_data");
+                if (w) w.value = JSON.stringify(data);
+            };
+
+            // 更新显示区域的函数 - 可编辑的 M/C 权重与启用开关，写回 lora_data
+            const renderDisplayArea = () => {
                 const loraDataWidget = node.widgets?.find((w) => w.name === "lora_data");
                 if (!loraDataWidget) return;
-                
-                try {
-                    const data = JSON.parse(loraDataWidget.value || "[]");
-                    if (data.length === 0) {
-                        displayArea.innerHTML = "<div style='color:#888;'>未选择任何LoRA</div>";
-                    } else {
-                        let html = `<div style="margin-bottom:4px;font-weight:600;">已选择 ${data.length} 个LoRA:</div>`;
-                        data.forEach((lora, index) => {
-                            const isEnabled = lora.enabled !== false;
-                            const textColor = isEnabled ? "#e0e0e0" : "#666";
-                            html += `<div style="margin:2px 0;font-size:11px;color:${textColor};">
-                                ${lora.name} 
-                                <span style="color:#888;">(M:${lora.strength_model} C:${lora.strength_clip})</span>
-                            </div>`;
-                        });
-                        displayArea.innerHTML = html;
-                    }
-                } catch (e) {
-                    displayArea.innerHTML = "<div style='color:#888;'>解析中...</div>";
+
+                let data = [];
+                try { data = JSON.parse(loraDataWidget.value || "[]"); }
+                catch { data = []; }
+
+                displayArea.innerHTML = "";
+
+                if (data.length === 0) {
+                    const empty = document.createElement("div");
+                    empty.style.cssText = "color:#888;font-size:12px;";
+                    empty.textContent = "未选择任何LoRA";
+                    displayArea.appendChild(empty);
+                    return;
                 }
+
+                const header = document.createElement("div");
+                header.style.cssText = `margin-bottom:6px;font-weight:600;font-size:12px;color:${COLORS.text};`;
+                header.textContent = `已选择 ${data.length} 个LoRA`;
+                displayArea.appendChild(header);
+
+                data.forEach((lora, index) => {
+                    const isEnabled = lora.enabled !== false;
+                    const row = document.createElement("div");
+                    row.style.cssText = `
+                        display:flex;align-items:center;gap:6px;
+                        padding:4px 6px;margin:3px 0;border-radius:4px;
+                        background:${isEnabled ? COLORS.listItemBg : "rgba(22,33,62,0.4)"};
+                        border:1px solid ${isEnabled ? COLORS.cardBorder : COLORS.disabled};
+                        ${!isEnabled ? "opacity:0.55;" : ""}
+                    `;
+
+                    const name = document.createElement("div");
+                    name.textContent = (lora.name || "").split('/').pop().split('\\').pop();
+                    name.title = lora.name || "";
+                    name.style.cssText = `
+                        flex:1;min-width:0;color:${isEnabled ? COLORS.text : COLORS.disabled};
+                        font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+                    `;
+                    row.appendChild(name);
+
+                    const mkNum = (label, val, onInput) => {
+                        const wrap = document.createElement("div");
+                        wrap.style.cssText = "display:flex;align-items:center;gap:2px;";
+                        const lbl = document.createElement("span");
+                        lbl.textContent = label;
+                        lbl.style.cssText = `color:${COLORS.textDim};font-size:10px;`;
+                        const inp = document.createElement("input");
+                        inp.type = "number";
+                        inp.value = val;
+                        inp.min = -10; inp.max = 10; inp.step = 0.1;
+                        inp.style.cssText = `
+                            width:42px;padding:2px 3px;background:${COLORS.inputBg};
+                            border:1px solid ${COLORS.border};border-radius:3px;
+                            color:${COLORS.text};font-size:10px;text-align:center;
+                        `;
+                        const apply = () => {
+                            let v = parseFloat(inp.value);
+                            if (isNaN(v)) v = 0;
+                            v = Math.max(-10, Math.min(10, v));
+                            inp.value = v;
+                            onInput(v);
+                        };
+                        inp.addEventListener("change", apply);
+                        inp.addEventListener("wheel", (e) => {
+                            e.preventDefault();
+                            const dir = e.deltaY < 0 ? 1 : -1;
+                            let v = parseFloat(inp.value);
+                            if (isNaN(v)) v = 0;
+                            v = Math.max(-10, Math.min(10, v + dir * 0.1));
+                            v = parseFloat(v.toFixed(4));
+                            inp.value = v;
+                            onInput(v);
+                        }, { passive: false });
+                        wrap.appendChild(lbl);
+                        wrap.appendChild(inp);
+                        return wrap;
+                    };
+
+                    row.appendChild(mkNum("M", lora.strength_model ?? 1.0, (v) => {
+                        data[index].strength_model = v; writeBackLoraData(data); triggerResize();
+                    }));
+                    row.appendChild(mkNum("C", lora.strength_clip ?? 1.0, (v) => {
+                        data[index].strength_clip = v; writeBackLoraData(data); triggerResize();
+                    }));
+
+                    // 启用开关（无圆点的高亮 div）
+                    const toggle = document.createElement("div");
+                    const paintToggle = (on) => {
+                        toggle.style.cssText = `
+                            width:34px;height:18px;border-radius:9px;cursor:pointer;
+                            flex-shrink:0;transition:all 0.2s;position:relative;
+                            background:${on ? COLORS.success : COLORS.disabled};
+                            border:1px solid ${on ? COLORS.success : COLORS.disabled};
+                        `;
+                        const knob = document.createElement("div");
+                        knob.style.cssText = `
+                            position:absolute;top:1px;${on ? "left:17px;" : "left:1px;"};
+                            width:14px;height:14px;border-radius:50%;background:#fff;
+                            transition:all 0.2s;pointer-events:none;
+                        `;
+                        toggle.innerHTML = "";
+                        toggle.appendChild(knob);
+                    };
+                    paintToggle(isEnabled);
+                    toggle.addEventListener("click", () => {
+                        data[index].enabled = !data[index].enabled;
+                        writeBackLoraData(data);
+                        renderDisplayArea();
+                        triggerResize();
+                    });
+                    row.appendChild(toggle);
+
+                    displayArea.appendChild(row);
+                });
             };
-            
-            // 将updateDisplayArea附加到节点对象上，以便在模态框中调用
-            node._updateVisualLoraDisplay = updateDisplayArea;
+
+            // 将renderDisplayArea附加到节点对象上，以便在模态框中调用
+            node._updateVisualLoraDisplay = renderDisplayArea;
 
             // 创建容器
             const container = document.createElement("div");

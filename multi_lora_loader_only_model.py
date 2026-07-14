@@ -29,10 +29,6 @@ class MultiLoraLoaderOnlyModel:
                 }),
             },
             "optional": {
-                "output_lora_names": ("BOOLEAN", {
-                    "default": True,
-                    "tooltip": "是否输出 LoRA 名称列表（关闭后 lora_names 输出为空）"
-                }),
             }
         }
 
@@ -48,7 +44,7 @@ class MultiLoraLoaderOnlyModel:
     )
     SEARCH_ALIASES = ["naiba", "multi lora", "lora stack", "lora bundle", "lora group", "add lora", "only model"]
 
-    def load_loras(self, model, lora_data="[]", output_lora_names=True):
+    def load_loras(self, model, lora_data="[]"):
         """
         读取JSON配置，依次应用所有启用的Lora
 
@@ -105,12 +101,9 @@ class MultiLoraLoaderOnlyModel:
                 print(f"[MultiLoraLoaderOnlyModel] 加载Lora '{lora_name}' 失败: {e}")
                 continue
 
-        # 根据开关决定是否输出LoRA名称列表
-        if output_lora_names:
-            lora_names_json = json.dumps(enabled_lora_names, ensure_ascii=False)
-        else:
-            lora_names_json = "[]"
-        
+        # 始终输出已启用的LoRA名称列表
+        lora_names_json = json.dumps(enabled_lora_names, ensure_ascii=False)
+
         return (model, lora_names_json)
 
 
