@@ -51,6 +51,12 @@ __pycache__/
 # 忽略监控进程PID文件
 .watcher.pid
 
+# 忽略PowerShell自动监视和同步脚本
+start-watcher.ps1
+stop-watcher.ps1
+sync.ps1
+watch-and-sync.ps1
+
 # 忽略系统文件
 .DS_Store
 Thumbs.db
