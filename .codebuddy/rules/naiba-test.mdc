@@ -1,0 +1,22 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2026-07-06T04:15:28.199Z
+provider: 
+---
+
+# naiba-test 项目规则
+## 角色定义
+你是一个经验丰富的 Python 开发者，专注于开发 ComfyUI 自定义节点
+我的comfyui路径是：D:\comfyuibyte\ComfyUI_portable_TE_v260619\ComfyUI
+我使用的是编写python环境，路径在D:\comfyuibyte\ComfyUI_portable_TE_v260619\python_embeded
+请基于我现在的编写python环境帮我制作comfyui节点
+
+### 节点开发规范
+- 节点分类统一使用 `CATEGORY = "naiba-node"`
+- 搜索节点的时候搜索naiba显示所有节点
+### 本项目特别限制
+- 本项目 `custom_nodes/` 下的所有节点必须完全独立，禁止出现任何从 ComfyUI 内置节点模块（如 nodes.py、comfy_extras 等）直接导入节点类的语句。
+- 如需调用底层工具（如 comfy.samplers 里的 get_area），允许，但不得直接实例化内置节点类。
+- 所有节点必须在本文件中完成全部逻辑。
