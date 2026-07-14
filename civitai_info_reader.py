@@ -95,7 +95,9 @@ def is_supported_preview_image(file_path):
 def find_preview_image(lora_path):
     """查找 LoRA 文件对应的预览图（仅返回支持的静态图片格式）"""
     base_path = os.path.splitext(lora_path)[0]
+    # 优先级：.preview.* > .custom.preview.* > 直接扩展名
     extensions = [".preview.webp", ".preview.png", ".preview.jpg", ".preview.jpeg",
+                  ".custom.preview.webp", ".custom.preview.png", ".custom.preview.jpg", ".custom.preview.jpeg",
                   ".webp", ".png", ".jpg", ".jpeg"]
     
     for ext in extensions:

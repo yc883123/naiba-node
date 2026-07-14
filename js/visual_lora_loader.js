@@ -623,6 +623,14 @@ function createVisualLoraModal(node, loraList) {
             lorasToRender = Array.from(favoriteLoras.keys());
         }
         
+        // 搜索过滤：对当前类别的数据源应用搜索词过滤
+        const currentSearchTerm = searchInput.value.toLowerCase().trim();
+        if (currentSearchTerm) {
+            lorasToRender = lorasToRender.filter(lora =>
+                lora.toLowerCase().includes(currentSearchTerm)
+            );
+        }
+        
         if (lorasToRender.length === 0) {
             const emptyMsg = document.createElement("div");
             if (currentCategory === "selected") {
@@ -691,9 +699,21 @@ function createVisualLoraModal(node, loraList) {
                     width:100%;height:100%;object-fit:cover;
                 `;
                 
-                // 图片加载失败时直接显示"无预览图"（同步功能仅在 Lora Data Preview 中提供）
+                // 图片加载失败时显示文字提示，但保留其他元素（收藏按钮、红叉按钮）
                 previewImg.onerror = () => {
-                    preview.innerHTML = `<div style="color:${COLORS.textDim};font-size:11px;">无预览图</div>`;
+                    // 隐藏图片
+                    previewImg.style.display = "none";
+                    // 创建文字提示
+                    const noPreviewText = document.createElement("div");
+                    noPreviewText.style.cssText = `
+                        color:${COLORS.textDim};font-size:11px;
+                        position:absolute;top:50%;left:50%;
+                        transform:translate(-50%,-50%);
+                        pointer-events:none;
+                    `;
+                    noPreviewText.textContent = "无预览图";
+                    // 插入到 preview 开头，不影响其他子元素
+                    preview.insertBefore(noPreviewText, preview.firstChild);
                 };
                 
                 // 使用本地匹配 API 获取预览图
