@@ -84,7 +84,38 @@ image_cache = ImageCache(max_size=200, ttl=3600)  # 缓存200张图片，1小时
 
 # 预设存储目录
 PRESETS_DIR = os.path.join(os.path.dirname(__file__), "presets")
+PRESETS_EXAMPLE_DIR = os.path.join(os.path.dirname(__file__), "presets.example")
 os.makedirs(PRESETS_DIR, exist_ok=True)
+
+# 首次使用时，如果presets目录为空，自动复制示例预设
+def init_default_presets():
+    """如果presets目录为空，从presets.example复制示例预设"""
+    try:
+        # 检查presets目录是否为空
+        existing_presets = [f for f in os.listdir(PRESETS_DIR) if f.endswith('.json')]
+        
+        if not existing_presets and os.path.exists(PRESETS_EXAMPLE_DIR):
+            # 复制示例预设
+            example_files = [f for f in os.listdir(PRESETS_EXAMPLE_DIR) if f.endswith('.json')]
+            for filename in example_files:
+                src = os.path.join(PRESETS_EXAMPLE_DIR, filename)
+                dst = os.path.join(PRESETS_DIR, filename)
+                try:
+                    with open(src, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    with open(dst, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                    print(f"✅ 已复制示例预设: {filename}")
+                except Exception as e:
+                    print(f"⚠ 复制示例预设失败 {filename}: {e}")
+            
+            if example_files:
+                print(f"✅ 已初始化 {len(example_files)} 个示例预设")
+    except Exception as e:
+        print(f"⚠ 初始化示例预设失败: {e}")
+
+# 初始化示例预设
+init_default_presets()
 
 
 def validate_preset_name(name: str) -> tuple[bool, str]:

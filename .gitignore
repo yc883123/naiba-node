@@ -24,6 +24,9 @@ backup_before_preset_*/
 # 忽略favorites中的图片（预览图）
 favorites/images/
 
+# 忽略用户预设目录（包含用户自定义预设）
+presets/
+
 # 忽略预设目录中的预览图（如果存在）
 # presets/*.png
 # presets/*.jpg
