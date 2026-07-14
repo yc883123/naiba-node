@@ -1,6 +1,6 @@
 # Naiba Test Custom Nodes for ComfyUI
 
-自定义ComfyUI节点集合，包含WAN模型优化、Multi LoRA Loader、Multi LoRA Loader (only model)、Visual LoRA Loader、Lora Testing Converter、Save Text File、Lora Data Preview、Civitai Info Reader和Custom Data Reader功能。
+自定义ComfyUI节点集合，包含WAN模型优化、Multi LoRA Loader、Multi LoRA Loader (only model)、Visual LoRA Loader、Lora Testing Converter、Save Text File、Lora Data Preview、Civitai Info Reader、Custom Data Reader和Power LoRA Config Reader功能。
 
 ## 节点列表
 
@@ -372,6 +372,45 @@
 
 ---
 
+### 10. Power LoRA Config Reader (LoRA配置读取器)
+
+**节点名称**: `PowerLoraConfigReader`  
+**显示名称**: Power LoRA Config Reader  
+**分类**: `naiba-node`
+
+#### 功能说明
+读取画布上 LoRA 加载器节点的配置信息，转换为 naiba 预设格式 JSON。通过 ComfyUI 的 PROMPT 隐藏输入追踪上游节点连接链路，自动定位并解析 LoRA 配置。
+
+#### 支持的上游节点
+- rgthree Power Lora Loader
+- rgthree Lora Loader Stack
+- naiba MultiLoraLoader / MultiLoraLoaderOnlyModel
+- ComfyUI 内置 LoraLoader
+- 任何包含 lora 相关输入的节点（通用兜底）
+
+#### 输入参数
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| model | MODEL (必需) | 连接上游 LoRA 加载器的 MODEL 输出 |
+| clip | CLIP (可选) | 连接上游 LoRA 加载器的 CLIP 输出 |
+
+#### 输出
+
+| 输出 | 类型 | 说明 |
+|------|------|------|
+| preset_json | STRING | naiba 预设格式 JSON，可直接保存为 .json 文件 |
+| lora_names | STRING | 启用的 LoRA 文件名 JSON 数组 |
+| status | STRING | 读取状态信息 |
+
+#### 使用方法
+1. 在 `naiba-node` 分类下添加 `Power LoRA Config Reader` 节点
+2. 将上游 LoRA 加载器的 MODEL 输出连接到本节点的 MODEL 输入
+3. 节点会自动读取上游加载器的 LoRA 配置
+4. `preset_json` 输出口输出预设配置，配合 Save Text File 节点可保存为文件
+
+---
+
 ## 安装方法
 
 1. 将 `naiba-test` 文件夹复制到 `ComfyUI/custom_nodes/` 目录
@@ -397,6 +436,7 @@ naiba-test/
 ├── lora_data_preview.py                    # LoRA数据预览节点（Civitai同步）
 ├── civitai_info_reader.py                  # Civitai信息读取节点
 ├── custom_data_reader.py                   # 自定义数据读取节点
+├── power_lora_config_reader.py             # Power LoRA Config Reader节点
 ├── civitai_utils.py                        # Civitai API工具模块
 ├── preset_routes.py                        # 预设管理API路由
 ├── presets/                                # 预设存储目录（运行时自动创建）
@@ -464,6 +504,16 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 > **注意**: Multi LoRA Loader (only model) 节点导入含 `strength_clip` 的预设时会自动忽略 clip 字段。两个节点的预设可以互相导入。
 
 ## 更新日志
+
+### v2.1.0
+- 新增 Power LoRA Config Reader 节点
+  - 读取画布上 LoRA 加载器节点的配置信息，转换为 naiba 预设格式 JSON
+  - 支持的上游节点：rgthree Power Lora Loader、rgthree Lora Loader Stack、naiba MultiLoraLoader、naiba MultiLoraLoaderOnlyModel、ComfyUI 内置 LoraLoader
+  - 通用兜底解析：对未知 LoRA 加载器，自动扫描输入中包含 lora 关键字的字段
+  - 三个输出口：`preset_json`（预设格式 JSON）、`lora_names`（启用的 LoRA 文件名列表）、`status`（读取状态）
+  - 使用 ComfyUI 隐藏输入 `PROMPT` + `UNIQUE_ID` 追踪上游节点连接链路
+  - 通过 MODEL 输入自动定位上游 LoRA 加载器，无需手动指定节点 ID
+  - 配合 Save Text File 节点可直接保存为 .json 预设文件
 
 ### v2.0.0
 - 新增自定义数据系统（Custom Data System）
