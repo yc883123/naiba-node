@@ -28,6 +28,12 @@ favorites/images/
 # presets/*.png
 # presets/*.jpg
 
+# 忽略CodeBuddy内部数据
+.codebuddy/
+
+# 忽略favorites目录（包含预览图等）
+favorites/
+
 # 忽略IDE和编辑器文件
 .vscode/
 .idea/
@@ -41,6 +47,9 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+
+# 忽略监控进程PID文件
+.watcher.pid
 
 # 忽略系统文件
 .DS_Store
