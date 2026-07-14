@@ -375,12 +375,12 @@ async def get_lora_preview(request):
             )
         
         # 搜索模式列表（按优先级排序）：
-        # 1. .preview.* （Civitai 同步的预览图）
-        # 2. .custom.preview.* （用户自定义预览图）
+        # 1. .custom.preview.* （用户自定义预览图 - 最高优先级）
+        # 2. .preview.* （Civitai 同步的预览图）
         # 3. 直接同名图片（如 lora.png）
         search_patterns = [
-            (lora_basename + '.preview{}', "Civitai preview"),
             (lora_basename + '.custom.preview{}', "Custom preview"),
+            (lora_basename + '.preview{}', "Civitai preview"),
             (lora_basename + '{}', "Direct image"),
         ]
         

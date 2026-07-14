@@ -693,7 +693,7 @@ function createLoraDataPreviewModal(node, loraList) {
                 container.innerHTML = html;
             }
 
-            // 预览图：优先使用Civitai预览图，自定义图作为fallback
+            // 预览图：优先使用自定义预览图，Civitai预览图作为fallback
             const previewUrl = `/naiba/lora/preview?name=${encodeURIComponent(lora)}&t=${modalTimestamp}`;
             previewImg.src = previewUrl;
             preview.appendChild(previewImg);
