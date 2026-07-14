@@ -394,6 +394,7 @@ function createLoraDataPreviewModal(node, loraList) {
     let isSyncing = false;
     let selectedLoras = new Set(); // 已选中的LoRA集合（支持多选）
     let favoriteLoras = new Map(); // 收藏的LoRA集合 (name -> {custom_prompt, custom_image_path, favorited_at})
+    let modalTimestamp = Date.now(); // 模态框级别时间戳，用于缓存破坏，确保预览图一致性
 
     // 从节点widget中恢复已选中的LoRA，确保重新打开弹窗时"已选择"标签能正确显示
     const existingDataWidget = node.widgets?.find((w) => w.name === "lora_data");
@@ -644,7 +645,7 @@ function createLoraDataPreviewModal(node, loraList) {
                             
                             // 如果有预览图，显示它
                             if (metadataResult.has_local_preview) {
-                                const previewUrl = `/naiba/lora/preview?name=${encodeURIComponent(lora)}&t=${Date.now()}`;
+                                const previewUrl = `/naiba/lora/preview?name=${encodeURIComponent(lora)}&t=${modalTimestamp}`;
                                 previewImg.src = previewUrl;
                                 return;
                             }
@@ -693,7 +694,7 @@ function createLoraDataPreviewModal(node, loraList) {
             }
 
             // 预览图：优先使用Civitai预览图，自定义图作为fallback
-            const previewUrl = `/naiba/lora/preview?name=${encodeURIComponent(lora)}`;
+            const previewUrl = `/naiba/lora/preview?name=${encodeURIComponent(lora)}&t=${modalTimestamp}`;
             previewImg.src = previewUrl;
             preview.appendChild(previewImg);
 
@@ -1188,7 +1189,10 @@ function createLoraDataPreviewModal(node, loraList) {
         fileInput.addEventListener("change", async (e) => {
             const file = e.target.files[0];
             if (file) {
-                await uploadCustomImage(loraName, file, imagePreview, imagePlaceholder, removeImageBtn);
+                const uploadedPath = await uploadCustomImage(loraName, file, imagePreview, imagePlaceholder, removeImageBtn);
+                if (uploadedPath) {
+                    currentCustomImage = uploadedPath;
+                }
             }
         });
 
@@ -1209,7 +1213,10 @@ function createLoraDataPreviewModal(node, loraList) {
             imageUploadArea.style.borderColor = COLORS.border;
             const file = e.dataTransfer.files[0];
             if (file && file.type.startsWith('image/')) {
-                await uploadCustomImage(loraName, file, imagePreview, imagePlaceholder, removeImageBtn);
+                const uploadedPath = await uploadCustomImage(loraName, file, imagePreview, imagePlaceholder, removeImageBtn);
+                if (uploadedPath) {
+                    currentCustomImage = uploadedPath;
+                }
             }
         });
 
@@ -1362,12 +1369,15 @@ function createLoraDataPreviewModal(node, loraList) {
                 imagePreview.style.display = 'block';
                 imagePlaceholder.style.display = 'none';
                 removeImageBtn.style.display = 'flex';
+                return result.image_path;
             } else {
                 alert("上传失败: " + (result.error || "未知错误"));
+                return null;
             }
         } catch (e) {
             console.error("[LoraDataPreview] 上传图片失败:", e);
             alert("上传失败: " + e.message);
+            return null;
         }
     }
 
@@ -1385,7 +1395,8 @@ function createLoraDataPreviewModal(node, loraList) {
             const result = await response.json();
 
             if (result.success) {
-                // 保存成功，刷新列表
+                // 保存成功，更新时间戳并刷新列表
+                modalTimestamp = Date.now();
                 renderLoraList();
             } else {
                 alert("保存失败: " + (result.error || "未知错误"));

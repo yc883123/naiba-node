@@ -374,51 +374,39 @@ async def get_lora_preview(request):
                 headers={'Cache-Control': 'max-age=3600'}
             )
         
-        # 查找同名的图片文件
-        for ext in image_extensions:
-            preview_path = os.path.join(lora_dir, lora_basename + ext)
-            if os.path.exists(preview_path):
-                # 读取并返回图片
-                with open(preview_path, 'rb') as f:
-                    image_data = f.read()
-                
-                # 根据扩展名设置 Content-Type
-                content_type = mime_type_map.get(ext, 'image/png')
-                
-                # 存入缓存
-                image_cache.set(cache_key, {
-                    'data': image_data,
-                    'content_type': content_type,
-                    'path': preview_path
-                })
-                
-                return web.Response(
-                    body=image_data,
-                    content_type=content_type,
-                    headers={'Cache-Control': 'max-age=3600'}
-                )
+        # 搜索模式列表（按优先级排序）：
+        # 1. .preview.* （Civitai 同步的预览图）
+        # 2. .custom.preview.* （用户自定义预览图）
+        # 3. 直接同名图片（如 lora.png）
+        search_patterns = [
+            (lora_basename + '.preview{}', "Civitai preview"),
+            (lora_basename + '.custom.preview{}', "Custom preview"),
+            (lora_basename + '{}', "Direct image"),
+        ]
         
-        # 也查找 .preview 后缀的文件
-        for ext in image_extensions:
-            preview_path = os.path.join(lora_dir, lora_basename + '.preview' + ext)
-            if os.path.exists(preview_path):
-                with open(preview_path, 'rb') as f:
-                    image_data = f.read()
-                
-                content_type = mime_type_map.get(ext, 'image/png')
-                
-                # 存入缓存
-                image_cache.set(cache_key, {
-                    'data': image_data,
-                    'content_type': content_type,
-                    'path': preview_path
-                })
-                
-                return web.Response(
-                    body=image_data,
-                    content_type=content_type,
-                    headers={'Cache-Control': 'max-age=3600'}
-                )
+        for pattern_template, _desc in search_patterns:
+            for ext in image_extensions:
+                preview_path = os.path.join(lora_dir, pattern_template.format(ext))
+                if os.path.exists(preview_path):
+                    # 读取并返回图片
+                    with open(preview_path, 'rb') as f:
+                        image_data = f.read()
+                    
+                    # 根据扩展名设置 Content-Type
+                    content_type = mime_type_map.get(ext, 'image/png')
+                    
+                    # 存入缓存
+                    image_cache.set(cache_key, {
+                        'data': image_data,
+                        'content_type': content_type,
+                        'path': preview_path
+                    })
+                    
+                    return web.Response(
+                        body=image_data,
+                        content_type=content_type,
+                        headers={'Cache-Control': 'max-age=3600'}
+                    )
         
         # 没找到预览图
         return web.Response(status=404, text="No preview found")
@@ -1366,6 +1354,10 @@ async def save_custom_data_handler(request):
         
         # 保存自定义数据
         if save_custom_data(lora_path, custom_data):
+            # 清除该LoRA的图片缓存，确保前端能加载最新预览图
+            cache_key = f"lora_preview:{lora_name}"
+            image_cache.delete(cache_key)
+            
             return web.json_response({
                 "success": True,
                 "custom_data": custom_data
@@ -1437,6 +1429,10 @@ async def upload_custom_image_handler(request):
         custom_data['custom_preview_image_path'] = custom_image_path
         custom_data['updated_at'] = __import__('datetime').datetime.now().isoformat()
         save_custom_data(lora_path, custom_data)
+        
+        # 清除该LoRA的图片缓存，确保前端能加载新图片
+        cache_key = f"lora_preview:{lora_name}"
+        image_cache.delete(cache_key)
         
         return web.json_response({
             "success": True,

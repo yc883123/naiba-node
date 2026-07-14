@@ -32,6 +32,10 @@ PREVIEW_EXTENSIONS = [
     ".preview.png",
     ".preview.jpg",
     ".preview.jpeg",
+    ".custom.preview.webp",
+    ".custom.preview.png",
+    ".custom.preview.jpg",
+    ".custom.preview.jpeg",
     ".webp",
     ".png",
     ".jpg",
@@ -308,8 +312,16 @@ def find_local_preview(lora_path: str) -> Optional[str]:
     lora_dir = os.path.dirname(lora_path)
     lora_basename = os.path.splitext(os.path.basename(lora_path))[0]
     
+    # 1. 优先查找标准预览图和Civitai预览图
     for ext in PREVIEW_EXTENSIONS:
         preview_path = os.path.join(lora_dir, lora_basename + ext)
+        if os.path.exists(preview_path):
+            return preview_path
+    
+    # 2. 查找自定义预览图 (.custom.preview.*)
+    custom_preview_extensions = ['.webp', '.png', '.jpg', '.jpeg', '.gif']
+    for ext in custom_preview_extensions:
+        preview_path = os.path.join(lora_dir, lora_basename + '.custom.preview' + ext)
         if os.path.exists(preview_path):
             return preview_path
     
