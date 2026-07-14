@@ -395,6 +395,21 @@ function createLoraDataPreviewModal(node, loraList) {
     let selectedLoras = new Set(); // 已选中的LoRA集合（支持多选）
     let favoriteLoras = new Map(); // 收藏的LoRA集合 (name -> {custom_prompt, custom_image_path, favorited_at})
 
+    // 从节点widget中恢复已选中的LoRA，确保重新打开弹窗时"已选择"标签能正确显示
+    const existingDataWidget = node.widgets?.find((w) => w.name === "lora_data");
+    if (existingDataWidget) {
+        try {
+            const existingData = JSON.parse(existingDataWidget.value || "[]");
+            existingData.forEach(item => {
+                if (item.name) {
+                    selectedLoras.add(item.name);
+                }
+            });
+        } catch (e) {
+            // ignore parse errors
+        }
+    }
+
     // ========== 关闭模态框 ==========
     function closeModal() {
         document.body.removeChild(overlay);
