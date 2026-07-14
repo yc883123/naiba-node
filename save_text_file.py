@@ -25,7 +25,7 @@ class SaveTextFile:
             },
             "optional": {
                 "filename": ("STRING", {
-                    "default": "output.txt",
+                    "default": "output.json",
                     "tooltip": "文件名（如果 file_path 已包含文件名则忽略此项）"
                 }),
                 "auto_mkdir": ("BOOLEAN", {
@@ -46,7 +46,7 @@ class SaveTextFile:
     SEARCH_ALIASES = ["naiba", "save", "file", "export", "保存", "导出"]
     OUTPUT_NODE = True
     
-    def save_file(self, text, file_path, filename="output.txt", auto_mkdir=True):
+    def save_file(self, text, file_path, filename="output.json", auto_mkdir=True):
         """保存文本到文件"""
         
         # 确定最终文件路径

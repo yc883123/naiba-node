@@ -411,6 +411,35 @@
 
 ---
 
+### 11. Naiba Textbox (可编辑文本框)
+
+**节点名称**: `NaibaTextbox`  
+**显示名称**: Naiba Textbox  
+**分类**: `naiba-node`
+
+#### 功能说明
+提供一个可编辑的多行字符串输入框，并带一个 `passthrough` 输入端口。上游字符串传入 `passthrough` 后自动采用其值并回显到节点预览框，否则使用输入框内容。结果在节点内直接预览/编辑，并向下游输出该字符串。
+
+#### 输入参数
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| text | STRING (多行) | 可编辑的字符串输入，节点内直接预览/编辑 |
+| passthrough | STRING (可选, 输入端口) | 上游字符串输入，传入后覆盖 text 内容并回显到预览框 |
+
+#### 输出
+
+| 输出 | 类型 | 说明 |
+|------|------|------|
+| text | STRING | 最终字符串（passthrough 优先，否则使用输入框） |
+
+#### 使用方法
+1. 在 `naiba-node` 分类下添加 `Naiba Textbox` 节点
+2. 直接在节点输入框编辑字符串，或连接上游节点的字符串输出到 `passthrough` 端口
+3. 字符串会出现在节点预览框中，可继续编辑并向下游传递
+
+---
+
 ## 安装方法
 
 1. 将 `naiba-test` 文件夹复制到 `ComfyUI/custom_nodes/` 目录
@@ -437,6 +466,7 @@ naiba-test/
 ├── civitai_info_reader.py                  # Civitai信息读取节点
 ├── custom_data_reader.py                   # 自定义数据读取节点
 ├── power_lora_config_reader.py             # Power LoRA Config Reader节点
+├── naiba_textbox.py                        # 可编辑文本框节点（Textbox）
 ├── civitai_utils.py                        # Civitai API工具模块
 ├── preset_routes.py                        # 预设管理API路由
 ├── presets/                                # 预设存储目录（运行时自动创建）
@@ -446,6 +476,7 @@ naiba-test/
 │   ├── visual_lora_loader.js               # Visual LoRA Loader前端UI
 │   ├── lora_data_preview.js                # Lora Data Preview前端UI
 │   ├── lora_testing_converter.js           # Lora Testing Converter前端扩展
+│   ├── naiba_textbox.js                    # Naiba Textbox前端UI
 │   └── naiba_preset_utils.js               # 共享预设模态框和工具函数
 └── README.md                               # 项目说明文档
 ```
@@ -504,6 +535,18 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 > **注意**: Multi LoRA Loader (only model) 节点导入含 `strength_clip` 的预设时会自动忽略 clip 字段。两个节点的预设可以互相导入。
 
 ## 更新日志
+
+### v2.3.0
+- 新增 Naiba Textbox 节点
+  - 提供可编辑的多行字符串输入框，节点内直接预览/编辑字符串
+  - 带 `passthrough` 输入端口，上游字符串传入后自动采用其值并回显到预览框，否则使用输入框内容
+  - 输出最终字符串，可向下游节点传递
+- Save Text File 默认保存格式调整
+  - `filename` 默认值由 `output.txt` 改为 `output.json`，默认保存为 JSON 文件
+- Multi LoRA Loader 与 Multi LoRA Loader (only model) 新增悬停封面预览开关
+  - 工具栏新增「预览」开关（默认开启）
+  - 关闭后，下拉选项与 LoRA 卡片悬停时不再显示封面浮层
+  - 开关为节点内存态，不影响加载逻辑与序列化，向后兼容
 
 ### v2.2.0
 - 可视化 LoRA 加载器（Visual LoRA Loader）UI 重构

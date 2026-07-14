@@ -159,7 +159,7 @@ function createRemoveButton(onClick) {
     return btn;
 }
 
-function createFilterableSelect(options, selected, onChange) {
+function createFilterableSelect(options, selected, onChange, node) {
     const container = document.createElement("div");
     container.style.cssText = `
         flex:1;position:relative;min-width:0;
@@ -245,7 +245,7 @@ function createFilterableSelect(options, selected, onChange) {
             `;
             optEl.addEventListener("mouseenter", (e) => { 
                 if (opt !== currentValue) optEl.style.background = "rgba(108,92,231,0.15)";
-                if (opt) {
+                if (opt && node._previewEnabled) {
                     showLoraFloatPreview(opt);
                     placeLoraFloatPreview(e);
                 }
@@ -403,6 +403,7 @@ app.registerExtension({
             const node = this;
             node._loraEntries = [];
             node._loraUIInitialized = false;
+            node._previewEnabled = true; // 悬停封面预览开关（默认开启）
 
             // 查找 lora_data 控件
             const loraDataWidget = node.widgets?.find((w) => w.name === "lora_data");
@@ -497,6 +498,19 @@ app.registerExtension({
                 updateBadge();
             });
             rightGroup.appendChild(clearBtn);
+
+            // 悬停封面预览开关
+            const previewLabel = document.createElement("span");
+            previewLabel.textContent = "预览";
+            previewLabel.title = "悬停显示LoRA封面预览";
+            previewLabel.style.cssText = `color:${C.textDim};font-size:11px`;
+            rightGroup.appendChild(previewLabel);
+
+            const previewToggle = createToggle(true, (val) => {
+                node._previewEnabled = val;
+                if (!val) hideLoraFloatPreview(); // 关闭时立即收起可能残留的浮层
+            });
+            rightGroup.appendChild(previewToggle.el);
 
             // 预设按钮
             const presetBtn = document.createElement("span");
@@ -621,7 +635,7 @@ app.registerExtension({
                 const nameSelect = createFilterableSelect(loraList, d.name, (val) => {
                     entry.name = val;
                     node._serializeLoraData();
-                });
+                }, node);
                 row.appendChild(nameSelect.el);
 
                 const mkLabel = (t) => {
@@ -664,7 +678,7 @@ app.registerExtension({
 
                 // 悬浮封面预览（复用单例浮层 /naiba/lora/preview）
                 card.addEventListener("mouseenter", (e) => {
-                    if (entry.name) {
+                    if (entry.name && node._previewEnabled) {
                         showLoraFloatPreview(entry.name);
                         placeLoraFloatPreview(e);
                     }
