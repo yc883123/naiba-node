@@ -277,7 +277,8 @@ function createVisualLoraModal(node, loraList) {
     let currentView = "grid"; // "grid" or "list"
     let currentFolder = "/";
     let currentCategory = "all"; // "all", "selected", 或 "favorite"
-    let selectedLoras = new Map(); // name -> {strength_model, strength_clip, enabled}
+    // 选中状态提升为节点级，确保画布显示区与弹窗内部始终保持一致
+    const selectedLoras = (node._visualSelectedLoras = node._visualSelectedLoras || new Map()); // name -> {strength_model, strength_clip, enabled}
     let favoriteLoras = new Map(); // name -> {custom_prompt, custom_image_path, favorited_at}
     let filteredLoras = [...loraList];
     let folderStructure = buildFolderStructure(loraList);
@@ -336,6 +337,8 @@ function createVisualLoraModal(node, loraList) {
     // 从节点加载现有选择
     function loadExistingSelection() {
         const loraDataWidget = node.widgets?.find((w) => w.name === "lora_data");
+        // 每次打开弹窗都先清空，再以 lora_data 为准重建，保证与画布一致
+        selectedLoras.clear();
         if (!loraDataWidget) return;
         try {
             const data = JSON.parse(loraDataWidget.value || "[]");
@@ -1198,6 +1201,15 @@ function createVisualLoraModal(node, loraList) {
 
     // 设置单例
     currentModal = modal;
+
+    // 暴露重新加载选中状态的函数，供节点“清除”按钮同步（清空）弹窗内的选中
+    node._visualModalReload = () => {
+        if (!currentModal) return;
+        loadExistingSelection();
+        renderLoraList();
+        updateSelectedCount();
+    };
+
     modal.focus = () => {
         overlay.style.display = "flex";
     };
@@ -1297,6 +1309,13 @@ app.registerExtension({
                 const loraDataWidget = node.widgets?.find((w) => w.name === "lora_data");
                 if (loraDataWidget) {
                     loraDataWidget.value = "[]";
+                }
+                // 同步清空弹窗内的选中状态（若弹窗已打开）
+                if (node._visualSelectedLoras) {
+                    node._visualSelectedLoras.clear();
+                }
+                if (node._visualModalReload) {
+                    node._visualModalReload();
                 }
                 // 更新显示区域
                 if (node._updateVisualLoraDisplay) {
@@ -1511,8 +1530,8 @@ app.registerExtension({
                 if (node._visualLoraUIInitialized) return;
                 node._visualLoraUIInitialized = true;
 
-                const saved = node._deserializeVisualLoraData();
-                updateDisplayArea();
+                node._deserializeVisualLoraData();
+                renderDisplayArea();
                 triggerResize();
             }, 150);
         };

@@ -27,6 +27,8 @@ def load_image_as_tensor(image_path, target_size=None):
         target_size: 目标尺寸 (width, height)，如果指定则resize
     """
     if not HAS_IMAGE_DEPS:
+        if target_size:
+            return torch.zeros((1, target_size[1], target_size[0], 3), dtype=torch.float32)
         return torch.zeros((1, 64, 64, 3), dtype=torch.float32)
     
     try:
@@ -38,6 +40,8 @@ def load_image_as_tensor(image_path, target_size=None):
         return tensor
     except Exception as e:
         print(f"[CivitaiInfoReader] Failed to load image: {e}")
+        if target_size:
+            return torch.zeros((1, target_size[1], target_size[0], 3), dtype=torch.float32)
         return torch.zeros((1, 64, 64, 3), dtype=torch.float32)
 
 
@@ -162,6 +166,45 @@ class CivitaiInfoReader:
     EMPTY_JSON = "{}"
     EMPTY_CUSTOM_PROMPT = ""
     
+    @classmethod
+    def IS_CHANGED(cls, lora_names=None):
+        """基于引用 LoRA 的 .civitai.info.json 与 .custom.info.json 文件的 mtime+size 生成签名。
+        任何元数据和自定义提示词被保存修改后签名变化，ComfyUI 将重新执行本节点，
+        无需重启即可读取最新数据。"""
+        if not lora_names or not str(lora_names).strip():
+            return ""
+
+        names = []
+        try:
+            parsed = json.loads(lora_names)
+            if isinstance(parsed, list):
+                names = [n for n in parsed if n and isinstance(n, str)]
+            elif isinstance(parsed, str) and parsed:
+                names = [parsed]
+        except (json.JSONDecodeError, TypeError):
+            names = [str(lora_names).strip()]
+
+        parts = []
+        for name in names:
+            lora_path = folder_paths.get_full_path("loras", name)
+            if not lora_path:
+                parts.append(f"{name}:MISSING")
+                continue
+            base = os.path.splitext(lora_path)[0]
+            sig_files = [base + ".civitai.info.json", base + ".custom.info.json"]
+            sub = []
+            for sf in sig_files:
+                if os.path.exists(sf):
+                    try:
+                        st = os.stat(sf)
+                        sub.append(f"{os.path.basename(sf)}={st.st_mtime:.3f}:{st.st_size}")
+                    except OSError:
+                        sub.append(f"{os.path.basename(sf)}=ERR")
+                else:
+                    sub.append(f"{os.path.basename(sf)}=NONE")
+            parts.append(f"{name}[{';'.join(sub)}]")
+        return "|".join(parts)
+
     def read_info(self, lora_names=None):
         """读取 LoRA 的 Civitai 元数据
         

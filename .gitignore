@@ -10,8 +10,10 @@
 backup_before_preset_*/
 
 # 忽略示例工作流文件（可能包含大型数据）
-*示例工作流*.json
+# 但 naiba-test 项目自身的 workflows/ 下的示例工作流需纳入版本控制
+# （每次在 ComfyUI 修改后自动同步到本项目中），故在此重新包含：
 *官流*.json
+!workflows/*.json
 
 # 忽略其他可能的大文件
 *.mp4

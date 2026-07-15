@@ -175,24 +175,24 @@ function createFilterableSelect(options, selected, onChange, node) {
         min-width:0;outline:none;cursor:pointer;box-sizing:border-box;
     `;
     
-    // 下拉列表容器
+    // 下拉列表容器（在触发输入框右侧就地展开）
     const dropdown = document.createElement("div");
     dropdown.style.cssText = `
-        position:absolute;top:100%;left:0;right:0;max-height:200px;
-        overflow-y:auto;background:${C.inputBg};border:1px solid ${C.inputBorder};
-        border-top:none;border-radius:0 0 4px 4px;z-index:1000;
-        display:none;box-sizing:border-box;
+        position:fixed;z-index:10001;overflow-y:auto;
+        background:${C.inputBg};border:1px solid ${C.inputBorder};
+        box-shadow:0 8px 30px rgba(0,0,0,0.5);border-radius:6px;
+        display:none;flex-direction:column;box-sizing:border-box;padding-top:4px;
     `;
-    
+
     // 选项容器
     const optionsContainer = document.createElement("div");
     optionsContainer.style.cssText = `
         display:flex;flex-direction:column;
     `;
     dropdown.appendChild(optionsContainer);
-    
+    document.body.appendChild(dropdown);
+
     container.appendChild(filterInput);
-    container.appendChild(dropdown);
     
     let currentValue = selected || "";
     let isOpen = false;
@@ -305,7 +305,22 @@ function createFilterableSelect(options, selected, onChange, node) {
         isOpen = true;
         filterInput.select(); // 选中文本方便输入
         filterOptions("");
-        dropdown.style.display = "block";
+        dropdown.style.display = "flex";
+        // 先显示再测量实际高度，使下拉框垂直中心对齐输入框中心
+        const rect = filterInput.getBoundingClientRect();
+        const width = 380;
+        let left = rect.right + 4;
+        if (left + width > window.innerWidth - 4) {
+            // 右侧空间不足时翻到输入框左侧
+            left = Math.max(4, rect.left - width - 4);
+        }
+        dropdown.style.maxHeight = Math.max(120, window.innerHeight - 10) + "px";
+        const h = dropdown.offsetHeight;
+        let top = rect.top + rect.height / 2 - h / 2;
+        top = Math.max(4, Math.min(top, window.innerHeight - h - 4));
+        dropdown.style.left = left + "px";
+        dropdown.style.top = top + "px";
+        dropdown.style.width = width + "px";
     };
     
     const closeDropdown = () => {
@@ -352,9 +367,9 @@ function createFilterableSelect(options, selected, onChange, node) {
         }
     });
     
-    // 点击外部关闭下拉列表
+    // 点击外部关闭下拉列表（抽屉已挂在 body 上，需排除其自身）
     document.addEventListener("click", (e) => {
-        if (!container.contains(e.target)) {
+        if (!container.contains(e.target) && !dropdown.contains(e.target)) {
             closeDropdown();
         }
     });
@@ -744,10 +759,14 @@ app.registerExtension({
             });
 
             // ========== 注册DOM控件 ==========
-            node.addDOMWidget("lora_panel", "LORA_PANEL", panel, {
+            const loraPanelWidget = node.addDOMWidget("lora_panel", "LORA_PANEL", panel, {
                 getValue() { return ""; },
                 setValue() {},
+                getHeight() { return panel.offsetHeight; },
             });
+            // 让 ComfyUI 以面板真实渲染高度作为该 DOM 控件高度，
+            // 使节点矩形自动包住工具栏+条目+Add按钮（修复按钮溢出节点外）
+            loraPanelWidget.computeSize = (w) => [w, panel.offsetHeight];
 
             node.minWidth = 280;
             node.minHeight = 120;
