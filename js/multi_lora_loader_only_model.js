@@ -298,15 +298,15 @@ function createFilterableSelect(options, selected, onChange, node) {
                 optionsContainer.appendChild(missingOpt);
             }
         }
+
+        // 每次过滤后重新按输入框中心垂直居中，使下拉框随匹配数量围绕 LORA 框对称展开/收缩
+        if (isOpen) positionDropdown();
     };
     
-    const openDropdown = () => {
-        if (isOpen) return;
-        isOpen = true;
-        filterInput.select(); // 选中文本方便输入
-        filterOptions("");
-        dropdown.style.display = "flex";
-        // 先显示再测量实际高度，使下拉框垂直中心对齐输入框中心
+    // 下拉框定位：垂直居中于输入框中心，水平锚定输入框右侧（空间不足翻左侧）
+    // 每次过滤后调用，使下拉框随匹配数量围绕 LORA 框对称展开/收缩
+    const positionDropdown = () => {
+        if (dropdown.style.display === "none") return;
         const rect = filterInput.getBoundingClientRect();
         const width = 380;
         let left = rect.right + 4;
@@ -314,13 +314,23 @@ function createFilterableSelect(options, selected, onChange, node) {
             // 右侧空间不足时翻到输入框左侧
             left = Math.max(4, rect.left - width - 4);
         }
+        dropdown.style.width = width + "px";
         dropdown.style.maxHeight = Math.max(120, window.innerHeight - 10) + "px";
         const h = dropdown.offsetHeight;
         let top = rect.top + rect.height / 2 - h / 2;
         top = Math.max(4, Math.min(top, window.innerHeight - h - 4));
         dropdown.style.left = left + "px";
         dropdown.style.top = top + "px";
-        dropdown.style.width = width + "px";
+    };
+
+    const openDropdown = () => {
+        if (isOpen) return;
+        isOpen = true;
+        filterInput.select(); // 选中文本方便输入
+        filterOptions("");
+        dropdown.style.display = "flex";
+        // 显示后再测量高度并定位（垂直居中于输入框）
+        positionDropdown();
     };
     
     const closeDropdown = () => {

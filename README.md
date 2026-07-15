@@ -536,6 +536,16 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 
 ## 更新日志
 
+### v2.3.4
+- 预设保存/导入 SHA256 扫描进度提示
+  - 根因：后端计算 sha256 已在 worker 线程执行（浏览器画布不会真正冻结），但大文件（GB 级、尤其机械硬盘）扫描可超 4–5 秒，前端无任何反馈，易误以为卡死
+  - `js/naiba_preset_utils.js` 新增单例浮层 `showShaProgress()` / `hideShaProgress()`，居中显示「扫描sha256中.....」加旋转动画（z-index 高于预设弹窗）
+  - 在保存（`/naiba/presets/save`）与两种导入（`/naiba/presets/resolve` 扫描全部本地 LoRA）发起前显示，结束（成功/异常）经 `finally` 统一隐藏，绝不残留
+- 修复 Multi LoRA Loader 搜索下拉被顶到屏幕顶
+  - 根因：`openDropdown` 仅在展开瞬间按输入框中心定位一次 `top`，而 `filterOptions` 每次键入都重建列表（高度变化）却不再重算 `top`，导致列表从下往上缩短、最后贴屏幕顶
+  - 抽出 `positionDropdown()`，在 `openDropdown`（设 `display:flex` 后）与 `filterOptions` 每次过滤末尾均调用，使下拉框围绕 LORA 框中心垂直居中、随匹配数量对称展开/收缩
+  - 影响文件：`js/multi_lora_loader.js`、`js/multi_lora_loader_only_model.js`
+
 ### v2.3.3
 - Multi LoRA Loader 与 Multi LoRA Loader (only model) 节点布局二次修复（参照成熟案例）
   - 根因：ComfyUI 前端给 DOM 面板自动加 `h-full`，而其父容器初始高度为 0，导致 `panel.offsetHeight` 只能测到极小值、节点高度计算错误、边框异常

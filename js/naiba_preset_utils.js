@@ -27,6 +27,57 @@ const COLORS = {
 // ========== 单例模态框管理 ==========
 let currentModal = null;
 
+// ========== SHA256 扫描进度窗口 ==========
+// 保存/导入预设时后端会扫描 LoRA 文件 SHA256，大文件（GB 级）可能耗时数秒甚至更久，
+// 期间弹出居中提示框，避免用户误以为卡死。单例复用，请求结束即隐藏。
+let _shaProgressOverlay = null;
+function showShaProgress() {
+    if (!_shaProgressOverlay) {
+        const overlay = document.createElement("div");
+        overlay.style.cssText = `
+            position:fixed;top:0;left:0;width:100%;height:100%;
+            background:rgba(0,0,0,0.45);z-index:10050;
+            display:flex;align-items:center;justify-content:center;
+        `;
+        const box = document.createElement("div");
+        box.style.cssText = `
+            display:flex;align-items:center;gap:12px;
+            background:${COLORS.modalBg};border:1px solid ${COLORS.accent};
+            border-radius:8px;padding:16px 22px;
+            box-shadow:0 8px 30px rgba(0,0,0,0.6);
+        `;
+        const spinner = document.createElement("div");
+        spinner.style.cssText = `
+            width:18px;height:18px;border:2px solid ${COLORS.border};
+            border-top-color:${COLORS.accent};border-radius:50%;
+            animation:naiba-shaspin 0.8s linear infinite;flex-shrink:0;
+        `;
+        const txt = document.createElement("span");
+        txt.textContent = "扫描sha256中.....";
+        txt.style.cssText = `color:${COLORS.text};font-size:13px;white-space:nowrap;`;
+        box.appendChild(spinner);
+        box.appendChild(txt);
+        overlay.appendChild(box);
+        _shaProgressOverlay = overlay;
+        // 注入一次旋转动画 keyframes
+        if (!document.getElementById("naiba-shaspin-style")) {
+            const st = document.createElement("style");
+            st.id = "naiba-shaspin-style";
+            st.textContent = "@keyframes naiba-shaspin{to{transform:rotate(360deg)}}";
+            document.head.appendChild(st);
+        }
+    }
+    if (!_shaProgressOverlay.parentNode) {
+        document.body.appendChild(_shaProgressOverlay);
+    }
+    _shaProgressOverlay.style.display = "flex";
+}
+function hideShaProgress() {
+    if (_shaProgressOverlay) {
+        _shaProgressOverlay.style.display = "none";
+    }
+}
+
 /**
  * 创建预设管理模态框
  * @param {Object} node - ComfyUI 节点实例
@@ -518,15 +569,20 @@ export function createPresetsModal(node, onImport = null) {
                 return;
             }
 
-            // 按 sha256 重定位改名文件（非破坏性：无 sha256 或本地无匹配则保留原名）
-            const resolved = await resolvePreset(result.data);
-            // 无论本地是否有所，完整套用所有条目（缺失项由选择器以 (missing) 显示）
-            setNodeData(resolved);
-            showStatus(`已导入预设: ${selectedPreset}`);
-            closeModal();
-            // 调用导入回调（如果存在）
-            if (typeof onImport === "function") {
-                onImport();
+            showShaProgress();
+            try {
+                // 按 sha256 重定位改名文件（非破坏性：无 sha256 或本地无匹配则保留原名）
+                const resolved = await resolvePreset(result.data);
+                // 无论本地是否有所，完整套用所有条目（缺失项由选择器以 (missing) 显示）
+                setNodeData(resolved);
+                showStatus(`已导入预设: ${selectedPreset}`);
+                closeModal();
+                // 调用导入回调（如果存在）
+                if (typeof onImport === "function") {
+                    onImport();
+                }
+            } finally {
+                hideShaProgress();
             }
         } catch (e) {
             console.error("[Presets] Import error:", e);
@@ -562,17 +618,22 @@ export function createPresetsModal(node, onImport = null) {
                 coverStatus.textContent = "";
             }
 
-            const resp = await api.fetchApi("/naiba/presets/save", {
-                method: "POST",
-                body: JSON.stringify({ name: trimmedName, data }),
-            });
-            const result = await resp.json();
+            showShaProgress();
+            try {
+                const resp = await api.fetchApi("/naiba/presets/save", {
+                    method: "POST",
+                    body: JSON.stringify({ name: trimmedName, data }),
+                });
+                const result = await resp.json();
 
-            if (result.error) {
-                showStatus(result.error, true);
-            } else {
-                showStatus("预设保存成功");
-                await loadPresetList();
+                if (result.error) {
+                    showStatus(result.error, true);
+                } else {
+                    showStatus("预设保存成功");
+                    await loadPresetList();
+                }
+            } finally {
+                hideShaProgress();
             }
         } catch (e) {
             showStatus("保存失败: " + e.message, true);
@@ -663,15 +724,20 @@ export function createPresetsModal(node, onImport = null) {
                     }
                 }
 
-                // 按 sha256 重定位改名文件（非破坏性：无 sha256 或本地无匹配则保留原名）
-                const resolved = await resolvePreset(data);
-                // 无论本地是否有所，完整套用所有条目（缺失项由选择器以 (missing) 显示）
-                setNodeData(resolved);
-                showStatus("已从文件导入预设");
-                closeModal();
-                // 调用导入回调（如果存在）
-                if (typeof onImport === "function") {
-                    onImport();
+                showShaProgress();
+                try {
+                    // 按 sha256 重定位改名文件（非破坏性：无 sha256 或本地无匹配则保留原名）
+                    const resolved = await resolvePreset(data);
+                    // 无论本地是否有所，完整套用所有条目（缺失项由选择器以 (missing) 显示）
+                    setNodeData(resolved);
+                    showStatus("已从文件导入预设");
+                    closeModal();
+                    // 调用导入回调（如果存在）
+                    if (typeof onImport === "function") {
+                        onImport();
+                    }
+                } finally {
+                    hideShaProgress();
                 }
             } catch (e) {
                 showStatus("文件解析失败: " + e.message, true);
