@@ -536,6 +536,16 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 
 ## 更新日志
 
+### v2.3.1
+- Multi LoRA Loader 与 Multi LoRA Loader (only model) 节点尺寸自适应修复
+  - 隐藏的 `lora_data` 多行文本控件现覆写 `computeSize = () => [0, 0]`，让 ComfyUI 布局彻底忽略其高度，避免节点矩形被异常撑高/压低
+  - 面板高度改为闭包缓存（`panelHeight`），仅当真实渲染高度 `offsetHeight > 0` 时刷新，杜绝初始/离屏布局偶发测得 `0` 把节点压垮导致 `+ Add LoRA` 按钮溢出节点矩形
+  - 改用 `node.size[1] = node.computeSize()[1]` 直接贴合权威布局高度，不再与内部 `computeSize` 互写冲突
+- 预设导入逻辑简化
+  - 删除前端 `resolvePreset` 与后端 `/naiba/presets/resolve` 路由
+  - 导入预设（从列表或文件）直接 `setNodeData` 完整套用 JSON 全部条目，不再按本地是否安装对应 LoRA 进行过滤（缺失项在下拉中以红色 `(missing)` 显示）
+  - 修复本地未安装对应 LoRA 时（如 `Klein漫转真.json`）无法导入的问题
+
 ### v2.3.0
 - 新增 Naiba Textbox 节点
   - 提供可编辑的多行字符串输入框，节点内直接预览/编辑字符串
@@ -557,10 +567,10 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 - 预设系统增强
   - 预设封面图：支持为预设设置封面（上传/预览），新增 `/naiba/presets/upload-image` 与 `/naiba/presets/image` 路由
   - 预设搜索过滤：预设列表支持按名称实时筛选
-  - 预设解析：新增 `/naiba/presets/resolve` 路由，导入时自动匹配本地 LoRA 并标记未匹配项
+  - 预设导入：无论本地是否安装对应 LoRA，均完整套用预设 JSON 中所有条目（缺失项在下拉中以 `(missing)` 显示），不再过滤未匹配项
 - Multi LoRA Loader 下拉体验优化
   - 下拉选项悬停预览封面图，无需选中即可预览
-  - 节点尺寸自适应：修复 Add 按钮溢出问题，改用 `panel.offsetHeight` 真实测量 + `ResizeObserver` 实时更新节点高度，`box-sizing:border-box` 防止内边距溢出
+  - 节点尺寸自适应：修复 Add 按钮溢出问题，以面板高度为闭包缓存（仅当真实渲染高度 > 0 时刷新）+ `ResizeObserver` 实时更新节点高度，避免离屏测量为 0 导致节点坍塌，`box-sizing:border-box` 防止内边距溢出
 - 后端简化
   - 移除 MultiLoraLoader / MultiLoraLoaderOnlyModel 的 `output_lora_names` 冗余参数，始终输出已启用 LoRA 名称列表
 

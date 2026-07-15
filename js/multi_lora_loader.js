@@ -428,6 +428,8 @@ app.registerExtension({
                 loraDataWidget.hidden = true;
                 if (loraDataWidget.inputEl) loraDataWidget.inputEl.style.display = "none";
                 if (loraDataWidget.element) loraDataWidget.element.style.display = "none";
+                // 显式让 ComfyUI 布局忽略该隐藏多行文本控件的高度，避免其把节点矩形撑高/压低
+                loraDataWidget.computeSize = () => [0, 0];
             }
 
             // 序列化
@@ -573,39 +575,32 @@ app.registerExtension({
             });
             panel.appendChild(addButton);
 
-            // ========== 节点尺寸自适应（直接测量面板真实渲染高度） ==========
-            const measureAndResize = () => {
-                let [w, h] = node.size;
+            // ========== 节点尺寸自适应（以面板闭包缓存高度驱动） ==========
+            // panelHeight 仅在面板真实渲染高度可读（>0）时刷新，杜绝初始/离屏布局
+            // 偶发测得 offsetHeight=0 把节点压垮、导致 Add 按钮溢出节点矩形的问题。
+            let panelHeight = 100;
 
-                // 更新panel宽度以适应节点宽度
+            const scheduleResize = () => {
+                // 先按当前节点宽度同步面板宽度（与控件区保持一致，避免条目横向溢出）
                 const nodePadding = 10;
-                const panelWidth = Math.max(200, w - nodePadding * 2);
+                const panelWidth = Math.max(200, node.size[0] - nodePadding * 2);
                 panel.style.width = panelWidth + "px";
                 panel.style.maxWidth = panelWidth + "px";
 
-                // widget 高度（排除面板自身）
-                let widgetHeight = 0;
-                if (node.widgets) {
-                    for (const widget of node.widgets) {
-                        if (widget.name === "lora_panel") continue;
-                        widgetHeight += (widget.computeSize ? widget.computeSize(w)[1] : 26) + 4;
-                    }
+                // 面板真实高度可读时才刷新缓存；否则沿用上一次有效高度，绝不写 0
+                if (panel.offsetHeight > 0) {
+                    panelHeight = panel.offsetHeight;
                 }
 
-                // 直接测量面板实际渲染高度（含 padding、gap、子元素），
-                // 避免逐项硬编码漏算 flex gap 导致节点偏低、Add 按钮溢出
-                const panelHeight = panel.offsetHeight;
-                const minPanelHeight = 80;
-                const actualPanelHeight = Math.max(panelHeight, minPanelHeight);
-
-                const targetHeight = widgetHeight + actualPanelHeight + 10;
-
-                // 始终贴合内容高度（确保 Add 按钮被节点矩形完整包裹）
-                node.size = [w, targetHeight];
+                // 以 ComfyUI 权威布局高度（含全部控件）作为节点高度，直接更新 size[1]，
+                // 避免 `node.size = [...]` 与内部 computeSize 互相覆盖回偏低值。
+                const sz = node.computeSize();
+                node.size[1] = Math.max(sz[1], node.minHeight || 0);
+                node.graph?.setDirtyCanvas(true, true);
             };
 
             node.onResize = function () {
-                measureAndResize();
+                scheduleResize();
             };
 
             // 监听面板尺寸变化（条目增删/恢复）驱动节点高度，从根上消除按钮溢出回归
@@ -613,8 +608,7 @@ app.registerExtension({
             const _onPanelResize = () => {
                 if (_resizeRaf) cancelAnimationFrame(_resizeRaf);
                 _resizeRaf = requestAnimationFrame(() => {
-                    measureAndResize();
-                    node.graph?.setDirtyCanvas(true, true);
+                    scheduleResize();
                 });
             };
             if (typeof ResizeObserver !== "undefined") {
@@ -716,10 +710,9 @@ app.registerExtension({
 
             // ========== 触发节点重绘 ==========
             const triggerResize = () => {
-                // 使用setTimeout确保DOM已经更新
+                // 使用 setTimeout 确保 DOM 已更新后再按内容重算节点高度
                 setTimeout(() => {
-                    node.onResize?.();
-                    node.graph?.setDirtyCanvas(true, true);
+                    scheduleResize();
                 }, 50);
             };
 
@@ -762,11 +755,11 @@ app.registerExtension({
             const loraPanelWidget = node.addDOMWidget("lora_panel", "LORA_PANEL", panel, {
                 getValue() { return ""; },
                 setValue() {},
-                getHeight() { return panel.offsetHeight; },
+                getHeight() { return panelHeight; },
             });
-            // 让 ComfyUI 以面板真实渲染高度作为该 DOM 控件高度，
-            // 使节点矩形自动包住工具栏+条目+Add按钮（修复按钮溢出节点外）
-            loraPanelWidget.computeSize = (w) => [w, panel.offsetHeight];
+            // 以缓存面板高度作为该 DOM 控件高度（非实时 offsetHeight），
+            // 使 ComfyUI 内部 computeSize 永不读到 0，节点矩形稳定包住工具栏+条目+Add按钮
+            loraPanelWidget.computeSize = (w) => [w, panelHeight];
 
             node.minWidth = 280;
             node.minHeight = 120;

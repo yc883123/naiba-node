@@ -289,83 +289,6 @@ async def save_preset_handler(request):
 
 
 # ============================================================
-# API 路由：解析/校验预设（导入时按 sha256 匹配改名文件）
-# ============================================================
-@PromptServer.instance.routes.post('/naiba/presets/resolve')
-async def resolve_preset_handler(request):
-    """导入预设时校验并匹配本地 LoRA 文件（支持 sha256 定位改名文件）"""
-    try:
-        body = await request.json()
-        data = body.get('data', [])
-        if not isinstance(data, list):
-            return web.json_response({"error": "数据格式错误，需要是数组"}, status=400)
-
-        resolved = []
-        unmatched = []
-
-        # 收集本地全部 LoRA 路径（用于 sha256 匹配）
-        lora_dirs = folder_paths.get_folder_paths("loras")
-        local_lora_paths = []
-        for lora_dir in lora_dirs:
-            if not os.path.exists(lora_dir):
-                continue
-            for root, _dirs, files in os.walk(lora_dir):
-                for file in files:
-                    if file.lower().endswith(('.safetensors', '.pt', '.ckpt', '.pth')):
-                        local_lora_paths.append(os.path.join(root, file))
-
-        async def sha_of(path):
-            key = os.path.realpath(path)
-            if key in _SHA256_CACHE:
-                return _SHA256_CACHE[key]
-            loop = asyncio.get_event_loop()
-
-            def _hash():
-                h = hashlib.sha256()
-                with open(path, 'rb') as f:
-                    for chunk in iter(lambda: f.read(1024 * 1024), b''):
-                        h.update(chunk)
-                return h.hexdigest()
-
-            digest = await loop.run_in_executor(None, _hash)
-            _SHA256_CACHE[key] = digest
-            return digest
-
-        for entry in data:
-            if not isinstance(entry, dict):
-                continue
-            name = entry.get("name", "")
-            sha = entry.get("sha256", "")
-            matched_entry = None
-
-            # 1) 按 name 直接定位（最快）
-            resolved_path = folder_paths.get_full_path("loras", name) if name else None
-            if resolved_path and os.path.exists(resolved_path):
-                matched_entry = entry
-            # 2) 按 sha256 在本地扫描匹配（改名也能定位）
-            elif sha:
-                for path in local_lora_paths:
-                    try:
-                        if await sha_of(path) == sha:
-                            rel = os.path.relpath(path, lora_dirs[0]) if lora_dirs else path
-                            matched_entry = dict(entry)
-                            matched_entry["name"] = rel
-                            break
-                    except Exception:
-                        continue
-
-            if matched_entry is not None:
-                resolved.append(matched_entry)
-            else:
-                unmatched.append({"name": name, "sha256": sha})
-
-        return web.json_response({"resolved": resolved, "unmatched": unmatched})
-    except Exception as e:
-        print(f"Error resolving preset: {e}")
-        return web.json_response({"error": str(e)}, status=500)
-
-
-# ============================================================
 # API 路由：删除预设
 # ============================================================
 @PromptServer.instance.routes.delete('/naiba/presets/delete')
@@ -1384,7 +1307,7 @@ async def get_favorite_image_handler(request):
         return web.Response(status=500, text=str(e))
 
 
-print("✅ Naiba Routes loaded: /naiba/presets/*, /naiba/presets/resolve, /naiba/presets/upload-image, /naiba/presets/image, /naiba/lora/preview, /naiba/lora/civitai-sync, /naiba/lora/batch-sync, /naiba/lora/metadata, /naiba/cache/*, /naiba/lora/favorites/*, /naiba/lora/detail, /naiba/lora/custom-data/*")
+print("✅ Naiba Routes loaded: /naiba/presets/*, /naiba/presets/upload-image, /naiba/presets/image, /naiba/lora/preview, /naiba/lora/civitai-sync, /naiba/lora/batch-sync, /naiba/lora/metadata, /naiba/cache/*, /naiba/lora/favorites/*, /naiba/lora/detail, /naiba/lora/custom-data/*")
 
 
 # ============================================================

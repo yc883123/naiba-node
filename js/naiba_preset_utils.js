@@ -220,23 +220,6 @@ export function createPresetsModal(node, onImport = null) {
         }, 3000);
     }
 
-    // ========== 解析预设（按 sha256 匹配改名文件） ==========
-    async function resolvePreset(data) {
-        try {
-            const resp = await api.fetchApi("/naiba/presets/resolve", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ data }),
-            });
-            const r = await resp.json();
-            if (r.error) return { data, unmatched: [] };
-            return { data: r.resolved, unmatched: r.unmatched || [] };
-        } catch (e) {
-            console.warn("[Presets] resolve failed:", e);
-            return { data, unmatched: [] };
-        }
-    }
-
     // ========== 上传预设封面 ==========
     async function uploadCover(name, file) {
         const fd = new FormData();
@@ -516,14 +499,9 @@ export function createPresetsModal(node, onImport = null) {
                 return;
             }
 
-            // 按 sha256 解析（支持改名匹配）
-            const { data: resolved, unmatched } = await resolvePreset(result.data);
-            setNodeData(resolved);
-            if (unmatched.length > 0) {
-                showStatus(`${unmatched.length} 个 LoRA 未匹配（已按文件哈希校验）`, true);
-            } else {
-                showStatus(`已导入预设: ${selectedPreset}`);
-            }
+            // 无论本地是否有所，完整套用 JSON 中所有条目（缺失项由选择器以 (missing) 显示）
+            setNodeData(result.data);
+            showStatus(`已导入预设: ${selectedPreset}`);
             closeModal();
             // 调用导入回调（如果存在）
             if (typeof onImport === "function") {
@@ -664,14 +642,9 @@ export function createPresetsModal(node, onImport = null) {
                     }
                 }
 
-                // 按 sha256 解析（支持改名匹配）
-                const { data: resolved, unmatched } = await resolvePreset(data);
-                setNodeData(resolved);
-                if (unmatched.length > 0) {
-                    showStatus(`${unmatched.length} 个 LoRA 未匹配（已按文件哈希校验）`, true);
-                } else {
-                    showStatus("已从文件导入预设");
-                }
+                // 无论本地是否有所，完整套用 JSON 中所有条目（缺失项由选择器以 (missing) 显示）
+                setNodeData(data);
+                showStatus("已从文件导入预设");
                 closeModal();
                 // 调用导入回调（如果存在）
                 if (typeof onImport === "function") {
