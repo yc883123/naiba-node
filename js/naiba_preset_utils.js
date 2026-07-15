@@ -220,6 +220,25 @@ export function createPresetsModal(node, onImport = null) {
         }, 3000);
     }
 
+    // ========== 解析预设（按 sha256 定位改名文件，非破坏性） ==========
+    // 导入时调用：返回重定位后的条目；绝不丢弃任何条目。
+    // 旧预设（无 sha256）会原样返回，可正常导入。失败时回退到原始数据。
+    async function resolvePreset(data) {
+        try {
+            const resp = await api.fetchApi("/naiba/presets/resolve", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ data }),
+            });
+            const r = await resp.json();
+            if (r.error) return data;
+            return r.data ?? data;
+        } catch (e) {
+            console.warn("[Presets] resolve failed, use raw data:", e);
+            return data;
+        }
+    }
+
     // ========== 上传预设封面 ==========
     async function uploadCover(name, file) {
         const fd = new FormData();
@@ -499,8 +518,10 @@ export function createPresetsModal(node, onImport = null) {
                 return;
             }
 
-            // 无论本地是否有所，完整套用 JSON 中所有条目（缺失项由选择器以 (missing) 显示）
-            setNodeData(result.data);
+            // 按 sha256 重定位改名文件（非破坏性：无 sha256 或本地无匹配则保留原名）
+            const resolved = await resolvePreset(result.data);
+            // 无论本地是否有所，完整套用所有条目（缺失项由选择器以 (missing) 显示）
+            setNodeData(resolved);
             showStatus(`已导入预设: ${selectedPreset}`);
             closeModal();
             // 调用导入回调（如果存在）
@@ -642,8 +663,10 @@ export function createPresetsModal(node, onImport = null) {
                     }
                 }
 
-                // 无论本地是否有所，完整套用 JSON 中所有条目（缺失项由选择器以 (missing) 显示）
-                setNodeData(data);
+                // 按 sha256 重定位改名文件（非破坏性：无 sha256 或本地无匹配则保留原名）
+                const resolved = await resolvePreset(data);
+                // 无论本地是否有所，完整套用所有条目（缺失项由选择器以 (missing) 显示）
+                setNodeData(resolved);
                 showStatus("已从文件导入预设");
                 closeModal();
                 // 调用导入回调（如果存在）

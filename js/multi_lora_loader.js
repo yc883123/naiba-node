@@ -575,32 +575,73 @@ app.registerExtension({
             });
             panel.appendChild(addButton);
 
-            // ========== 节点尺寸自适应（以面板闭包缓存高度驱动） ==========
-            // panelHeight 仅在面板真实渲染高度可读（>0）时刷新，杜绝初始/离屏布局
-            // 偶发测得 offsetHeight=0 把节点压垮、导致 Add 按钮溢出节点矩形的问题。
+            // ========== 节点尺寸自适应（覆写 computeSize / setSize，参照成熟模式） ==========
+            // 关键修复：本版本 ComfyUI 的 node.computeSize() 不会可靠地把 DOM 面板控件高度
+            // 计入节点总高，导致节点被钉在过矮的高度、面板（含 + Add LoRA）溢出节点矩形。
+            // 因此显式覆写 node.computeSize / node.setSize，以「面板 offsetTop + 面板真实高度」
+            // 作为节点总高，不再依赖 node.size[1] 直写。
+            const paddingBottom = 14;
             let panelHeight = 100;
 
-            const scheduleResize = () => {
-                // 先按当前节点宽度同步面板宽度（与控件区保持一致，避免条目横向溢出）
+            // 面板在节点 DOM 容器内的起始 y（DOM widget 元素相对节点容器的偏移）
+            const getPanelTop = () => {
+                if (panel && typeof panel.offsetTop === "number" && panel.offsetTop > 0) {
+                    return panel.offsetTop;
+                }
+                return 40; // 兜底：控件区大致高度
+            };
+
+            // 计算目标节点高度 = 面板起始 y + 面板真实内容高度 + 底部留白
+            const computeTargetHeight = () => {
+                // 面板真实高度可读时才刷新缓存；否则沿用上一次有效高度，绝不写 0
+                if (panel && panel.offsetHeight > 0) {
+                    panelHeight = panel.offsetHeight;
+                }
+                return getPanelTop() + panelHeight + paddingBottom;
+            };
+
+            // 按当前节点宽度同步面板宽度（与控件区保持一致，避免条目横向溢出）
+            const syncPanelWidth = () => {
                 const nodePadding = 10;
                 const panelWidth = Math.max(200, node.size[0] - nodePadding * 2);
                 panel.style.width = panelWidth + "px";
                 panel.style.maxWidth = panelWidth + "px";
+            };
 
-                // 面板真实高度可读时才刷新缓存；否则沿用上一次有效高度，绝不写 0
-                if (panel.offsetHeight > 0) {
-                    panelHeight = panel.offsetHeight;
+            // 覆写 computeSize：让 ComfyUI 内部布局以面板真实高度作为节点高度
+            const origComputeSize = node.computeSize;
+            node.computeSize = function () {
+                const res = origComputeSize ? origComputeSize.apply(this, arguments) : [node.size[0] || 280, 200];
+                const h = computeTargetHeight();
+                res[0] = Math.max(res[0], node.size[0] || 280);
+                res[1] = Math.max(res[1], h);
+                return res;
+            };
+
+            // 覆写 setSize：强制最小高度（内容高度），并把面板宽度同步到节点内容区；
+            // 用户仍可拖大节点，只是不会被压到比内容更矮。
+            const origSetSize = node.setSize;
+            node.setSize = function (size) {
+                const h = computeTargetHeight();
+                size[1] = Math.max(size[1], h);
+                if (origSetSize) origSetSize.call(this, size);
+                else this.size = size;
+                syncPanelWidth();
+            };
+
+            // 触发节点按内容重算高度
+            const scheduleResize = () => {
+                syncPanelWidth();
+                const h = computeTargetHeight();
+                if (node.size[1] !== h) {
+                    node.setSize([node.size[0], h]);
+                } else {
+                    node.graph?.setDirtyCanvas(true, true);
                 }
-
-                // 以 ComfyUI 权威布局高度（含全部控件）作为节点高度，直接更新 size[1]，
-                // 避免 `node.size = [...]` 与内部 computeSize 互相覆盖回偏低值。
-                const sz = node.computeSize();
-                node.size[1] = Math.max(sz[1], node.minHeight || 0);
-                node.graph?.setDirtyCanvas(true, true);
             };
 
             node.onResize = function () {
-                scheduleResize();
+                syncPanelWidth();
             };
 
             // 监听面板尺寸变化（条目增删/恢复）驱动节点高度，从根上消除按钮溢出回归

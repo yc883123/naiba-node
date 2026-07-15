@@ -289,6 +289,83 @@ async def save_preset_handler(request):
 
 
 # ============================================================
+# API 路由：解析/校验预设（导入时按 sha256 定位改名文件，非破坏性）
+# ============================================================
+async def _sha256_of_path_async(path):
+    """非阻塞计算指定文件路径的 SHA256（worker 线程执行）"""
+    loop = asyncio.get_event_loop()
+
+    def _hash():
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    try:
+        return await loop.run_in_executor(None, _hash)
+    except Exception:
+        return None
+
+
+@PromptServer.instance.routes.post('/naiba/presets/resolve')
+async def resolve_preset_handler(request):
+    """导入预设时按 sha256 定位改名文件。
+
+    非破坏性：绝不丢弃任何条目。
+    - 含 sha256 且本地存在同哈希文件 -> 将 name 改为本地真实相对路径（支持改名匹配）
+    - 含 sha256 但本地无匹配 / 不含 sha256 -> 保留原始 name（缺失项由前端以 (missing) 显示）
+    旧预设（保存时尚未写入 sha256）不含 sha256，会原样返回，可正常导入。
+    """
+    try:
+        body = await request.json()
+        data = body.get('data', [])
+        if not isinstance(data, list):
+            return web.json_response({"error": "数据格式错误，需要是数组"}, status=400)
+
+        # 仅当存在带 sha256 的条目时才扫描本地 LoRA（I/O 密集），否则直接原样返回
+        has_sha = any(isinstance(e, dict) and e.get("sha256") for e in data)
+        local_sha_map = {}
+        if has_sha:
+            lora_dirs = folder_paths.get_folder_paths("loras")
+            for lora_dir in lora_dirs:
+                if not os.path.isdir(lora_dir):
+                    continue
+                for root, _dirs, files in os.walk(lora_dir):
+                    for f in files:
+                        if not f.lower().endswith(('.safetensors', '.pt', '.ckpt', '.pth')):
+                            continue
+                        p = os.path.join(root, f)
+                        key = os.path.realpath(p)
+                        if key in _SHA256_CACHE:
+                            sha = _SHA256_CACHE[key]
+                        else:
+                            sha = await _sha256_of_path_async(p)
+                            if sha:
+                                _SHA256_CACHE[key] = sha
+                        if sha:
+                            local_sha_map.setdefault(sha, p)
+
+        resolved = []
+        for entry in data:
+            if not isinstance(entry, dict):
+                continue
+            new_entry = dict(entry)
+            sha = new_entry.get("sha256")
+            if sha and sha in local_sha_map:
+                # 改名为本地真实相对路径（相对首个 lora 目录）
+                rel = os.path.relpath(local_sha_map[sha], lora_dirs[0]) if lora_dirs else local_sha_map[sha]
+                new_entry["name"] = rel
+            # 无 sha256 或本地无匹配：保留原始 name（缺失项由前端以 (missing) 显示）
+            resolved.append(new_entry)
+
+        return web.json_response({"data": resolved})
+    except Exception as e:
+        print(f"Error resolving preset: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+# ============================================================
 # API 路由：删除预设
 # ============================================================
 @PromptServer.instance.routes.delete('/naiba/presets/delete')
@@ -1307,7 +1384,7 @@ async def get_favorite_image_handler(request):
         return web.Response(status=500, text=str(e))
 
 
-print("✅ Naiba Routes loaded: /naiba/presets/*, /naiba/presets/upload-image, /naiba/presets/image, /naiba/lora/preview, /naiba/lora/civitai-sync, /naiba/lora/batch-sync, /naiba/lora/metadata, /naiba/cache/*, /naiba/lora/favorites/*, /naiba/lora/detail, /naiba/lora/custom-data/*")
+print("✅ Naiba Routes loaded: /naiba/presets/*, /naiba/presets/resolve, /naiba/presets/upload-image, /naiba/presets/image, /naiba/lora/preview, /naiba/lora/civitai-sync, /naiba/lora/batch-sync, /naiba/lora/metadata, /naiba/cache/*, /naiba/lora/favorites/*, /naiba/lora/detail, /naiba/lora/custom-data/*")
 
 
 # ============================================================

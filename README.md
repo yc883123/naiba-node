@@ -539,12 +539,22 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 ### v2.3.1
 - Multi LoRA Loader 与 Multi LoRA Loader (only model) 节点尺寸自适应修复
   - 隐藏的 `lora_data` 多行文本控件现覆写 `computeSize = () => [0, 0]`，让 ComfyUI 布局彻底忽略其高度，避免节点矩形被异常撑高/压低
-  - 面板高度改为闭包缓存（`panelHeight`），仅当真实渲染高度 `offsetHeight > 0` 时刷新，杜绝初始/离屏布局偶发测得 `0` 把节点压垮导致 `+ Add LoRA` 按钮溢出节点矩形
-  - 改用 `node.size[1] = node.computeSize()[1]` 直接贴合权威布局高度，不再与内部 `computeSize` 互写冲突
+  - 根因：本版本 ComfyUI 的 `node.computeSize()` 不会可靠地把 DOM 面板控件高度计入节点总高，导致节点被钉在过矮高度、`+ Add LoRA` 按钮溢出节点矩形
+  - 改用覆写 `node.computeSize` 与 `node.setSize`：以「面板 `offsetTop` + 面板真实内容高度 + 底部留白」作为节点总高，用户仍可拖大节点但不会被压到比内容更矮
+  - 面板高度闭包缓存（`panelHeight`），仅当真实渲染高度 `offsetHeight > 0` 时刷新，杜绝初始/离屏布局偶发测得 `0` 把节点压垮
 - 预设导入逻辑简化
   - 删除前端 `resolvePreset` 与后端 `/naiba/presets/resolve` 路由
   - 导入预设（从列表或文件）直接 `setNodeData` 完整套用 JSON 全部条目，不再按本地是否安装对应 LoRA 进行过滤（缺失项在下拉中以红色 `(missing)` 显示）
   - 修复本地未安装对应 LoRA 时（如 `Klein漫转真.json`）无法导入的问题
+
+### v2.3.2
+- 预设保存写入 sha256，导入支持按 sha256 定位改名文件（非破坏性）
+  - 保存预设时后端自动为每个条目计算并写入 `sha256`（基于本地 LoRA 文件哈希，缺失文件跳过）
+  - 重新加入非破坏性 `/naiba/presets/resolve` 路由与前端 `resolvePreset`：
+    - 条目含 `sha256` 且本地存在同哈希文件 → 自动改名为本地真实相对路径（改名也能匹配）
+    - 含 `sha256` 但本地无匹配 / 不含 `sha256` → 保留原始 `name`，绝不丢弃任何条目
+  - **向后兼容**：旧预设（保存时尚未写入 sha256）不含 `sha256`，会原样返回并正常导入
+  - 解析失败（网络/后端异常）时自动回退为原始数据，保证导入不中断
 
 ### v2.3.0
 - 新增 Naiba Textbox 节点
