@@ -536,6 +536,12 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 
 ## 更新日志
 
+### v2.3.3
+- Multi LoRA Loader 与 Multi LoRA Loader (only model) 节点布局二次修复（参照成熟案例）
+  - 根因：ComfyUI 前端给 DOM 面板自动加 `h-full`，而其父容器初始高度为 0，导致 `panel.offsetHeight` 只能测到极小值、节点高度计算错误、边框异常
+  - 在 `addDOMWidget(...)` 后加入 `panel.classList.remove("h-full")` 并设 `height:auto` / `minHeight:max-content`，让面板按条目真实内容高度展开，节点边框随条目数量自动增减
+  - 修复横向只能拉长、不能缩短：自定义 `computeSize()` 原以当前宽度为最小宽度下限，拉宽后无法缩短；改为 `res[0] = node.minWidth || 280`，横向只受真正最小宽度限制，可自由拉长/缩短，纵向内容自适应不受影响
+
 ### v2.3.1
 - Multi LoRA Loader 与 Multi LoRA Loader (only model) 节点尺寸自适应修复
   - 隐藏的 `lora_data` 多行文本控件现覆写 `computeSize = () => [0, 0]`，让 ComfyUI 布局彻底忽略其高度，避免节点矩形被异常撑高/压低

@@ -613,7 +613,7 @@ app.registerExtension({
             node.computeSize = function () {
                 const res = origComputeSize ? origComputeSize.apply(this, arguments) : [node.size[0] || 280, 200];
                 const h = computeTargetHeight();
-                res[0] = Math.max(res[0], node.size[0] || 280);
+                res[0] = node.minWidth || 280;
                 res[1] = Math.max(res[1], h);
                 return res;
             };
@@ -801,6 +801,13 @@ app.registerExtension({
             // 以缓存面板高度作为该 DOM 控件高度（非实时 offsetHeight），
             // 使 ComfyUI 内部 computeSize 永不读到 0，节点矩形稳定包住工具栏+条目+Add按钮
             loraPanelWidget.computeSize = (w) => [w, panelHeight];
+
+            // 修复：ComfyUI 前端会给 DOM 面板自动加 h-full，而其父容器初始高度为 0，
+            // 导致 panel.offsetHeight 只能测到极小值、节点高度计算错误。
+            // 移除 h-full 并改为按内容自适应，节点边框随条目数量自动增减。
+            panel.classList.remove("h-full");
+            panel.style.height = "auto";
+            panel.style.minHeight = "max-content";
 
             node.minWidth = 280;
             node.minHeight = 120;
