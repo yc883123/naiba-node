@@ -536,6 +536,20 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 
 ## 更新日志
 
+### v2.5.0
+- 新增 Preset Folder Reader 节点
+  - 直接读取 `custom_nodes/naiba-test/presets/` 目录下的预设 JSON，绕开画布连线即可拿到带 sha256 的预设配置
+  - `preset_name` 下拉列出所有预设，带「🔄 刷新预设列表」按钮（复用 `/naiba/presets/list` 接口重新扫描目录）
+  - 输出 `preset_json` / `lora_names` / `status`，格式与 Power LoRA Config Reader 完全一致，可直接接 Preset Sha256 Aligner / Civitai Sha256 Info Reader
+  - 每条自动带 `sha256`：预设已写入则用，缺失则按文件名现场计算（带 mtime/size 缓存）；可选 `skip_disabled` 只输出启用项
+- Preset Sha256 Aligner 缺失输出携带 lora 名字
+  - `missing_sha256` 输出从纯哈希数组改为 `[{"name":..., "sha256":...}]`，便于下游节点识别缺失模型
+- Civitai Sha256 Info Reader 优化
+  - 移除 `nsfw_level` 输入控件，内部默认 `Blocked`（=32）实现完全不过滤，保留 `nsfw_level` 输出端口
+  - `not_found_sha256` 端口输出改为 `[{"name":..., "sha256":...}]`，C站查不到的 LORA 可显示对应名字
+  - 解析支持三种输入格式：上游 `missing_sha256` 输出（含名字）/ 纯 JSON 数组 / 每行 `lora名|sha256` 文本
+  - 兜底：输入仅含纯哈希时反查本地 lora 目录补全文件名
+
 ### v2.3.4
 - 预设保存/导入 SHA256 扫描进度提示
   - 根因：后端计算 sha256 已在 worker 线程执行（浏览器画布不会真正冻结），但大文件（GB 级、尤其机械硬盘）扫描可超 4–5 秒，前端无任何反馈，易误以为卡死

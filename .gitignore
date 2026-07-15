@@ -53,6 +53,10 @@ __pycache__/
 *.pyd
 .Python
 
+# 忽略 sha256 匹配节点的本地缓存（查询结果 + 预览图）
+.sha256_previews/
+.sha256_query_cache.json
+
 # 忽略监控进程PID文件
 .watcher.pid
 
