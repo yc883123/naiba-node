@@ -1,13 +1,13 @@
 """
-Preset Folder Reader 节点
-直接从 presets/ 文件夹读取预设 JSON 文件，输出 naiba 预设格式（含文件 sha256）。
+Preset Folder Aligner 节点（合并节点）
+将「读取预设文件」与「预设对齐（本地缺失模型扫描）」合并到单次执行，输出 6 路：
 
-与 Power LoRA Config Reader 的区别：
-- 不依赖画布连线，直接读磁盘上的预设文件，链路最简单、最稳定。
-- 预设保存时已由后端写入 sha256；若某条目缺 sha256，则按文件名现场计算（带缓存）。
+  preset_json / lora_names / read_status   —— 来自读取预设
+  missing_sha256 / align_status / missing_count —— 来自对齐扫描
 
-输出格式与 Power LoRA Config Reader 一致，可直接接入
-Preset Sha256 Aligner / Civitai Sha256 Info Reader。
+所有核心逻辑（预设读取、sha256 解析、本地 sha256 映射扫描）均在本文件内自行实现，
+符合项目「节点逻辑必须在本文件完成」的约束：不导入任何节点类，仅复用 ComfyUI 基础库
+（folder_paths / hashlib / json / os）与本文件内复制的模块级工具函数。
 """
 
 import os
@@ -33,7 +33,7 @@ def _compute_sha256(path: str) -> "str | None":
                 h.update(chunk)
         return h.hexdigest()
     except Exception as e:  # noqa: BLE001
-        print(f"[PresetFolderReader] sha256 error {os.path.basename(path)}: {e}")
+        print(f"[PresetFolderAligner] sha256 error {os.path.basename(path)}: {e}")
         return None
 
 
@@ -72,7 +72,7 @@ def list_preset_files() -> "list[str]":
     try:
         return sorted(f[:-5] for f in os.listdir(PRESETS_DIR) if f.endswith(".json"))
     except Exception as e:  # noqa: BLE001
-        print(f"[PresetFolderReader] 列出预设失败: {e}")
+        print(f"[PresetFolderAligner] 列出预设失败: {e}")
         return []
 
 
@@ -92,15 +92,48 @@ def _safe_preset_path(preset_name: str):
     return file_path
 
 
-class PresetFolderReader:
+def _build_local_sha_map() -> "dict[str, str]":
+    """遍历 lora 目录，建立 sha256(小写) -> 文件真实路径 映射，仅对变更文件重算。"""
+    sha_to_path: "dict[str, str]" = {}
+    lora_dirs = folder_paths.get_folder_paths("loras")
+    for lora_dir in lora_dirs:
+        if not os.path.isdir(lora_dir):
+            continue
+        for root, _dirs, files in os.walk(lora_dir):
+            for f in files:
+                if not f.lower().endswith(('.safetensors', '.pt', '.ckpt', '.pth')):
+                    continue
+                p = os.path.join(root, f)
+                key = os.path.realpath(p)
+                cached = _SHA256_CACHE.get(key)
+                if cached is not None:
+                    mtime, size, sha = cached
+                    try:
+                        st = os.stat(p)
+                        if st.st_mtime == mtime and st.st_size == size and sha:
+                            sha_to_path.setdefault(sha, p)
+                            continue
+                    except OSError:
+                        pass
+                sha = _compute_sha256(p)
+                try:
+                    st = os.stat(p)
+                    _SHA256_CACHE[key] = (st.st_mtime, st.st_size, sha)
+                except OSError:
+                    pass
+                if sha:
+                    sha_to_path.setdefault(sha, p)
+    return sha_to_path
+
+
+class PresetFolderAligner:
     """
-    读取 presets/ 文件夹中的预设 JSON，输出 naiba 预设格式（含 sha256）。
+    读预设 + 对齐合并节点。
 
     用法：
-    1. preset_name 下拉选择 presets/ 中的预设（点节点上的"刷新预设列表"可重新扫描）
-    2. preset_json 输出口输出含 name/strength_model/strength_clip/enabled/sha256 的 JSON
-    3. lora_names 输出口输出启用的 LoRA 文件名列表
-    4. status 输出口输出读取状态
+    1. preset_name 下拉选择 presets/ 中的预设（点节点上的「刷新预设列表」可重新扫描）
+    2. skip_disabled 为 True 时，输出的预设 JSON / 列表仅包含启用项
+    3. 一次执行同时输出读取结果与本地缺失模型扫描结果
     """
 
     @classmethod
@@ -122,24 +155,25 @@ class PresetFolderReader:
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING")
-    RETURN_NAMES = ("preset_json", "lora_names", "status")
-    FUNCTION = "read_preset"
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "INT")
+    RETURN_NAMES = ("preset_json", "lora_names", "read_status", "missing_sha256", "align_status", "missing_count")
+    FUNCTION = "read_and_align"
     CATEGORY = "naiba-node"
     DESCRIPTION = (
-        "直接从 presets/ 文件夹读取预设文件，输出 naiba 预设格式（含文件 sha256）。\n"
-        "不依赖画布连线，比从画布读取 LoRA 加载器更稳定。\n"
+        "读预设 + 对齐合并节点：直接从 presets/ 文件夹读取预设文件并扫描本地缺失模型，一次执行输出 6 路。\n"
         "preset_json 每项含 name/strength_model/strength_clip/enabled/sha256，"
-        "可直接接入 Preset Sha256 Aligner 或 Civitai Sha256 Info Reader。"
+        "lora_names 为启用项列表（受 skip_disabled 影响）。\n"
+        "missing_sha256 列出本地 lora 目录中找不到对应模型的 sha256；align_status 给出扫描统计。"
     )
     SEARCH_ALIASES = [
-        "naiba", "preset folder", "preset reader", "预设读取",
-        "预设文件夹", "读预设", "preset file"
+        "naiba", "preset folder aligner", "预设对齐", "读预设",
+        "预设文件夹", "缺失模型", "preset align"
     ]
 
-    def read_preset(self, preset_name, skip_disabled=False):
-        """读取选中预设并转换为预设格式（含 sha256）"""
+    def read_and_align(self, preset_name, skip_disabled=False):
+        """读取预设并扫描本地缺失模型，返回 6 路输出。"""
 
+        # ---------- 阶段一：读取预设 ----------
         if not preset_name or preset_name == "(无预设文件)":
             return self._empty_output("未选择预设或 presets 文件夹为空")
 
@@ -159,7 +193,7 @@ class PresetFolderReader:
             return self._empty_output(f"预设格式错误（应为数组）: {preset_name}")
 
         preset_configs = []
-        missing = []
+        read_missing = []
         for item in data:
             if not isinstance(item, dict):
                 continue
@@ -170,7 +204,7 @@ class PresetFolderReader:
             if not sha:
                 sha = resolve_lora_sha256(name)
                 if not sha:
-                    missing.append(name)
+                    read_missing.append(name)
             cfg = {
                 "name": name,
                 "strength_model": float(item.get("strength_model", 1.0)),
@@ -194,24 +228,54 @@ class PresetFolderReader:
 
         total = len(preset_configs)
         enabled_count = len(enabled_configs)
-        status = (
+        read_status = (
             f"从 [{preset_name}] 读取到 {total} 个 LoRA"
             f"（{enabled_count} 个启用，{total - enabled_count} 个禁用）"
         )
-        if missing:
-            status += f"；{len(missing)} 个本地未找到（sha256 为空）"
+        if read_missing:
+            read_status += f"；{len(read_missing)} 个本地未找到（sha256 为空）"
 
-        return (preset_json, lora_names, status)
+        # ---------- 阶段二：对齐（本地缺失模型扫描） ----------
+        entries = []
+        for c in preset_configs:
+            s = c.get("sha256")
+            if isinstance(s, str) and s.strip():
+                entries.append({"name": c.get("name", ""), "sha256": s.strip().lower()})
+
+        if not entries:
+            align_status = "预设中无 sha256 记录，跳过对齐扫描"
+            return (preset_json, lora_names, read_status, "", align_status, 0)
+
+        local_map = _build_local_sha_map()
+        missing = [e for e in entries if e["sha256"] not in local_map]
+
+        align_status = (
+            f"扫描本地 lora 目录，共 {len(local_map)} 个模型；"
+            f"预设含 {len(entries)} 个 sha256，缺失 {len(missing)} 个"
+        )
+
+        missing_sha256 = ""
+        if missing:
+            # 保持顺序并去重
+            seen = set()
+            uniq = []
+            for e in missing:
+                if e["sha256"] not in seen:
+                    seen.add(e["sha256"])
+                    uniq.append(e)
+            missing_sha256 = json.dumps(uniq, ensure_ascii=False)
+
+        return (preset_json, lora_names, read_status, missing_sha256, align_status, len(missing))
 
     def _empty_output(self, status):
-        return ("[]", "[]", status)
+        return ("[]", "[]", status, "", status, 0)
 
 
 # 节点映射
 NODE_CLASS_MAPPINGS = {
-    "PresetFolderReader": PresetFolderReader,
+    "PresetFolderAligner": PresetFolderAligner,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PresetFolderReader": "Preset Folder Reader",
+    "PresetFolderAligner": "Preset Folder Aligner (读预设+对齐)",
 }

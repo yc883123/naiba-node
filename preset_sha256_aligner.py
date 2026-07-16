@@ -1,15 +1,12 @@
 """
-Preset Sha256 Matcher 节点
-包含两个独立 ComfyUI 节点：
+Civitai Sha256 哈希读取节点
 
-1. PresetSha256Aligner（预设对齐）
-   输入含 sha256 的预设 JSON（数组），扫描本地 lora 目录建立 sha256→文件路径映射，
-   输出在本地找不到对应模型的 sha256 列表（JSON 数组字符串；预设中完全无 sha256 时返回空字符串）。
+提供节点：
 
-2. CivitaiSha256InfoReader（C 站按哈希读取）
-   输入上一个节点的 sha256 列表（数组串或单个哈希），按哈希并发查询 Civitai，
+1. CivitaiSha256InfoReader（C 站按哈希读取）
+   输入 sha256 列表（数组串或单个哈希），按哈希并发查询 Civitai，
    下载预览图并转为 IMAGE tensor，输出与 CivitaiInfoReader 同构的 10 路信息，
-   并额外输出第 11 路 not_found_sha256（C 站查不到的哈希列表）。
+   第 10 路 not_found_sha256 列出在 C 站查不到的哈希。
 
 所有核心逻辑（sha256 扫描、异步查询、图片 tensor 加载、多模型合并）均在本文件自行实现，
 仅复用项目内工具模块 civitai_utils（CivitaiClient / NSFW_LEVELS），不导入任何节点类。
@@ -191,83 +188,6 @@ def _build_local_sha_map() -> Dict[str, str]:
     return sha_to_path
 
 
-# ===================== 节点一：预设对齐 =====================
-class PresetSha256Aligner:
-    """对比预设中的 sha256 与本地 lora 目录，输出缺失模型的 sha256 列表。"""
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "preset_json": ("STRING", {
-                    "multiline": True,
-                    "tooltip": "含 sha256 的预设 JSON（数组，每项含 sha256 字段）。"
-                               "可来自保存后的预设文件；预设中完全无 sha256 时输出空字符串。",
-                }),
-            }
-        }
-
-    RETURN_TYPES = ("STRING", "STRING", "INT")
-    RETURN_NAMES = ("missing_sha256", "status", "missing_count")
-    FUNCTION = "align"
-    CATEGORY = "naiba-node"
-    DESCRIPTION = (
-        "预设对齐节点 - 扫描本地 lora 目录，对比预设中记录的 sha256，找出本地缺失的模型。\n"
-        "输入：含 sha256 的预设 JSON 数组（保存预设时由预设路由写入 sha256）。\n"
-        "输出：缺失模型的 sha256 列表（JSON 数组字符串）；若预设中完全没有 sha256 字段则返回空字符串。"
-    )
-    SEARCH_ALIASES = ["naiba", "sha256", "预设对齐", "缺失模型", "missing lora", "对齐"]
-
-    def align(self, preset_json: str):
-        # 解析预设 JSON
-        presets = None
-        if preset_json and preset_json.strip():
-            try:
-                parsed = json.loads(preset_json)
-                if isinstance(parsed, list):
-                    presets = parsed
-                elif isinstance(parsed, dict):
-                    presets = [parsed]
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-        if not presets:
-            return ("", "预设为空或不是有效的 JSON 数组", 0)
-
-        # 提取所有 sha256（小写比对），保留 lora 名称
-        entries: List[Dict[str, str]] = []
-        for item in presets:
-            if isinstance(item, dict):
-                s = item.get("sha256")
-                if isinstance(s, str) and s.strip():
-                    s = s.strip().lower()
-                    name = item.get("name", "") or ""
-                    entries.append({"name": name, "sha256": s})
-
-        if not entries:
-            return ("", "预设中无 sha256 记录", 0)
-
-        local_map = _build_local_sha_map()
-        missing = [e for e in entries if e["sha256"] not in local_map]
-
-        status = (
-            f"扫描本地 lora 目录，共 {len(local_map)} 个模型；"
-            f"预设含 {len(entries)} 个 sha256，缺失 {len(missing)} 个"
-        )
-
-        if missing:
-            # 保持顺序并去重
-            seen = set()
-            uniq = []
-            for e in missing:
-                if e["sha256"] not in seen:
-                    seen.add(e["sha256"])
-                    uniq.append(e)
-            return (json.dumps(uniq, ensure_ascii=False), status, len(uniq))
-
-        return ("", status, 0)
-
-
 # ===================== 节点二：C 站按哈希读取 =====================
 class CivitaiSha256InfoReader:
     """按 sha256 到 Civitai 查询模型信息，输出与 CivitaiInfoReader 同构的 10 路 + not_found。"""
@@ -280,7 +200,6 @@ class CivitaiSha256InfoReader:
     EMPTY_TAGS = "无标签"
     EMPTY_URL = ""
     EMPTY_JSON = "{}"
-    EMPTY_CUSTOM_PROMPT = ""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -289,7 +208,7 @@ class CivitaiSha256InfoReader:
                 "sha256_list": ("STRING", {
                     "multiline": True,
                     "tooltip": "sha256 列表，支持格式："
-                               "① PresetSha256Aligner 的 missing_sha256 输出（推荐，含 lora 名）"
+                               "① PresetFolderAligner 的 missing_sha256 输出（推荐，含 lora 名）"
                                "② 纯 JSON 数组 [\"abc\",\"def\"] 或单个哈希"
                                "③ 每行 'lora名|sha256' 文本",
                 }),
@@ -299,15 +218,15 @@ class CivitaiSha256InfoReader:
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "STRING", "STRING", "STRING", "STRING", "INT", "STRING", "STRING", "STRING", "STRING", "STRING")
+    RETURN_TYPES = ("IMAGE", "STRING", "STRING", "STRING", "STRING", "INT", "STRING", "STRING", "STRING", "STRING")
     RETURN_NAMES = ("preview_image", "model_info", "trigger_words", "rating_info", "model_tags",
-                    "nsfw_level", "preview_url", "civitai_url", "raw_json", "custom_prompt", "not_found_sha256")
+                    "nsfw_level", "preview_url", "civitai_url", "raw_json", "not_found_sha256")
     FUNCTION = "read_by_hash"
     CATEGORY = "naiba-node"
     DESCRIPTION = (
         "C 站按哈希读取节点 - 输入 sha256 列表，按哈希查询 Civitai 模型版本信息。\n"
-        "输出前 10 路与 CivitaiInfoReader 完全一致（预览图/模型信息/触发词/评分/标签/NSFW/链接/原始 JSON/自定义提示词），"
-        "第 11 路 not_found_sha256 列出在 C 站查不到的哈希。\n"
+        "输出前 9 路与 CivitaiInfoReader 对应（预览图/模型信息/触发词/评分/标签/NSFW/链接/原始 JSON），"
+        "第 10 路 not_found_sha256 列出在 C 站查不到的哈希。\n"
         "带持久化磁盘缓存与并发限制，避免频繁请求触发封禁。"
     )
     SEARCH_ALIASES = ["naiba", "civitai", "sha256", "哈希查询", "模型信息", "触发词", "模型信息"]
@@ -591,7 +510,7 @@ class CivitaiSha256InfoReader:
 
         return (preview_batch, model_info, trigger_str, rating_info, tags_str,
                 max_nsfw_level, preview_url, civitai_url, raw_json,
-                self.EMPTY_CUSTOM_PROMPT, not_found_str)
+                not_found_str)
 
     @staticmethod
     def _format_single(vd: Dict, idx: int, is_multi: bool, preview_url: Optional[str]) -> Dict:
@@ -674,16 +593,14 @@ class CivitaiSha256InfoReader:
                else (torch.zeros((1, 64, 64, 3)) if HAS_TORCH else None))
         return (img, self.EMPTY_MODEL_INFO, self.EMPTY_TRIGGER, self.EMPTY_RATING,
                 self.EMPTY_TAGS, 0, self.EMPTY_URL, self.EMPTY_URL,
-                self.EMPTY_JSON, self.EMPTY_CUSTOM_PROMPT, "")
+                self.EMPTY_JSON, "")
 
 
 # 节点映射
 NODE_CLASS_MAPPINGS = {
-    "PresetSha256Aligner": PresetSha256Aligner,
     "CivitaiSha256InfoReader": CivitaiSha256InfoReader,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PresetSha256Aligner": "Preset Sha256 Aligner (预设对齐)",
     "CivitaiSha256InfoReader": "Civitai Sha256 Info Reader (哈希读取)",
 }

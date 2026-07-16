@@ -1,14 +1,14 @@
 /**
- * Preset Folder Reader - 前端扩展
+ * Preset Folder Aligner - 前端扩展
  * 在节点上添加『刷新预设列表』按钮，重新扫描 presets/ 文件夹并更新下拉选项。
  */
 
 import { api } from "../../scripts/api.js";
 
 app.registerExtension({
-    name: "Naiba.PresetFolderReader",
+    name: "Naiba.PresetFolderAligner",
     async beforeRegisterNodeDef(nodeType, nodeData) {
-        if (nodeData.name !== "Preset Folder Reader") return;
+        if (nodeData.name !== "Preset Folder Aligner (读预设+对齐)") return;
 
         const onNodeCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
@@ -33,7 +33,7 @@ app.registerExtension({
                             }
                         }
                     } catch (e) {
-                        console.error("[PresetFolderReader] 刷新失败:", e);
+                        console.error("[PresetFolderAligner] 刷新失败:", e);
                     }
                 }
             );

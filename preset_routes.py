@@ -128,6 +128,142 @@ def detect_image_mime(data: bytes, fallback_ext: str = "") -> str:
         ext = "." + ext
     return _EXT_MIME_MAP.get(ext, "application/octet-stream")
 
+# ============================================================
+# 视频 / GIF 首帧抽取（用于 LoRA 预览静态封面）
+# 依赖为运行时 import 探测，路径无关：自动在运行 ComfyUI 的 Python 内探测，
+# 不写死任何 Python 解释器路径。GIF 用 PIL（随 ComfyUI 自带，开箱即用）；
+# 视频用 cv2 / imageio / ffmpeg 其一，全缺失时优雅降级（返回 None）。
+# ============================================================
+_VIDEO_EXTS = {".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v"}
+_GIF_EXT = ".gif"
+
+# 懒加载的可选依赖（仅探测一次）
+_CV2 = None
+_CV2_TRIED = False
+_IMAGEIO = None
+_IMAGEIO_TRIED = False
+
+
+def _try_import_cv2():
+    global _CV2, _CV2_TRIED
+    if _CV2_TRIED:
+        return _CV2
+    _CV2_TRIED = True
+    try:
+        import cv2
+        _CV2 = cv2
+    except Exception:
+        _CV2 = None
+    return _CV2
+
+
+def _try_import_imageio():
+    global _IMAGEIO, _IMAGEIO_TRIED
+    if _IMAGEIO_TRIED:
+        return _IMAGEIO
+    _IMAGEIO_TRIED = True
+    try:
+        import imageio.v2 as imageio_mod
+        _IMAGEIO = imageio_mod
+    except Exception:
+        try:
+            import imageio
+            _IMAGEIO = imageio
+        except Exception:
+            _IMAGEIO = None
+    return _IMAGEIO
+
+
+def _gif_first_frame_png(path: str):
+    """用 PIL 抽取 GIF 首帧为 PNG 字节（PIL 随 ComfyUI 自带）。"""
+    try:
+        from PIL import Image
+        import io
+        with Image.open(path) as im:
+            im.seek(0)
+            frame = im.convert("RGB")
+            buf = io.BytesIO()
+            frame.save(buf, format="PNG")
+            return buf.getvalue()
+    except Exception as e:  # noqa: BLE001
+        print(f"[Naiba] GIF 首帧抽取失败 {path}: {e}")
+        return None
+
+
+def _video_first_frame_png(path: str):
+    """从视频抽取首帧为 PNG 字节：优先 cv2，其次 imageio，再次 ffmpeg 子进程。"""
+    cv2 = _try_import_cv2()
+    if cv2 is not None:
+        try:
+            cap = cv2.VideoCapture(path)
+            try:
+                if not cap.isOpened():
+                    return None
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    return None
+                from PIL import Image
+                import numpy as np
+                import io
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                im = Image.fromarray(rgb)
+                buf = io.BytesIO()
+                im.save(buf, format="PNG")
+                return buf.getvalue()
+            finally:
+                cap.release()
+        except Exception as e:  # noqa: BLE001
+            print(f"[Naiba] cv2 首帧抽取失败 {path}: {e}")
+
+    # imageio 兜底
+    imageio = _try_import_imageio()
+    if imageio is not None:
+        try:
+            import numpy as np
+            from PIL import Image
+            import io
+            reader = imageio.get_reader(path)
+            try:
+                frame = reader.get_data(0)
+                rgb = np.asarray(frame)[..., :3] if frame.ndim == 3 else frame
+                im = Image.fromarray(rgb)
+                buf = io.BytesIO()
+                im.save(buf, format="PNG")
+                return buf.getvalue()
+            finally:
+                reader.close()
+        except Exception as e:  # noqa: BLE001
+            print(f"[Naiba] imageio 首帧抽取失败 {path}: {e}")
+
+    # ffmpeg 子进程兜底
+    try:
+        from PIL import Image
+        import io
+        import subprocess
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-i", path, "-vframes", "1", "-f", "image2pipe",
+             "-vcodec", "png", "pipe:1"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
+        )
+        if proc.returncode == 0 and proc.stdout and proc.stdout[:8] == b"\x89PNG\r\n\x1a\n":
+            return proc.stdout
+    except FileNotFoundError:
+        pass
+    except Exception as e:  # noqa: BLE001
+        print(f"[Naiba] ffmpeg 首帧抽取失败 {path}: {e}")
+    return None
+
+
+def extract_first_frame_as_png(path: str) -> "bytes | None":
+    """抽取视频/GIF 首帧为 PNG 字节；失败或无可抽帧依赖时返回 None。"""
+    ext = os.path.splitext(path)[1].lower()
+    if ext == _GIF_EXT:
+        return _gif_first_frame_png(path)
+    if ext in _VIDEO_EXTS:
+        return _video_first_frame_png(path)
+    return None
+
+
 # 预设存储目录
 PRESETS_DIR = os.path.join(os.path.dirname(__file__), "presets")
 PRESETS_EXAMPLE_DIR = os.path.join(os.path.dirname(__file__), "presets.example")
@@ -607,9 +743,11 @@ async def get_lora_preview(request):
         # 调试信息（仅在找不到预览图时打印）
         
         # 支持的图片扩展名（扩展支持更多格式）
+        # 注意：.gif 已从静态搜索中移除，改为由视频/GIF 首帧抽帧逻辑处理
+        # （同名 gif 会抽取首帧作为静态封面，避免浏览器动画开销）
         image_extensions = [
             '.png', '.jpg', '.jpeg', '.webp', '.bmp',  # 常见格式
-            '.gif', '.tiff', '.tif', '.svg',  # 额外格式
+            '.tiff', '.tif', '.svg',  # 额外格式
             '.avif', '.heic', '.heif',  # 现代格式
             '.ico', '.apng'  # 其他格式
         ]
@@ -660,6 +798,43 @@ async def get_lora_preview(request):
                         headers={'Cache-Control': 'max-age=3600'}
                     )
         
+        # 没找到静态预览图 → 尝试从同名视频/GIF 抽取首帧作为静态封面
+        cached_cover = os.path.join(lora_dir, lora_basename + ".naiba.preview.png")
+        cover_bytes = None
+        if os.path.exists(cached_cover):
+            with open(cached_cover, "rb") as f:
+                cover_bytes = f.read()
+        else:
+            video_gif_cands = [lora_basename + ext for ext in
+                               (".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v", ".gif")]
+            # 兼容 Civitai 同步 / 用户自定义 gif 预览封面（同样抽首帧）
+            video_gif_cands += [lora_basename + ".preview.gif",
+                                lora_basename + ".custom.preview.gif"]
+            for cand in video_gif_cands:
+                cand_path = os.path.join(lora_dir, cand)
+                if os.path.exists(cand_path):
+                    frame = extract_first_frame_as_png(cand_path)
+                    if frame:
+                        try:
+                            with open(cached_cover, "wb") as f:
+                                f.write(frame)
+                        except Exception as e:  # noqa: BLE001
+                            print(f"[Naiba] 写入首帧缓存失败: {e}")
+                        cover_bytes = frame
+                        break
+
+        if cover_bytes:
+            image_cache.set(cache_key, {
+                'data': cover_bytes,
+                'content_type': "image/png",
+                'path': cached_cover,
+            })
+            return web.Response(
+                body=cover_bytes,
+                content_type="image/png",
+                headers={'Cache-Control': 'max-age=3600'}
+            )
+
         # 没找到预览图
         return web.Response(status=404, text="No preview found")
         
