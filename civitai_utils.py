@@ -32,14 +32,24 @@ PREVIEW_EXTENSIONS = [
     ".preview.png",
     ".preview.jpg",
     ".preview.jpeg",
+    ".preview.bmp",
+    ".preview.gif",
+    ".preview.tiff",
+    ".preview.tif",
     ".custom.preview.webp",
     ".custom.preview.png",
     ".custom.preview.jpg",
     ".custom.preview.jpeg",
+    ".custom.preview.bmp",
+    ".custom.preview.gif",
     ".webp",
     ".png",
     ".jpg",
     ".jpeg",
+    ".bmp",
+    ".gif",
+    ".tiff",
+    ".tif",
 ]
 
 
@@ -313,7 +323,7 @@ def find_local_preview(lora_path: str) -> Optional[str]:
     lora_basename = os.path.splitext(os.path.basename(lora_path))[0]
     
     # 1. 优先查找自定义预览图 (.custom.preview.*) - 用户显式设置，最高优先级
-    custom_preview_extensions = ['.webp', '.png', '.jpg', '.jpeg', '.gif']
+    custom_preview_extensions = ['.webp', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.tif']
     for ext in custom_preview_extensions:
         preview_path = os.path.join(lora_dir, lora_basename + '.custom.preview' + ext)
         if os.path.exists(preview_path):

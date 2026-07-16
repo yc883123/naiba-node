@@ -83,6 +83,51 @@ class ImageCache:
 # 创建全局缓存实例
 image_cache = ImageCache(max_size=200, ttl=3600)  # 缓存200张图片，1小时过期
 
+# 依据扩展名的 MIME 回退映射（当无法从文件内容识别时使用）
+_EXT_MIME_MAP = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".webp": "image/webp", ".gif": "image/gif", ".bmp": "image/bmp",
+    ".tiff": "image/tiff", ".tif": "image/tiff", ".svg": "image/svg+xml",
+    ".avif": "image/avif", ".heic": "image/heic", ".heif": "image/heif",
+    ".ico": "image/x-icon", ".apng": "image/apng",
+}
+
+
+def detect_image_mime(data: bytes, fallback_ext: str = "") -> str:
+    """
+    根据文件内容（魔数）检测真实图片 MIME 类型，不依赖扩展名。
+
+    Civitai 同步封面等场景下常出现“扩展名与实际格式不符”（例如文件实为 PNG
+    却被命名为 .jpeg）。若仅按扩展名返回 MIME，前端 <img> 可能裂图。此函数优先
+    用魔数识别，无法识别时回退到扩展名映射。
+
+    Args:
+        data: 图片二进制内容
+        fallback_ext: 扩展名（含点或不含均可），用于无法识别时的回退
+
+    Returns:
+        str: MIME 类型，例如 image/png
+    """
+    if len(data) >= 8 and data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if len(data) >= 3 and data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if len(data) >= 4 and data[:4] == b"GIF8":
+        return "image/gif"
+    if len(data) >= 4 and data[:4] in (b"II*\x00", b"MM\x00*"):
+        return "image/tiff"
+    if len(data) >= 4 and data[:4] == b"\x00\x00\x01\x00":
+        return "image/x-icon"
+    if len(data) >= 12 and data[4:8] in (b"avif", b"heic", b"heif", b"mif1"):
+        return "image/avif"
+    # 回退：依据扩展名
+    ext = fallback_ext.lower()
+    if not ext.startswith("."):
+        ext = "." + ext
+    return _EXT_MIME_MAP.get(ext, "application/octet-stream")
+
 # 预设存储目录
 PRESETS_DIR = os.path.join(os.path.dirname(__file__), "presets")
 PRESETS_EXAMPLE_DIR = os.path.join(os.path.dirname(__file__), "presets.example")
@@ -501,15 +546,8 @@ async def get_preset_image_handler(request):
                 image_path = os.path.join(PRESETS_IMAGES_DIR, f)
                 with open(image_path, 'rb') as fh:
                     image_data = fh.read()
-                ext = os.path.splitext(f)[1].lower()
-                mime_type_map = {
-                    '.png': 'image/png',
-                    '.jpg': 'image/jpeg',
-                    '.jpeg': 'image/jpeg',
-                    '.webp': 'image/webp',
-                    '.gif': 'image/gif',
-                }
-                content_type = mime_type_map.get(ext, 'image/webp')
+                # 依据真实文件内容（魔数）检测 MIME，避免扩展名与真实格式不符导致裂图
+                content_type = detect_image_mime(image_data, os.path.splitext(f)[1])
                 return web.Response(
                     body=image_data,
                     content_type=content_type,
@@ -576,24 +614,6 @@ async def get_lora_preview(request):
             '.ico', '.apng'  # 其他格式
         ]
         
-        # MIME 类型映射
-        mime_type_map = {
-            '.png': 'image/png',
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.webp': 'image/webp',
-            '.bmp': 'image/bmp',
-            '.gif': 'image/gif',
-            '.tiff': 'image/tiff',
-            '.tif': 'image/tiff',
-            '.svg': 'image/svg+xml',
-            '.avif': 'image/avif',
-            '.heic': 'image/heic',
-            '.heif': 'image/heif',
-            '.ico': 'image/x-icon',
-            '.apng': 'image/apng',
-        }
-        
         # 生成缓存键
         cache_key = f"lora_preview:{lora_name}"
         
@@ -623,9 +643,9 @@ async def get_lora_preview(request):
                     # 读取并返回图片
                     with open(preview_path, 'rb') as f:
                         image_data = f.read()
-                    
-                    # 根据扩展名设置 Content-Type
-                    content_type = mime_type_map.get(ext, 'image/png')
+
+                    # 依据真实文件内容（魔数）检测 MIME，避免扩展名与真实格式不符导致裂图
+                    content_type = detect_image_mime(image_data, ext)
                     
                     # 存入缓存
                     image_cache.set(cache_key, {
@@ -1361,17 +1381,9 @@ async def get_favorite_image_handler(request):
         # 读取图片
         with open(custom_image_path, 'rb') as f:
             image_data = f.read()
-        
-        # 根据扩展名设置 Content-Type
-        ext = os.path.splitext(custom_image_path)[1].lower()
-        mime_type_map = {
-            '.png': 'image/png',
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.webp': 'image/webp',
-            '.gif': 'image/gif',
-        }
-        content_type = mime_type_map.get(ext, 'image/webp')
+
+        # 依据真实文件内容（魔数）检测 MIME，避免扩展名与真实格式不符导致裂图
+        content_type = detect_image_mime(image_data, os.path.splitext(custom_image_path)[1])
         
         return web.Response(
             body=image_data,
@@ -1384,7 +1396,91 @@ async def get_favorite_image_handler(request):
         return web.Response(status=500, text=str(e))
 
 
-print("✅ Naiba Routes loaded: /naiba/presets/*, /naiba/presets/resolve, /naiba/presets/upload-image, /naiba/presets/image, /naiba/lora/preview, /naiba/lora/civitai-sync, /naiba/lora/batch-sync, /naiba/lora/metadata, /naiba/cache/*, /naiba/lora/favorites/*, /naiba/lora/detail, /naiba/lora/custom-data/*")
+# ============================================================
+# API 路由：获取 Civitai 元数据预览图（仅同步封面，不含自定义封面）
+# ============================================================
+@PromptServer.instance.routes.get('/naiba/lora/metadata/preview')
+async def get_metadata_preview_handler(request):
+    """
+    获取 Civitai 同步的元数据预览图（即 {lora}.preview.*，不含用户自定义封面）
+
+    参数:
+        name: LoRA文件名（必需）
+    """
+    lora_name = request.query.get('name', '').strip()
+
+    if not lora_name:
+        return web.Response(status=400, text="Missing lora name")
+
+    # 验证LoRA名称并返回完整路径
+    is_valid, error_msg, lora_path = validate_lora_name(lora_name)
+    if not is_valid:
+        status = 400 if "Missing" in error_msg else 404 if "not found" in error_msg else 403
+        return web.Response(status=status, text=error_msg)
+
+    try:
+        metadata_preview = find_metadata_preview(lora_path)
+        if not metadata_preview or not os.path.exists(metadata_preview):
+            return web.Response(status=404, text="No metadata preview found")
+
+        with open(metadata_preview, 'rb') as f:
+            image_data = f.read()
+
+        # 依据真实文件内容（魔数）检测 MIME，避免扩展名与真实格式不符导致裂图
+        content_type = detect_image_mime(image_data, os.path.splitext(metadata_preview)[1])
+
+        return web.Response(
+            body=image_data,
+            content_type=content_type,
+            headers={'Cache-Control': 'max-age=3600'}
+        )
+    except Exception as e:
+        print(f"Error getting metadata preview: {e}")
+        return web.Response(status=500, text=str(e))
+
+
+# ============================================================
+# API 路由：删除 Civitai 元数据预览图（仅删除同步封面，保留自定义封面）
+# ============================================================
+@PromptServer.instance.routes.delete('/naiba/lora/metadata/preview')
+async def delete_metadata_preview_handler(request):
+    """
+    删除 Civitai 同步的元数据预览图（{lora}.preview.*）
+
+    仅删除 Civitai 元数据封面，不会影响用户自定义封面 (.custom.preview.*)
+    或同名直接图片 (lora.png)。
+
+    参数:
+        name: LoRA文件名（必需）
+    """
+    lora_name = request.query.get('name', '').strip()
+
+    if not lora_name:
+        return web.json_response({"error": "Missing lora name"}, status=400)
+
+    # 验证LoRA名称并返回完整路径
+    is_valid, error_msg, lora_path = validate_lora_name(lora_name)
+    if not is_valid:
+        status = 400 if "Missing" in error_msg else 404 if "not found" in error_msg else 403
+        return web.json_response({"error": error_msg}, status=status)
+
+    try:
+        deleted = delete_metadata_preview(lora_path)
+
+        # 清除该LoRA的图片缓存，确保前端能加载最新预览图（删除后会回退到自定义封面/无图）
+        cache_key = f"lora_preview:{lora_name}"
+        image_cache.delete(cache_key)
+
+        return web.json_response({
+            "success": True,
+            "deleted": deleted
+        })
+    except Exception as e:
+        print(f"Error deleting metadata preview: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+print("✅ Naiba Routes loaded: /naiba/presets/*, /naiba/presets/resolve, /naiba/presets/upload-image, /naiba/presets/image, /naiba/lora/preview, /naiba/lora/metadata/preview, /naiba/lora/civitai-sync, /naiba/lora/batch-sync, /naiba/lora/metadata, /naiba/cache/*, /naiba/lora/favorites/*, /naiba/lora/detail, /naiba/lora/custom-data/*")
 
 
 # ============================================================
@@ -1464,6 +1560,71 @@ def get_custom_image_path(lora_path: str, extension: str = ".webp") -> str:
     return os.path.join(lora_dir, f"{lora_basename}.custom.preview{extension}")
 
 
+def find_metadata_preview(lora_path: str) -> Optional[str]:
+    """
+    查找 Civitai 同步的元数据预览图（即 {lora}.preview.*，不含用户自定义封面）
+
+    采用目录扫描而非固定扩展名列表，可兼容 Civitai 同步可能产生的任意扩展名
+    （如 .preview.bmp / .preview.tiff 等），避免漏匹配。
+
+    Args:
+        lora_path: LoRA文件路径
+
+    Returns:
+        Optional[str]: 元数据预览图路径，不存在返回None
+    """
+    lora_dir = os.path.dirname(lora_path)
+    lora_basename = os.path.splitext(os.path.basename(lora_path))[0]
+
+    # 仅匹配 Civitai 同步产生的 .preview.* 文件（排除 .custom.preview.*）
+    meta_prefix = lora_basename + ".preview."
+    custom_prefix = lora_basename + ".custom.preview."
+    try:
+        for f in os.listdir(lora_dir):
+            if not f.startswith(meta_prefix) or f.startswith(custom_prefix):
+                continue
+            candidate = os.path.join(lora_dir, f)
+            if os.path.isfile(candidate):
+                return candidate
+    except OSError:
+        return None
+    return None
+
+
+def delete_metadata_preview(lora_path: str) -> bool:
+    """
+    删除 Civitai 同步的元数据预览图（{lora}.preview.*）
+
+    注意：仅删除 Civitai 元数据封面，不会影响用户自定义封面 (.custom.preview.*)
+    或同名直接图片 (lora.png)。采用目录扫描以兼容任意扩展名。
+
+    Returns:
+        bool: 是否实际删除了文件
+    """
+    lora_dir = os.path.dirname(lora_path)
+    lora_basename = os.path.splitext(os.path.basename(lora_path))[0]
+
+    meta_prefix = lora_basename + ".preview."
+    custom_prefix = lora_basename + ".custom.preview."
+    deleted = False
+    try:
+        for f in os.listdir(lora_dir):
+            if not f.startswith(meta_prefix) or f.startswith(custom_prefix):
+                continue
+            candidate = os.path.join(lora_dir, f)
+            if not os.path.isfile(candidate):
+                continue
+            try:
+                os.remove(candidate)
+                deleted = True
+                print(f"[Naiba] Deleted metadata preview image: {candidate}")
+            except Exception as e:
+                print(f"[Naiba] Warning: Failed to delete {candidate}: {e}")
+    except OSError as e:
+        print(f"[Naiba] Warning: Could not list directory {lora_dir}: {e}")
+    return deleted
+
+
 def validate_lora_name(lora_name: str) -> Tuple[bool, str, Optional[str]]:
     """
     验证LoRA名称并返回完整路径
@@ -1535,7 +1696,10 @@ async def get_lora_detail_handler(request):
         
         # 查找本地预览图
         local_preview = find_local_preview(lora_path)
-        
+
+        # 查找 Civitai 元数据预览图（不含自定义封面）
+        metadata_preview = find_metadata_preview(lora_path)
+
         # 获取自定义数据
         custom_data = load_custom_data(lora_path)
         
@@ -1543,9 +1707,11 @@ async def get_lora_detail_handler(request):
             "success": True,
             "metadata": metadata,
             "local_preview": local_preview,
+            "metadata_preview": metadata_preview,
             "custom_data": custom_data,
             "has_cached_metadata": metadata is not None,
             "has_local_preview": local_preview is not None,
+            "has_metadata_preview": metadata_preview is not None,
             "has_custom_data": custom_data is not None
         })
         
@@ -1737,17 +1903,9 @@ async def get_custom_image_handler(request):
         # 读取图片
         with open(custom_image_path, 'rb') as f:
             image_data = f.read()
-        
-        # 根据扩展名设置 Content-Type
-        ext = os.path.splitext(custom_image_path)[1].lower()
-        mime_type_map = {
-            '.png': 'image/png',
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.webp': 'image/webp',
-            '.gif': 'image/gif',
-        }
-        content_type = mime_type_map.get(ext, 'image/webp')
+
+        # 依据真实文件内容（魔数）检测 MIME，避免扩展名与真实格式不符导致裂图
+        content_type = detect_image_mime(image_data, os.path.splitext(custom_image_path)[1])
         
         return web.Response(
             body=image_data,

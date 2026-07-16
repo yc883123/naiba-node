@@ -1052,6 +1052,7 @@ function createLoraDataPreviewModal(node, loraList) {
     async function showEditPanel(loraName) {
         // 加载自定义数据
         let customData = {};
+        let hasMetadataPreview = false;
         try {
             const detailController = new AbortController();
             const detailTimeoutId = setTimeout(() => detailController.abort(), 10000);
@@ -1060,6 +1061,9 @@ function createLoraDataPreviewModal(node, loraList) {
             const result = await response.json();
             if (result.success && result.custom_data) {
                 customData = result.custom_data;
+            }
+            if (result.success && result.has_metadata_preview) {
+                hasMetadataPreview = true;
             }
         } catch (e) {
             console.warn("[LoraDataPreview] 加载自定义数据失败:", e);
@@ -1225,6 +1229,77 @@ function createLoraDataPreviewModal(node, loraList) {
         editContent.appendChild(imageLabel);
         editContent.appendChild(imageUploadArea);
         editContent.appendChild(fileInput);
+
+        // 元数据预览图区域（Civitai 同步封面，支持删除，参考自定义封面）
+        const metaImageLabel = document.createElement("div");
+        metaImageLabel.textContent = "元数据预览图片 (Civitai)";
+        metaImageLabel.style.cssText = `color:${COLORS.text};font-size:12px;margin:12px 0 6px;`;
+
+        const metaImageArea = document.createElement("div");
+        metaImageArea.style.cssText = `
+            width:100%;height:120px;border:2px dashed ${COLORS.border};
+            border-radius:4px;display:flex;align-items:center;justify-content:center;
+            position:relative;overflow:hidden;background:${COLORS.inputBg};
+        `;
+
+        const metaImagePreview = document.createElement("img");
+        metaImagePreview.style.cssText = `width:100%;height:100%;object-fit:cover;display:none;`;
+
+        const metaImagePlaceholder = document.createElement("div");
+        metaImagePlaceholder.style.cssText = `color:${COLORS.textDim};font-size:12px;text-align:center;`;
+        metaImagePlaceholder.innerHTML = "尚无 Civitai 同步封面<br><span style='font-size:10px;'>同步后可在此删除</span>";
+
+        if (hasMetadataPreview) {
+            metaImagePreview.src = `/naiba/lora/metadata/preview?name=${encodeURIComponent(loraName)}&t=${Date.now()}`;
+            metaImagePreview.style.display = 'block';
+            metaImagePlaceholder.style.display = 'none';
+        }
+
+        metaImageArea.appendChild(metaImagePreview);
+        metaImageArea.appendChild(metaImagePlaceholder);
+
+        // 删除元数据封面按钮（与自定义封面的删除按钮一致）
+        const removeMetaBtn = document.createElement("div");
+        removeMetaBtn.textContent = "\u2715";
+        removeMetaBtn.title = "删除 Civitai 元数据封面（不影响自定义封面）";
+        removeMetaBtn.style.cssText = `
+            position:absolute;top:4px;right:4px;
+            width:20px;height:20px;border-radius:50%;
+            background:rgba(0,0,0,0.7);color:white;
+            display:${hasMetadataPreview ? 'flex' : 'none'};
+            align-items:center;justify-content:center;
+            cursor:pointer;font-size:12px;
+        `;
+        removeMetaBtn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            if (!confirm("确定删除 Civitai 元数据封面？自定义封面不受影响。")) return;
+            try {
+                const delResp = await api.fetchApi(`/naiba/lora/metadata/preview?name=${encodeURIComponent(loraName)}`, {
+                    method: 'DELETE'
+                });
+                const delResult = await delResp.json();
+                if (delResult.success) {
+                    metaImagePreview.style.display = 'none';
+                    metaImagePlaceholder.style.display = 'block';
+                    removeMetaBtn.style.display = 'none';
+                    // 刷新列表与节点封面（若无自定义封面则回退为无图）
+                    modalTimestamp = Date.now();
+                    renderLoraList();
+                    if (node._updateLoraDataPreview) {
+                        node._updateLoraDataPreview();
+                    }
+                } else {
+                    alert("删除失败: " + (delResult.error || "未知错误"));
+                }
+            } catch (err) {
+                console.error("[LoraDataPreview] 删除元数据封面失败:", err);
+                alert("删除失败: " + err.message);
+            }
+        });
+        metaImageArea.appendChild(removeMetaBtn);
+
+        editContent.appendChild(metaImageLabel);
+        editContent.appendChild(metaImageArea);
 
         // 自定义下载链接
         const downloadLinkLabel = document.createElement("div");
