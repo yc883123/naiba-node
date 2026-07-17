@@ -68,7 +68,30 @@ function placeLoraFloatPreview(e) {
     wrap.style.top = y + "px";
 }
 
+// 悬停延迟计时器：悬停一小段时间后才显示预览，避免快速划过时闪现
+let _previewShowTimer = null;
+
+function cancelScheduledPreview() {
+    if (_previewShowTimer) {
+        clearTimeout(_previewShowTimer);
+        _previewShowTimer = null;
+    }
+}
+
+function scheduleLoraFloatPreview(name, e, delay = 320) {
+    if (!name) return;
+    cancelScheduledPreview();
+    // 记录触发时的坐标，延迟结束后按此坐标定位
+    const cx = e.clientX, cy = e.clientY;
+    _previewShowTimer = setTimeout(() => {
+        _previewShowTimer = null;
+        showLoraFloatPreview(name);
+        placeLoraFloatPreview({ clientX: cx, clientY: cy });
+    }, delay);
+}
+
 function hideLoraFloatPreview() {
+    cancelScheduledPreview();
     const wrap = _loraFloatPreview;
     if (wrap) {
         wrap.style.display = "none";
@@ -246,8 +269,7 @@ function createFilterableSelect(options, selected, onChange, node) {
             optEl.addEventListener("mouseenter", (e) => { 
                 if (opt !== currentValue) optEl.style.background = "rgba(108,92,231,0.15)";
                 if (opt && node._previewEnabled) {
-                    showLoraFloatPreview(opt);
-                    placeLoraFloatPreview(e);
+                    scheduleLoraFloatPreview(opt, e);
                 }
             });
             optEl.addEventListener("mousemove", (e) => { 
@@ -700,6 +722,16 @@ app.registerExtension({
                 }, node);
                 row.appendChild(nameSelect.el);
 
+                // 悬停封面预览：仅当鼠标停留在 LoRA 名选择框上时才显示（调权重/开关不触发），
+                // 并加入 ~320ms 悬停延迟，避免快速划过节点时闪现预览
+                nameSelect.el.addEventListener("mouseenter", (e) => {
+                    if (entry.name && node._previewEnabled) {
+                        scheduleLoraFloatPreview(entry.name, e);
+                    }
+                });
+                nameSelect.el.addEventListener("mousemove", (e) => { placeLoraFloatPreview(e); });
+                nameSelect.el.addEventListener("mouseleave", () => { hideLoraFloatPreview(); });
+
                 const mkLabel = (t) => {
                     const s = document.createElement("span");
                     s.textContent = t;
@@ -745,15 +777,8 @@ app.registerExtension({
                     }
                 };
 
-                // 悬浮封面预览（复用单例浮层 /naiba/lora/preview）
-                card.addEventListener("mouseenter", (e) => {
-                    if (entry.name && node._previewEnabled) {
-                        showLoraFloatPreview(entry.name);
-                        placeLoraFloatPreview(e);
-                    }
-                });
-                card.addEventListener("mousemove", (e) => { placeLoraFloatPreview(e); });
-                card.addEventListener("mouseleave", () => { hideLoraFloatPreview(); });
+                // 悬浮封面预览仅绑定在 LoRA 名选择框上（见上），此处不再对整卡触发，
+                // 避免鼠标在权重输入框/开关区域移动时也弹出预览
 
                 entry.dom = card;
                 return entry;

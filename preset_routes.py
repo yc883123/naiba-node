@@ -2091,3 +2091,71 @@ async def get_custom_image_handler(request):
     except Exception as e:
         print(f"Error getting custom image: {e}")
         return web.Response(status=500, text=str(e))
+
+
+# ============================================================
+# API 路由：删除自定义数据（整个 .custom.info.json 及自定义封面）
+# ============================================================
+@PromptServer.instance.routes.delete('/naiba/lora/custom-data')
+async def delete_custom_data_handler(request):
+    """
+    删除某个 LoRA 的全部自定义数据
+
+    删除内容：
+        - {lora}.custom.info.json（自定义提示词/下载链接/NSFW/介绍等）
+        - {lora}.custom.preview.*（用户自定义封面图，若存在）
+    不会影响 Civitai 同步的元数据（.info.json）或元数据封面（.preview.*）。
+
+    参数:
+        name: LoRA文件名（必需）
+    """
+    lora_name = request.query.get('name', '').strip()
+
+    # 验证LoRA名称并返回完整路径
+    is_valid, error_msg, lora_path = validate_lora_name(lora_name)
+    if not is_valid:
+        status = 400 if "Missing" in error_msg else 404 if "not found" in error_msg else 403
+        return web.json_response({"error": error_msg}, status=status)
+
+    try:
+        deleted_files = []
+
+        # 1. 删除自定义数据 JSON
+        custom_data_path = get_custom_data_path(lora_path)
+        if os.path.exists(custom_data_path):
+            try:
+                os.remove(custom_data_path)
+                deleted_files.append(os.path.basename(custom_data_path))
+            except Exception as e:
+                print(f"[Naiba] Warning: Failed to delete custom data json: {e}")
+
+        # 2. 删除所有可能的自定义封面 .custom.preview.*
+        lora_dir = os.path.dirname(lora_path)
+        lora_basename = os.path.splitext(os.path.basename(lora_path))[0]
+        custom_preview_prefix = lora_basename + ".custom.preview."
+        try:
+            for f in os.listdir(lora_dir):
+                if f.startswith(custom_preview_prefix):
+                    candidate = os.path.join(lora_dir, f)
+                    if os.path.isfile(candidate):
+                        try:
+                            os.remove(candidate)
+                            deleted_files.append(f)
+                        except Exception as e:
+                            print(f"[Naiba] Warning: Failed to delete {candidate}: {e}")
+        except OSError as e:
+            print(f"[Naiba] Warning: Could not list directory {lora_dir}: {e}")
+
+        # 清除该LoRA的图片缓存，确保前端能加载最新预览图（回退到元数据封面/无图）
+        cache_key = f"lora_preview:{lora_name}"
+        image_cache.delete(cache_key)
+
+        return web.json_response({
+            "success": True,
+            "deleted": len(deleted_files) > 0,
+            "deleted_files": deleted_files
+        })
+
+    except Exception as e:
+        print(f"Error deleting custom data: {e}")
+        return web.json_response({"error": str(e)}, status=500)

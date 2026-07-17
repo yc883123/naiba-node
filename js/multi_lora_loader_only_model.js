@@ -76,6 +76,25 @@ function hideLoraFloatPreview() {
     }
 }
 
+// 悬浮预览延迟调度（避免快速划过即触发）
+let _previewShowTimer = null;
+function cancelScheduledPreview() {
+    if (_previewShowTimer) {
+        clearTimeout(_previewShowTimer);
+        _previewShowTimer = null;
+    }
+}
+function scheduleLoraFloatPreview(name, e, delay = 320) {
+    if (!name) return;
+    cancelScheduledPreview();
+    const cx = e.clientX, cy = e.clientY;
+    _previewShowTimer = setTimeout(() => {
+        _previewShowTimer = null;
+        showLoraFloatPreview(name);
+        placeLoraFloatPreview({ clientX: cx, clientY: cy });
+    }, delay);
+}
+
 // ========== 工具函数 ==========
 
 function createToggle(initial, onChange) {
@@ -246,8 +265,7 @@ function createFilterableSelect(options, selected, onChange, node) {
             optEl.addEventListener("mouseenter", (e) => { 
                 if (opt !== currentValue) optEl.style.background = "rgba(108,92,231,0.15)";
                 if (opt && node._previewEnabled) {
-                    showLoraFloatPreview(opt);
-                    placeLoraFloatPreview(e);
+                    scheduleLoraFloatPreview(opt, e);
                 }
             });
             optEl.addEventListener("mousemove", (e) => { 
@@ -255,6 +273,7 @@ function createFilterableSelect(options, selected, onChange, node) {
             });
             optEl.addEventListener("mouseleave", () => { 
                 if (opt !== currentValue) optEl.style.background = "transparent";
+                cancelScheduledPreview();
                 hideLoraFloatPreview();
             });
             optEl.addEventListener("click", () => {
@@ -698,6 +717,18 @@ app.registerExtension({
                 }, node);
                 row.appendChild(nameSelect.el);
 
+                // 悬浮封面预览（仅绑定名称选择框，避免整张卡片划过即触发；带延迟）
+                nameSelect.el.addEventListener("mouseenter", (e) => {
+                    if (entry.name && node._previewEnabled) {
+                        scheduleLoraFloatPreview(entry.name, e);
+                    }
+                });
+                nameSelect.el.addEventListener("mousemove", (e) => { placeLoraFloatPreview(e); });
+                nameSelect.el.addEventListener("mouseleave", () => {
+                    cancelScheduledPreview();
+                    hideLoraFloatPreview();
+                });
+
                 const mkLabel = (t) => {
                     const s = document.createElement("span");
                     s.textContent = t;
@@ -735,16 +766,6 @@ app.registerExtension({
                         card.style.opacity = "1";
                     }
                 };
-
-                // 悬浮封面预览（复用单例浮层 /naiba/lora/preview）
-                card.addEventListener("mouseenter", (e) => {
-                    if (entry.name && node._previewEnabled) {
-                        showLoraFloatPreview(entry.name);
-                        placeLoraFloatPreview(e);
-                    }
-                });
-                card.addEventListener("mousemove", (e) => { placeLoraFloatPreview(e); });
-                card.addEventListener("mouseleave", () => { hideLoraFloatPreview(); });
 
                 entry.dom = card;
                 return entry;

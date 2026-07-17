@@ -664,7 +664,7 @@ function createVisualLoraModal(node, loraList) {
                 const isEnabled = isSelected ? (selectedLoras.get(lora).enabled !== false) : true;
                 const card = document.createElement("div");
                 
-                // 卡片边框样式：选中=绿色，收藏=橙色，普通=默认，禁用=灰色
+                // 卡片边框样式：选中=高亮紫(强对比)，收藏=橙色，普通=默认，禁用=灰色
                 let borderColor = COLORS.cardBorder;
                 let boxShadow = '';
                 if (!isEnabled) {
@@ -672,16 +672,17 @@ function createVisualLoraModal(node, loraList) {
                     boxShadow = `box-shadow:0 0 0 1px ${COLORS.disabled}40;`;
                 } else if (isSelected) {
                     borderColor = COLORS.accent;
-                    boxShadow = `box-shadow:0 0 0 2px ${COLORS.accent}40;`;
+                    boxShadow = `box-shadow:0 0 0 3px ${COLORS.accent}, 0 0 14px ${COLORS.accent}90;`;
                 } else if (isFavorited) {
                     borderColor = COLORS.favoriteBorder;
                     boxShadow = `box-shadow:0 0 0 2px ${COLORS.favoriteBorder}40;`;
                 }
                 
                 card.style.cssText = `
-                    background:${COLORS.cardBg};border:1px solid ${borderColor};
+                    background:${isSelected && isEnabled ? "#242145" : COLORS.cardBg};
+                    border:${isSelected && isEnabled ? "2px" : "1px"} solid ${borderColor};
                     border-radius:6px;padding:12px;cursor:pointer;
-                    transition:all 0.2s;position:relative;
+                    transition:all 0.15s;position:relative;
                     ${boxShadow}
                     ${!isEnabled ? "opacity:0.5;filter:grayscale(0.6);" : ""}
                 `;
@@ -832,34 +833,6 @@ function createVisualLoraModal(node, loraList) {
 
                 card.appendChild(weightControls);
 
-                // 删除按钮（左上角，常显）
-                const deleteBtn = document.createElement("div");
-                deleteBtn.style.cssText = `
-                    position:absolute;top:8px;left:8px;z-index:10;
-                    width:24px;height:24px;border-radius:50%;
-                    display:flex;align-items:center;justify-content:center;
-                    cursor:pointer;font-size:14px;font-weight:bold;
-                    background:rgba(255,107,107,0.8);backdrop-filter:blur(4px);
-                    color:white;transition:all 0.2s;
-                `;
-                deleteBtn.textContent = "×";
-                deleteBtn.title = "移除选中";
-                deleteBtn.addEventListener("click", (e) => {
-                    e.stopPropagation();
-                    selectedLoras.delete(lora);
-                    updateSelectedCount();
-                    renderLoraList();
-                });
-                deleteBtn.addEventListener("mouseenter", () => {
-                    deleteBtn.style.transform = "scale(1.1)";
-                    deleteBtn.style.background = "rgba(255,107,107,1)";
-                });
-                deleteBtn.addEventListener("mouseleave", () => {
-                    deleteBtn.style.transform = "scale(1)";
-                    deleteBtn.style.background = "rgba(255,107,107,0.8)";
-                });
-                preview.appendChild(deleteBtn);
-
                 // 启用/禁用开关（常显，无圆点，高亮 div 表达状态）
                 const toggleRow = document.createElement("div");
                 toggleRow.style.cssText = `
@@ -895,6 +868,31 @@ function createVisualLoraModal(node, loraList) {
                 };
                 paintSwitch(isEnabled);
 
+                // 增量刷新单张卡片外观（避免整体 renderLoraList 重渲染带来的迟滞）
+                const refreshCardState = () => {
+                    const sel = selectedLoras.has(lora);
+                    const fav = favoriteLoras.has(lora);
+                    const en = sel ? (selectedLoras.get(lora).enabled !== false) : true;
+                    let bc = COLORS.cardBorder, bs = "none", bw = "1px", bg = COLORS.cardBg;
+                    if (!en) {
+                        bc = COLORS.disabled; bs = `0 0 0 1px ${COLORS.disabled}40`;
+                    } else if (sel) {
+                        bc = COLORS.accent; bs = `0 0 0 3px ${COLORS.accent}, 0 0 14px ${COLORS.accent}90`;
+                        bw = "2px"; bg = "#242145";
+                    } else if (fav) {
+                        bc = COLORS.favoriteBorder; bs = `0 0 0 2px ${COLORS.favoriteBorder}40`;
+                    }
+                    card.style.borderColor = bc;
+                    card.style.borderWidth = bw;
+                    card.style.boxShadow = bs;
+                    card.style.background = bg;
+                    card.style.opacity = en ? "1" : "0.5";
+                    card.style.filter = en ? "none" : "grayscale(0.6)";
+                    toggleLabel.textContent = en ? "已启用" : "已禁用";
+                    toggleLabel.style.color = en ? COLORS.success : COLORS.disabled;
+                    paintSwitch(en);
+                };
+
                 toggleSwitch.addEventListener("click", (e) => {
                     e.stopPropagation();
                     if (!selectedLoras.has(lora)) {
@@ -907,7 +905,8 @@ function createVisualLoraModal(node, loraList) {
                         const config = selectedLoras.get(lora);
                         config.enabled = !config.enabled;
                     }
-                    renderLoraList();
+                    updateSelectedCount();
+                    refreshCardState();
                 });
 
                 toggleRow.appendChild(toggleLabel);
@@ -915,7 +914,8 @@ function createVisualLoraModal(node, loraList) {
                 card.appendChild(toggleRow);
 
                 card.addEventListener("click", () => {
-                    if (selectedLoras.has(lora)) {
+                    const wasSelected = selectedLoras.has(lora);
+                    if (wasSelected) {
                         selectedLoras.delete(lora);
                     } else {
                         selectedLoras.set(lora, {
@@ -925,7 +925,12 @@ function createVisualLoraModal(node, loraList) {
                         });
                     }
                     updateSelectedCount();
-                    renderLoraList();
+                    // “已选择”类别下取消选中需移除该卡片，仍走整体重渲染；其余情况增量刷新
+                    if (currentCategory === "selected" && wasSelected) {
+                        renderLoraList();
+                    } else {
+                        refreshCardState();
+                    }
                 });
 
                 grid.appendChild(card);
@@ -953,7 +958,7 @@ function createVisualLoraModal(node, loraList) {
                     borderStyle = `border:1px solid ${borderColor};box-shadow:0 0 0 1px ${COLORS.disabled}40;`;
                 } else if (isSelected) {
                     borderColor = COLORS.accent;
-                    borderStyle = `border:1px solid ${borderColor};box-shadow:0 0 0 1px ${COLORS.accent}40;`;
+                    borderStyle = `border:2px solid ${borderColor};box-shadow:0 0 0 2px ${COLORS.accent}, 0 0 10px ${COLORS.accent}80;`;
                 } else if (isFavorited) {
                     borderColor = COLORS.favoriteBorder;
                     borderStyle = `border:1px solid ${borderColor};box-shadow:0 0 0 1px ${COLORS.favoriteBorder}40;`;
@@ -1020,7 +1025,7 @@ function createVisualLoraModal(node, loraList) {
 
                     const mInput = document.createElement("input");
                     mInput.type = "number";
-                    mInput.value = selectedLoras.get(lora).strength_model;
+                    mInput.value = selectedLoras.has(lora) ? selectedLoras.get(lora).strength_model : 1.0;
                     mInput.min = -10;
                     mInput.max = 10;
                     mInput.step = 0.1;
@@ -1030,7 +1035,9 @@ function createVisualLoraModal(node, loraList) {
                         color:${COLORS.text};font-size:11px;text-align:center;
                     `;
                     mInput.addEventListener("change", () => {
-                        selectedLoras.get(lora).strength_model = parseFloat(mInput.value);
+                        if (selectedLoras.has(lora)) {
+                            selectedLoras.get(lora).strength_model = parseFloat(mInput.value);
+                        }
                     });
 
                     const cLabel = document.createElement("span");
@@ -1039,7 +1046,7 @@ function createVisualLoraModal(node, loraList) {
 
                     const cInput = document.createElement("input");
                     cInput.type = "number";
-                    cInput.value = selectedLoras.get(lora).strength_clip;
+                    cInput.value = selectedLoras.has(lora) ? selectedLoras.get(lora).strength_clip : 1.0;
                     cInput.min = -10;
                     cInput.max = 10;
                     cInput.step = 0.1;
@@ -1049,7 +1056,9 @@ function createVisualLoraModal(node, loraList) {
                         color:${COLORS.text};font-size:11px;text-align:center;
                     `;
                     cInput.addEventListener("change", () => {
-                        selectedLoras.get(lora).strength_clip = parseFloat(cInput.value);
+                        if (selectedLoras.has(lora)) {
+                            selectedLoras.get(lora).strength_clip = parseFloat(cInput.value);
+                        }
                     });
 
                     weightControls.appendChild(mLabel);
@@ -1100,41 +1109,17 @@ function createVisualLoraModal(node, loraList) {
                 });
                 item.appendChild(toggleSwitch);
 
-                // 删除按钮（常显）
-                const deleteBtn = document.createElement("div");
-                deleteBtn.style.cssText = `
-                    width:20px;height:20px;border-radius:50%;flex-shrink:0;
-                    display:flex;align-items:center;justify-content:center;
-                    cursor:pointer;font-size:12px;font-weight:bold;
-                    background:rgba(255,107,107,0.7);
-                    color:white;transition:all 0.2s;
-                `;
-                deleteBtn.textContent = "×";
-                deleteBtn.title = "移除选中";
-                deleteBtn.addEventListener("click", (e) => {
-                    e.stopPropagation();
-                    selectedLoras.delete(lora);
-                    updateSelectedCount();
-                    renderLoraList();
-                });
-                deleteBtn.addEventListener("mouseenter", () => {
-                    deleteBtn.style.background = "rgba(255,107,107,1)";
-                });
-                deleteBtn.addEventListener("mouseleave", () => {
-                    deleteBtn.style.background = "rgba(255,107,107,0.7)";
-                });
-                item.appendChild(deleteBtn);
-
                 if (weightControls) item.appendChild(weightControls);
 
                 item.addEventListener("click", (e) => {
                     if (e.target.tagName === "INPUT") return;
-                    if (selectedLoras.has(lora)) {
+                    const wasSelected = selectedLoras.has(lora);
+                    if (wasSelected) {
                         selectedLoras.delete(lora);
                     } else {
                         selectedLoras.set(lora, {
-                            strength_model: 1.0,
-                            strength_clip: 1.0,
+                            strength_model: parseFloat(mInput.value) || 1.0,
+                            strength_clip: parseFloat(cInput.value) || 1.0,
                             enabled: true
                         });
                     }

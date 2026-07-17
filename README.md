@@ -536,6 +536,29 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 
 ## 更新日志
 
+### v2.7.0
+- Lora Data Preview 主弹窗复用 Visual LoRA Loader 结构
+  - 新增左侧**文件夹侧边栏**，按 LoRA 目录层级浏览（`buildFolderStructure` / `getLorasInFolder` / `renderFolderTree` / `renderFolderLevel`）
+  - 标题栏新增**网格 / 列表视图切换**按钮（`currentView` 与类别状态 `currentCategory` 解耦）
+  - 保留「全部 / 已选择 / 收藏」类别标签，网格与列表视图均提供 `同步 / 编辑 / 详情` + 收藏按钮
+  - 刷新列表 / 初始化 / 全选均改为按「文件夹 + 类别 + 搜索」计算可见项并同步刷新侧边栏
+- Lora Data Preview 编辑面板改造
+  - 顶部新增 **Civitai 元数据只读区**（模型名、版本、基础模型、触发词、描述、标签），纯展示不可编辑
+  - 下方保留原有可编辑的自定义数据（提示词、预览图上传、下载链接、NSFW、模型介绍）
+  - 修复详情页「加载中」占位框未被真实内容替换的问题
+  - 自定义标签页新增「删除自定义数据」按钮，调用后端 `DELETE /naiba/lora/custom-data`
+  - 修复编辑面板内容过长时被浏览器窗口截断且无法滚动：改为「标题栏固定 + 内容区滚动 + 底部按钮固定」布局（`max-height:90vh` + 纵向 flex + 内容区 `overflow-y:auto`）
+- 后端新增自定义数据删除路由
+  - `DELETE /naiba/lora/custom-data`：删除 `{lora}.custom.info.json` 及全部 `{lora}.custom.preview.*`，清理预览缓存，不影响 Civitai 元数据
+- Visual LoRA Loader 交互修复
+  - 增强选中卡片对比度（网格 3px 边框 + 辉光 + 深色底；列表 2px 边框 + 辉光）
+  - 移除卡片左上角红色 `×` 删除按钮，改为点击卡片本身取消选中（保留右上角关闭按钮）
+  - 点击选中改为增量刷新 `refreshCardState()`，消除每次全量 `renderLoraList()` 造成的卡顿
+  - 修复列表模式空白 Bug：为未选中 LoRA 的 `selectedLoras.get()` 访问补充 `has()` 守卫
+- Multi LoRA Loader / Multi LoRA Loader (only model) 悬浮预览优化
+  - 悬浮预览仅绑定到 LoRA 名称选择框（不再整张卡片触发），划过权重/开关/删除区域不再弹浮层
+  - 新增 hover 延迟调度（`scheduleLoraFloatPreview`，320ms），快速划过不触发预览；下拉选项同步使用延迟
+
 ### v2.5.0
 - 新增 Preset Folder Reader 节点
   - 直接读取 `custom_nodes/naiba-test/presets/` 目录下的预设 JSON，绕开画布连线即可拿到带 sha256 的预设配置
