@@ -38,6 +38,9 @@ class FakeUNet(nn.Module):
         self.blocks = nn.ModuleList([FakeBlock() for _ in range(n_blocks)])
         if n_vace:
             self.vace_blocks = nn.ModuleList([FakeBlock() for _ in range(n_vace)])
+        # embedding 模块（阶段三测试用）
+        self.text_embedding = nn.Linear(4, 4)
+        self.img_emb = nn.Linear(4, 4)
 
     def forward(self, x, t=None, context=None, transformer_options=None, **kwargs):
         to = transformer_options if transformer_options is not None else {}
@@ -99,6 +102,9 @@ def main():
     base = FakePatcher(unet, offload_device=device)
 
     node = M.NaibaWanBlockSwap()
+    # 测试环境无 cuda，main/offload 均为 cpu，_is_on_device 会短路导致 .to 不发生。
+    # 为验证“块交换决策确实触发了 .to”，强制 _is_on_device 返回 False（仅测试用）。
+    M._is_on_device = lambda module, device: False
     out = node.optimize(base, blocks_to_swap=3, vace_blocks_to_swap=2, prefetch_blocks=1)
     model_clone = out[0]
 
@@ -152,10 +158,83 @@ def main():
     cfg2 = mc2.model_options["transformer_options"]["block_swap_config"]
     assert cfg2["blocks_to_swap"] == 5, cfg2["blocks_to_swap"]
     assert cfg2["vace_blocks_to_swap"] == n_vace, cfg2["vace_blocks_to_swap"]
-    assert cfg2["prefetch_blocks"] == 5, cfg2["prefetch_blocks"]
-    print(f"[OK] 数量限制正确: blocks={cfg2['blocks_to_swap']}, vace={cfg2['vace_blocks_to_swap']}, prefetch={cfg2['prefetch_blocks']}")
+    # 测试环境无 cuda，阶段三会自动关闭预取；非 cuda 下 prefetch 应为 0
+    assert cfg2["prefetch_blocks"] == 0, cfg2["prefetch_blocks"]
+    print(f"[OK] 数量限制正确: blocks={cfg2['blocks_to_swap']}, vace={cfg2['vace_blocks_to_swap']}, prefetch={cfg2['prefetch_blocks']} (非cuda自动关闭)")
 
-    print("\n=== 阶段二验证全部通过 ===")
+    # ---------------------- 阶段三 ----------------------
+    # 6) 非 cuda 设备自动关闭预取
+    base4 = FakePatcher(FakeUNet(5, n_vace), device)
+    out4 = node.optimize(base4, blocks_to_swap=3, prefetch_blocks=5)
+    mc4 = out4[0]
+    mc4.fire(CallbacksMP.ON_LOAD, device, 0, False, False)  # device 为 cpu（非 cuda）
+    cfg4 = mc4.model_options["transformer_options"]["block_swap_config"]
+    assert cfg4["prefetch_blocks"] == 0, f"非 cuda 应禁用预取，实际 {cfg4['prefetch_blocks']}"
+    print(f"[OK] 非 cuda 自动关闭预取 (prefetch={cfg4['prefetch_blocks']})")
+
+    # 7) embedding 成对移动 + forward 结束后恢复（仅当前配置开启时生效）
+    base3 = FakePatcher(FakeUNet(5, n_vace), device)
+    out3 = node.optimize(base3, blocks_to_swap=0, vace_blocks_to_swap=0,
+                         offload_img_emb=True, offload_txt_emb=True)
+    mc3 = out3[0]
+    mc3.fire(CallbacksMP.ON_LOAD, device, 0, False, False)
+    cfg3 = mc3.model_options["transformer_options"]["block_swap_config"]
+    assert cfg3["offload_txt_emb"] and cfg3["offload_img_emb"]
+
+    unet3 = base3.model.diffusion_model
+    emb_calls = []
+    def emb_counting_to(self, *a, **k):
+        emb_calls.append((id(self), a, k))
+        return nn.Module.to(self, *a, **k)
+    unet3.text_embedding.to = types.MethodType(emb_counting_to, unet3.text_embedding)
+    unet3.img_emb.to = types.MethodType(emb_counting_to, unet3.img_emb)
+    with torch.no_grad():
+        unet3(torch.randn(2, 4), transformer_options={"block_swap_config": cfg3})
+    # txt_emb 与 img_emb 各移动两次（去/回），共 4 次
+    assert len(emb_calls) >= 4, f"embedding 应成对移动，实际 {len(emb_calls)} 次"
+    assert emb_calls[-1][1][0] == device, "forward 结束后应移回 offload_device"
+    print(f"[OK] embedding 成对移动+恢复 (to_calls={len(emb_calls)})")
+
+    # 8) 异常时 embedding 仍通过 finally 恢复
+    unet3b = FakeUNet(5, n_vace)
+    base3b = FakePatcher(unet3b, device)
+    mc3b = node.optimize(base3b, blocks_to_swap=0, vace_blocks_to_swap=0,
+                         offload_img_emb=True, offload_txt_emb=True)[0]
+    mc3b.fire(CallbacksMP.ON_LOAD, device, 0, False, False)
+    cfg3b = mc3b.model_options["transformer_options"]["block_swap_config"]
+    emb_calls2 = []
+    unet3b.text_embedding.to = types.MethodType(
+        (lambda self, *a, **k: (emb_calls2.append((id(self), a, k)) or nn.Module.to(self, *a, **k))), unet3b.text_embedding)
+    unet3b.img_emb.to = types.MethodType(
+        (lambda self, *a, **k: (emb_calls2.append((id(self), a, k)) or nn.Module.to(self, *a, **k))), unet3b.img_emb)
+    # 让某个 block 抛异常
+    def bad_forward(self, x):
+        raise RuntimeError("boom")
+    unet3b.blocks[2].forward = types.MethodType(bad_forward, unet3b.blocks[2])
+    raised = False
+    try:
+        with torch.no_grad():
+            unet3b(torch.randn(2, 4), transformer_options={"block_swap_config": cfg3b})
+    except RuntimeError:
+        raised = True
+    assert raised, "应抛出块异常"
+    assert any(c[1][0] == device for c in emb_calls2), "异常时 embedding 必须移回 offload_device"
+    print(f"[OK] embedding 异常时通过 finally 恢复 (to_calls={len(emb_calls2)})")
+
+    # 9) 未优化分支 embedding 不被移动（分支隔离）
+    emb_calls3 = []
+    unet3c = FakeUNet(5, n_vace)
+    base3c = FakePatcher(unet3c, device)  # 不经过 block swap 节点，无配置
+    unet3c.text_embedding.to = types.MethodType(
+        (lambda self, *a, **k: (emb_calls3.append((id(self), a, k)) or nn.Module.to(self, *a, **k))), unet3c.text_embedding)
+    unet3c.img_emb.to = types.MethodType(
+        (lambda self, *a, **k: (emb_calls3.append((id(self), a, k)) or nn.Module.to(self, *a, **k))), unet3c.img_emb)
+    with torch.no_grad():
+        unet3c(torch.randn(2, 4), transformer_options={})  # 无 block_swap_config
+    assert len(emb_calls3) == 0, f"未优化分支不应移动 embedding，实际 {len(emb_calls3)}"
+    print(f"[OK] 未优化分支 embedding 无移动 (to_calls={len(emb_calls3)})")
+
+    print("\n=== 阶段二/三验证全部通过 ===")
 
 
 if __name__ == "__main__":

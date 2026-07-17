@@ -3,23 +3,22 @@ NaibaWanBlockSwap - WAN模型Block Swap节点
 将transformer block在GPU和CPU之间交换以降低显存占用
 完全独立实现，不导入任何内置节点类
 
-阶段二（refactor blockswap hook lifecycle）：
-- 新增模块级 _BlockSwapController，集中管理共享 UNet 的 hooks 生命周期
-- 每个底层 UNet 只注册一套 hooks（保存所有 RemovableHandle），幂等安装
-- 使用弱引用注册表（按 id(unet) 索引）避免 ON_LOAD 重复注册与内存泄漏
-- 使用带 key 的 ComfyUI callback，避免同一 patcher 重复添加 ON_LOAD/ON_CLEANUP 回调
-- hooks 不再闭包引用 model_patcher，改由 UNet 顶层 forward_pre_hook 从本次推理的
-  transformer_options["block_swap_config"] 读取配置并写入 controller
-- 未经过 Block Swap 节点的共享分支没有配置时，active_config 为 None，hooks 完全 no-op
-- 增加 ON_CLEANUP 处理与引用计数；最后一个使用者释放时移除全部 hooks
-- ON_LOAD 只更新设备/config 并做块放置，不再重复安装 hooks
-
-（阶段一的 dtype/device 修复、embedding 卸载禁用仍然保留，embedding 恢复在阶段三）
+阶段三（restore safe embedding offload）：
+- UNet 顶层 forward 用 ContextVar 设置“本次执行配置”，避免并行 forward 互相覆盖
+- 为 text_embedding / img_emb 添加成对动作：forward 前移到 device_to，forward 后移回
+  offload_device，异常也通过 finally 恢复（通过包装 unet.forward 实现，因 ComfyUI
+  不会自动为 diffusion_model 应用 WrappersMP.DIFFUSION_MODEL 包装）
+- embedding 移动仅在当前执行配置开启对应选项时生效，不影响共享分支
+- 预取复用同一 controller：仅预取实际交换的后续块；通过“已在设备上则跳过”去重，
+  避免重复 .to(device)；非阻塞传输依赖默认 CUDA stream 的顺序保证拷贝先于计算
+- CPU / DirectML 等非 cuda 设备自动关闭非阻塞传输与预取
 """
 
 import comfy.model_management
+import contextvars
 import gc
 import threading
+import types
 import weakref
 import torch
 from comfy.patcher_extension import CallbacksMP
@@ -39,28 +38,25 @@ _REGISTRY_LOCK = threading.Lock()
 # 用于 add_callback_with_key 的固定 key，避免同一 patcher 重复注册回调
 _CALLBACK_KEY = "naiba_wan_blockswap"
 
+# 本次 forward 的执行配置（ContextVar）：保证并行 forward 之间互不覆盖
+_EXEC_CONFIG_VAR = contextvars.ContextVar("naiba_wan_blockswap_exec_cfg", default=None)
+
+# 每个线程保存最近一次 set 的 token，便于在 forward 结束后 reset（异常路径也安全）
+_thread_local = threading.local()
+
 
 class _BlockSwapController:
     """集中管理某个共享 UNet 的 block swap hooks 与引用计数（幂等安装）。"""
 
-    __slots__ = ("unet_ref", "unet_id", "handles", "refcount", "active_config", "installed")
+    __slots__ = ("unet_ref", "unet_id", "handles", "refcount", "installed", "_orig_forward")
 
     def __init__(self, unet):
         self.unet_ref = weakref.ref(unet)
         self.unet_id = id(unet)
-        self.handles = []           # 所有 RemovableHandle
+        self.handles = []           # 所有 RemovableHandle（含 forward 包装复原句柄）
         self.refcount = 0           # 当前加载的使用者数量
-        self.active_config = None   # 本次 forward 生效的配置（None 表示 no-op）
         self.installed = False      # 是否已安装 hooks
-
-    def set_active_config(self, config):
-        self.active_config = config
-
-    def clear_active_config(self):
-        self.active_config = None
-
-    def get_active_config(self):
-        return self.active_config
+        self._orig_forward = None   # 被包装前的原始 unet.forward
 
 
 def _get_or_create_controller(unet) -> "_BlockSwapController":
@@ -72,8 +68,20 @@ def _get_or_create_controller(unet) -> "_BlockSwapController":
     return ctrl
 
 
+def _is_on_device(module, device) -> bool:
+    """判断模块参数是否已经位于目标设备，用于预取去重，避免重复 .to(device)。"""
+    try:
+        p = next(module.parameters())
+    except StopIteration:
+        try:
+            b = next(module.buffers())
+        except StopIteration:
+            return True
+    return p.device == device
+
+
 def _install_hooks(unet, controller: "_BlockSwapController"):
-    """在共享 UNet 上安装一套通用 hooks（幂等）。hooks 通过注册表读取本次 forward 配置。"""
+    """在共享 UNet 上安装一套通用 hooks（幂等）。hooks 通过 ContextVar 读取本次 forward 配置。"""
     handles = []
     uid = controller.unet_id
 
@@ -87,12 +95,24 @@ def _install_hooks(unet, controller: "_BlockSwapController"):
             to = {}
         cfg = to.get("block_swap_config")
         # 无配置（未经过 Block Swap 节点的共享分支）-> no-op
-        ctrl.set_active_config(cfg if cfg is not None else None)
+        token = _EXEC_CONFIG_VAR.set(cfg if cfg is not None else None)
+        d = getattr(_thread_local, "tokens", None)
+        if d is None:
+            d = {}
+            _thread_local.tokens = d
+        d[uid] = token
 
     def _unet_post_hook(module, args, kwargs, output):
         ctrl = _CONTROLLER_REGISTRY.get(uid)
-        if ctrl is not None:
-            ctrl.clear_active_config()
+        if ctrl is None:
+            return
+        d = getattr(_thread_local, "tokens", {})
+        token = d.pop(uid, None)
+        if token is not None:
+            try:
+                _EXEC_CONFIG_VAR.reset(token)
+            except Exception:
+                pass
 
     handles.append(unet.register_forward_pre_hook(_unet_pre_hook, with_kwargs=True))
     handles.append(unet.register_forward_hook(_unet_post_hook, with_kwargs=True))
@@ -110,62 +130,123 @@ def _install_hooks(unet, controller: "_BlockSwapController"):
             handles.append(block.register_forward_pre_hook(pre))
             handles.append(block.register_forward_hook(post))
 
+    # 包装 unet.forward：实现 embedding 的成对移动与 finally 恢复（仅当前配置开启时生效）
+    if not getattr(unet, "_naiba_bs_wrapped", False):
+        controller._orig_forward = unet.forward
+        unet.forward = types.MethodType(_unet_forward_wrapper, unet)
+        unet._naiba_bs_wrapped = True
+
     controller.handles = handles
     controller.installed = True
 
 
+def _unet_forward_wrapper(self, *args, **kwargs):
+    """
+    包装 unet.forward，实现 embedding 的“前向移动到 device_to，结束后移回 offload_device”，
+    异常也通过 finally 恢复。仅在当前执行配置开启对应选项时生效（未开启则完全 no-op）。
+    """
+    to = kwargs.get("transformer_options", {}) if kwargs else {}
+    cfg = to.get("block_swap_config") if isinstance(to, dict) else None
+
+    moved = []  # (attr_name, offload_device, use_non_blocking)
+    try:
+        if cfg:
+            dev = cfg.get("main_device")
+            off = cfg.get("offload_device")
+            nb = cfg.get("use_non_blocking", False)
+            if cfg.get("offload_txt_emb") and hasattr(self, "text_embedding"):
+                self.text_embedding.to(dev, non_blocking=nb)
+                moved.append(("text_embedding", off, nb))
+            if cfg.get("offload_img_emb") and hasattr(self, "img_emb"):
+                self.img_emb.to(dev, non_blocking=nb)
+                moved.append(("img_emb", off, nb))
+        return controller_original_forward(self, *args, **kwargs)
+    finally:
+        # 无论正常结束还是异常，都移回 offload_device
+        for name, off, nb in moved:
+            mod = getattr(self, name, None)
+            if mod is not None:
+                try:
+                    mod.to(off, non_blocking=nb)
+                except Exception:
+                    pass
+        # 异常路径下确保 ContextVar 也被清理
+        d = getattr(_thread_local, "tokens", {})
+        token = d.pop(id(self), None)
+        if token is not None:
+            try:
+                _EXEC_CONFIG_VAR.reset(token)
+            except Exception:
+                pass
+
+
+def controller_original_forward(self, *args, **kwargs):
+    """调用被包装前的原始 unet.forward（由 controller._orig_forward 在 install 时保存的绑定方法）。
+
+    注意：_orig_forward 已是绑定到 unet 的方法，故直接以 *args 调用，不要再传入 self。
+    """
+    ctrl = _CONTROLLER_REGISTRY.get(id(self))
+    if ctrl is not None and ctrl._orig_forward is not None:
+        return ctrl._orig_forward(*args, **kwargs)
+    # 退化情况：直接调用未包装的 forward
+    return torch.nn.Module.forward(self, *args, **kwargs)
+
+
 def _make_block_hooks(uid: int, block_idx: int, is_vace: bool):
-    """生成块级 pre/post hook。通过注册表读取 active_config，不闭包引用任何 model_patcher。"""
+    """生成块级 pre/post hook。通过 ContextVar 读取本次 forward 配置，不闭包引用任何 model_patcher。"""
     def _pre(module, inp):
-        ctrl = _CONTROLLER_REGISTRY.get(uid)
-        if ctrl is None:
-            return
-        cfg = ctrl.get_active_config()
+        cfg = _EXEC_CONFIG_VAR.get()
         if not cfg:
             return  # 无配置 -> 完全 no-op，不影响共享分支
 
         if is_vace:
-            vace_len = _get_vace_length(ctrl)
+            vace_len = _get_vace_length(uid)
             should_swap = (cfg["vace_blocks_to_swap"] > 0 and
                            block_idx >= vace_len - cfg["vace_blocks_to_swap"])
         else:
             should_swap = (cfg["blocks_to_swap"] > 0 and block_idx >= cfg["swap_start_idx"])
 
         if should_swap:
-            module.to(cfg["main_device"], non_blocking=cfg["use_non_blocking"])
-            # 预取后续 block（仅主 blocks）
+            dev = cfg["main_device"]
+            # 预取去重：仅当尚未在设备上时移动，避免重复 .to(device)
+            if not _is_on_device(module, dev):
+                module.to(dev, non_blocking=cfg["use_non_blocking"])
+            # 预取后续 block（仅主 blocks；仅预取实际会交换的块，且去重）
             if not is_vace and cfg["prefetch_blocks"] > 0:
-                unet = ctrl.unet_ref()
-                if unet is not None:
+                unet = _CONTROLLER_REGISTRY.get(uid)
+                unet_obj = unet.unet_ref() if unet is not None else None
+                if unet_obj is not None:
                     for offset in range(1, cfg["prefetch_blocks"] + 1):
                         prefetch_idx = block_idx + offset
-                        if prefetch_idx < len(unet.blocks) and prefetch_idx >= cfg["swap_start_idx"]:
-                            unet.blocks[prefetch_idx].to(cfg["main_device"], non_blocking=cfg["use_non_blocking"])
+                        if prefetch_idx < len(unet_obj.blocks) and prefetch_idx >= cfg["swap_start_idx"]:
+                            pb = unet_obj.blocks[prefetch_idx]
+                            if not _is_on_device(pb, dev):
+                                pb.to(dev, non_blocking=cfg["use_non_blocking"])
 
     def _post(module, inp, out):
-        ctrl = _CONTROLLER_REGISTRY.get(uid)
-        if ctrl is None:
-            return
-        cfg = ctrl.get_active_config()
+        cfg = _EXEC_CONFIG_VAR.get()
         if not cfg:
             return
 
         if is_vace:
-            vace_len = _get_vace_length(ctrl)
+            vace_len = _get_vace_length(uid)
             should_swap = (cfg["vace_blocks_to_swap"] > 0 and
                            block_idx >= vace_len - cfg["vace_blocks_to_swap"])
         else:
             should_swap = (cfg["blocks_to_swap"] > 0 and block_idx >= cfg["swap_start_idx"])
 
         if should_swap:
-            module.to(cfg["offload_device"], non_blocking=cfg["use_non_blocking"])
+            off = cfg["offload_device"]
+            if not _is_on_device(module, off):
+                module.to(off, non_blocking=cfg["use_non_blocking"])
 
     return _pre, _post
 
 
-def _get_vace_length(ctrl: "_BlockSwapController") -> int:
+def _get_vace_length(uid: int) -> int:
     """安全地获取当前 UNet 的 vace_blocks 长度（用于判断 VACE 块是否需交换）。"""
-    unet = ctrl.unet_ref()
+    ctrl = _CONTROLLER_REGISTRY.get(uid)
+    unet = ctrl.unet_ref() if ctrl is not None else None
     if unet is not None and hasattr(unet, 'vace_blocks'):
         return len(unet.vace_blocks)
     return 0
@@ -194,6 +275,13 @@ def release(unet) -> None:
         if ctrl.refcount > 0:
             ctrl.refcount -= 1
         if ctrl.refcount <= 0:
+            # 复原被包装的 unet.forward
+            if ctrl._orig_forward is not None and getattr(unet, "_naiba_bs_wrapped", False):
+                try:
+                    unet.forward = ctrl._orig_forward
+                except Exception:
+                    pass
+                unet._naiba_bs_wrapped = False
             for h in ctrl.handles:
                 try:
                     h.remove()
@@ -201,7 +289,6 @@ def release(unet) -> None:
                     pass
             ctrl.handles = []
             ctrl.installed = False
-            ctrl.clear_active_config()
             _CONTROLLER_REGISTRY.pop(uid, None)
 
 
@@ -252,11 +339,11 @@ class NaibaWanBlockSwap:
             "optional": {
                 "offload_img_emb": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "将img_emb卸载到CPU内存（阶段一暂不安全，已禁用）"
+                    "tooltip": "将img_emb卸载到CPU内存（forward前移回device，结束后移回offload_device，异常亦恢复）"
                 }),
                 "offload_txt_emb": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "将txt_emb卸载到CPU内存（阶段一暂不安全，已禁用）"
+                    "tooltip": "将txt_emb卸载到CPU内存（forward前移回device，结束后移回offload_device，异常亦恢复）"
                 }),
                 "use_non_blocking": ("BOOLEAN", {
                     "default": False,
@@ -278,7 +365,7 @@ class NaibaWanBlockSwap:
                     "min": 0,
                     "max": 40,
                     "step": 1,
-                    "tooltip": "预取块数量。在处理当前block时提前加载后续N个block到GPU，可抵消block swap的速度损失，通常设为1-2"
+                    "tooltip": "预取块数量。在处理当前block时提前加载后续N个block到GPU，可抵消block swap的速度损失，通常设为1-2（非 cuda 设备自动关闭）"
                 }),
             },
         }
@@ -302,12 +389,7 @@ class NaibaWanBlockSwap:
             print("[NaibaWanBlockSwap] 警告: force_fp16_bias 已弃用且不再执行任何 dtype 改写，"
                   "以避免破坏共享底层模型参数。该选项将在未来版本移除。")
 
-        # 阶段一：embedding 直接卸载暂不安全，开启时给出明确警告并忽略
-        if offload_img_emb or offload_txt_emb:
-            print("[NaibaWanBlockSwap] 警告: embedding offload（offload_img_emb / offload_txt_emb）"
-                  "在当前版本不安全已被禁用，将不会影响共享分支。计划于后续阶段恢复安全的往返卸载。")
-
-        # 阶段一：修正提前返回条件
+        # 阶段一：修正提前返回条件（embedding 开关现已安全启用，不应再返回）
         if blocks_to_swap == 0 and vace_blocks_to_swap == 0 and not offload_img_emb and not offload_txt_emb:
             return (model,)
 
@@ -332,28 +414,25 @@ class NaibaWanBlockSwap:
             blocks_to_swap_actual = max(0, min(blocks_to_swap, total_blocks))
             swap_start_idx = total_blocks - blocks_to_swap_actual if blocks_to_swap_actual > 0 else total_blocks
 
-            # 非 cuda 设备不支持非阻塞传输，强制关闭
-            eff_non_blocking = bool(use_non_blocking) and (getattr(device_to, "type", "cpu") == "cuda")
+            is_cuda = getattr(device_to, "type", "cpu") == "cuda"
 
-            # 限制预取数量到实际可交换的主块数量内
-            prefetch_blocks_actual = max(0, min(prefetch_blocks, blocks_to_swap_actual))
+            # 阶段三：非 cuda 设备（CPU / DirectML 等）不支持非阻塞传输与预取，自动关闭
+            eff_non_blocking = bool(use_non_blocking) and is_cuda
+            prefetch_blocks_actual = max(0, min(prefetch_blocks, blocks_to_swap_actual)) if is_cuda else 0
 
             # 限制 VACE 块数量到模型实际数量内
             vace_blocks_to_swap_actual = 0
             total_vace_blocks = 0
-            vace_swap_start_idx = 0
             if hasattr(unet, 'vace_blocks') and vace_blocks_to_swap > 0:
                 total_vace_blocks = len(unet.vace_blocks)
                 vace_blocks_to_swap_actual = max(0, min(vace_blocks_to_swap, total_vace_blocks))
-                vace_swap_start_idx = total_vace_blocks - vace_blocks_to_swap_actual
                 print(f"[NaibaWanBlockSwap] VACE模型有 {total_vace_blocks} 个vace block，将交换 {vace_blocks_to_swap_actual} 个")
 
-            # 阶段二：本次推理配置（供 UNet 顶层 hook 注入，block hooks 按此执行）
+            # 阶段二/三：本次推理配置（供 UNet 顶层 hook / ContextVar 注入，block & embedding hooks 按此执行）
             swap_config = {
                 "blocks_to_swap": blocks_to_swap_actual,
                 "swap_start_idx": swap_start_idx,
                 "vace_blocks_to_swap": vace_blocks_to_swap_actual,
-                "vace_swap_start_idx": vace_swap_start_idx,
                 "prefetch_blocks": prefetch_blocks_actual,
                 "use_non_blocking": eff_non_blocking,
                 "main_device": device_to,
