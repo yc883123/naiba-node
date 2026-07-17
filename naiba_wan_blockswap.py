@@ -204,24 +204,28 @@ def _make_block_hooks(uid: int, block_idx: int, is_vace: bool):
             should_swap = (cfg["vace_blocks_to_swap"] > 0 and
                            block_idx >= vace_len - cfg["vace_blocks_to_swap"])
         else:
-            should_swap = (cfg["blocks_to_swap"] > 0 and block_idx >= cfg["swap_start_idx"])
+            swap_start = _effective_swap_start(cfg, uid, is_vace)
+            should_swap = (cfg["blocks_to_swap"] > 0 and block_idx >= swap_start)
 
         if should_swap:
-            dev = cfg["main_device"]
+            dev = cfg.get("main_device")
+            if dev is None:
+                return
             # 预取去重：仅当尚未在设备上时移动，避免重复 .to(device)
             if not _is_on_device(module, dev):
-                module.to(dev, non_blocking=cfg["use_non_blocking"])
+                module.to(dev, non_blocking=cfg.get("use_non_blocking", False))
             # 预取后续 block（仅主 blocks；仅预取实际会交换的块，且去重）
-            if not is_vace and cfg["prefetch_blocks"] > 0:
+            if not is_vace and cfg.get("prefetch_blocks", 0) > 0:
+                swap_start = _effective_swap_start(cfg, uid, is_vace)
                 unet = _CONTROLLER_REGISTRY.get(uid)
                 unet_obj = unet.unet_ref() if unet is not None else None
                 if unet_obj is not None:
                     for offset in range(1, cfg["prefetch_blocks"] + 1):
                         prefetch_idx = block_idx + offset
-                        if prefetch_idx < len(unet_obj.blocks) and prefetch_idx >= cfg["swap_start_idx"]:
+                        if prefetch_idx < len(unet_obj.blocks) and prefetch_idx >= swap_start:
                             pb = unet_obj.blocks[prefetch_idx]
                             if not _is_on_device(pb, dev):
-                                pb.to(dev, non_blocking=cfg["use_non_blocking"])
+                                pb.to(dev, non_blocking=cfg.get("use_non_blocking", False))
 
     def _post(module, inp, out):
         cfg = _EXEC_CONFIG_VAR.get()
@@ -233,12 +237,15 @@ def _make_block_hooks(uid: int, block_idx: int, is_vace: bool):
             should_swap = (cfg["vace_blocks_to_swap"] > 0 and
                            block_idx >= vace_len - cfg["vace_blocks_to_swap"])
         else:
-            should_swap = (cfg["blocks_to_swap"] > 0 and block_idx >= cfg["swap_start_idx"])
+            swap_start = _effective_swap_start(cfg, uid, is_vace)
+            should_swap = (cfg["blocks_to_swap"] > 0 and block_idx >= swap_start)
 
         if should_swap:
-            off = cfg["offload_device"]
+            off = cfg.get("offload_device")
+            if off is None:
+                return
             if not _is_on_device(module, off):
-                module.to(off, non_blocking=cfg["use_non_blocking"])
+                module.to(off, non_blocking=cfg.get("use_non_blocking", False))
 
     return _pre, _post
 
@@ -250,6 +257,54 @@ def _get_vace_length(uid: int) -> int:
     if unet is not None and hasattr(unet, 'vace_blocks'):
         return len(unet.vace_blocks)
     return 0
+
+
+def _compute_swap_config(blocks_to_swap, vace_blocks_to_swap, prefetch_blocks,
+                         use_non_blocking, offload_img_emb, offload_txt_emb,
+                         total_blocks, total_vace_blocks, device_to, offload_device) -> dict:
+    """集中计算一份“完整”的 block swap 配置（含 swap_start_idx / main_device / offload_device）。
+
+    optimize() 与 ON_LOAD 回调共用，确保两份配置一致；同时立即写入 transformer_options，
+    避免 forward 时只能拿到不完整的 pending 占位配置。
+    """
+    blocks_to_swap_actual = max(0, min(int(blocks_to_swap), total_blocks))
+    swap_start_idx = total_blocks - blocks_to_swap_actual if blocks_to_swap_actual > 0 else total_blocks
+
+    is_cuda = getattr(device_to, "type", "cpu") == "cuda"
+    # 非 cuda 设备（CPU / DirectML 等）不支持非阻塞传输与预取，自动关闭
+    eff_non_blocking = bool(use_non_blocking) and is_cuda
+    prefetch_blocks_actual = max(0, min(int(prefetch_blocks), blocks_to_swap_actual)) if is_cuda else 0
+
+    vace_blocks_to_swap_actual = 0
+    if total_vace_blocks > 0 and int(vace_blocks_to_swap) > 0:
+        vace_blocks_to_swap_actual = max(0, min(int(vace_blocks_to_swap), total_vace_blocks))
+
+    return {
+        "blocks_to_swap": blocks_to_swap_actual,
+        "swap_start_idx": swap_start_idx,
+        "vace_blocks_to_swap": vace_blocks_to_swap_actual,
+        "prefetch_blocks": prefetch_blocks_actual,
+        "use_non_blocking": eff_non_blocking,
+        "main_device": device_to,
+        "offload_device": offload_device,
+        "offload_img_emb": offload_img_emb,
+        "offload_txt_emb": offload_txt_emb,
+    }
+
+
+def _effective_swap_start(cfg: dict, uid: int, is_vace: bool) -> int:
+    """返回主块交换的起始索引；配置缺失该键时按 总块数 - blocks_to_swap 兜底推算。"""
+    if not is_vace and "swap_start_idx" in cfg and "blocks_to_swap" in cfg:
+        return cfg["swap_start_idx"]
+    if is_vace:
+        return 0  # VACE 由 _get_vace_length 单独处理
+    bts = int(cfg.get("blocks_to_swap", 0))
+    if bts <= 0:
+        return 0
+    ctrl = _CONTROLLER_REGISTRY.get(uid)
+    unet = ctrl.unet_ref() if ctrl is not None else None
+    total = len(unet.blocks) if (unet is not None and hasattr(unet, "blocks")) else 0
+    return max(0, total - bts)
 
 
 def ensure_installed(unet, config: dict, device_to, offload_device) -> "_BlockSwapController":
@@ -408,38 +463,20 @@ class NaibaWanBlockSwap:
                 return
 
             total_blocks = len(unet.blocks)
-            print(f"[NaibaWanBlockSwap] 模型共有 {total_blocks} 个transformer block")
+            total_vace_blocks = len(unet.vace_blocks) if hasattr(unet, 'vace_blocks') else 0
+            print(f"[NaibaWanBlockSwap] 模型共有 {total_blocks} 个transformer block"
+                  + (f"，{total_vace_blocks} 个vace block" if total_vace_blocks else ""))
 
-            # 阶段一：限制主块交换数量到模型实际数量内
-            blocks_to_swap_actual = max(0, min(blocks_to_swap, total_blocks))
-            swap_start_idx = total_blocks - blocks_to_swap_actual if blocks_to_swap_actual > 0 else total_blocks
-
-            is_cuda = getattr(device_to, "type", "cpu") == "cuda"
-
-            # 阶段三：非 cuda 设备（CPU / DirectML 等）不支持非阻塞传输与预取，自动关闭
-            eff_non_blocking = bool(use_non_blocking) and is_cuda
-            prefetch_blocks_actual = max(0, min(prefetch_blocks, blocks_to_swap_actual)) if is_cuda else 0
-
-            # 限制 VACE 块数量到模型实际数量内
-            vace_blocks_to_swap_actual = 0
-            total_vace_blocks = 0
-            if hasattr(unet, 'vace_blocks') and vace_blocks_to_swap > 0:
-                total_vace_blocks = len(unet.vace_blocks)
-                vace_blocks_to_swap_actual = max(0, min(vace_blocks_to_swap, total_vace_blocks))
-                print(f"[NaibaWanBlockSwap] VACE模型有 {total_vace_blocks} 个vace block，将交换 {vace_blocks_to_swap_actual} 个")
-
-            # 阶段二/三：本次推理配置（供 UNet 顶层 hook / ContextVar 注入，block & embedding hooks 按此执行）
-            swap_config = {
-                "blocks_to_swap": blocks_to_swap_actual,
-                "swap_start_idx": swap_start_idx,
-                "vace_blocks_to_swap": vace_blocks_to_swap_actual,
-                "prefetch_blocks": prefetch_blocks_actual,
-                "use_non_blocking": eff_non_blocking,
-                "main_device": device_to,
-                "offload_device": model_patcher.offload_device,
-                "offload_img_emb": offload_img_emb,
-                "offload_txt_emb": offload_txt_emb,
-            }
+            # 阶段二/三：集中计算完整配置（供 UNet 顶层 hook / ContextVar 注入，
+            # block & embedding hooks 按此执行）。ON_LOAD 会刷新 device/config，确保与
+            # optimize() 时立即写入的配置保持一致。
+            swap_config = _compute_swap_config(
+                blocks_to_swap, vace_blocks_to_swap, prefetch_blocks,
+                use_non_blocking, offload_img_emb, offload_txt_emb,
+                total_blocks, total_vace_blocks, device_to, model_patcher.offload_device,
+            )
+            if total_vace_blocks and vace_blocks_to_swap > 0:
+                print(f"[NaibaWanBlockSwap] VACE 将交换 {swap_config['vace_blocks_to_swap']} 个block")
             model_patcher.model_options["transformer_options"]["block_swap_config"] = swap_config
 
             # 阶段二：幂等安装 hooks（同一 UNet 只装一套），并做块放置
@@ -466,17 +503,22 @@ class NaibaWanBlockSwap:
         model_clone.remove_callbacks_with_key(CallbacksMP.ON_CLEANUP, _CALLBACK_KEY)
         model_clone.add_callback_with_key(CallbacksMP.ON_CLEANUP, _CALLBACK_KEY, cleanup_callback)
 
-        # 立即设置 block_swap_config，这样其他节点可以检测到配置
-        model_clone.model_options["transformer_options"]["block_swap_config"] = {
-            "blocks_to_swap": blocks_to_swap,
-            "vace_blocks_to_swap": vace_blocks_to_swap,
-            "prefetch_blocks": prefetch_blocks,
-            "use_non_blocking": use_non_blocking,
-            "offload_img_emb": offload_img_emb,
-            "offload_txt_emb": offload_txt_emb,
-            "force_fp16_bias": force_fp16_bias,
-            "status": "pending",
-        }
+        # 立即写入【完整】配置（含 swap_start_idx / main_device / offload_device）。
+        # 关键修复：之前这里只写入不完整的 "pending" 占位配置（缺 swap_start_idx 等键），
+        # 而 forward 实际使用的 transformer_options 副本拿不到 ON_LOAD 写入的完整配置，
+        # 导致 hook 取 cfg["swap_start_idx"] 时 KeyError。
+        # 现在 optimize() 阶段就用 model.load_device / offload_device 与 unet 实际块数算出完整配置，
+        # ON_LOAD 回调会再用同一 _compute_swap_config 刷新（设备不变时结果一致）。
+        unet0 = model_clone.model.diffusion_model if hasattr(model_clone.model, 'diffusion_model') else None
+        total_blocks0 = len(unet0.blocks) if (unet0 is not None and hasattr(unet0, 'blocks')) else 0
+        total_vace0 = len(unet0.vace_blocks) if (unet0 is not None and hasattr(unet0, 'vace_blocks')) else 0
+        immediate_config = _compute_swap_config(
+            blocks_to_swap, vace_blocks_to_swap, prefetch_blocks,
+            use_non_blocking, offload_img_emb, offload_txt_emb,
+            total_blocks0, total_vace0,
+            model_clone.load_device, model_clone.offload_device,
+        )
+        model_clone.model_options["transformer_options"]["block_swap_config"] = immediate_config
 
         return (model_clone,)
 

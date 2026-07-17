@@ -440,6 +440,54 @@
 
 ---
 
+### 12. Naiba Tag Picker (标签画廊选择器 / 扭蛋)
+
+**节点名称**: `NaibaTagPicker`  
+**显示名称**: Naiba Tag Picker (画师/角色/IP/扭蛋)  
+**分类**: `naiba-node`
+
+#### 功能说明
+通过 Danbooru 公开 API 搜索 画师(artist) / 角色(character) / IP(copyright) 三类标签，前端三标签页画廊多选（带缩略图预览），选图结果以分组 JSON 写回隐藏控件，并输出三类标签名串 + 选中图批量预览（IMAGE，仅内存、不落盘）。
+
+内置**扭蛋模式**：弹窗内分别指定「画师 / 角色 / IP 每类抽几个（0~10）」：
+- **部分随机**：由后端从 Danbooru 实时随机取样 画师 a 个 + 角色 c 个 + IP i 个；
+- **完全随机**：忽略数量，随机抽 0~(a+c+i) 个标签；
+- 扭蛋面板内与节点外部均提供「清除」按钮一键清空。
+
+#### 输入参数
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| selection_data | STRING | {} | 三分类选中数据（由前端画廊自动管理，无需手动编辑） |
+| max_images | INT | 16 | 批量预览图最大张数（超出截断） |
+| preview_size | INT | 320 | 预览图边长上限（保持比例居中贴到正方形，控制显存） |
+| gacha_mode | BOOLEAN | False | 开启后输出 RANDOM_TAGS（扭蛋随机标签组合）；关闭则输出空串 |
+| gacha_data | STRING | {} | 扭蛋结果（由弹窗扭蛋标签页自动管理）：`{"tags": [...]}` |
+
+#### 输出
+
+| 输出 | 类型 | 说明 |
+|------|------|------|
+| ARTIST_NAMES | STRING | 选中的画师标签名串（逗号分隔） |
+| CHARACTER_NAMES | STRING | 选中的角色标签名串 |
+| IP_NAMES | STRING | 选中的 IP 标签名串 |
+| RANDOM_TAGS | STRING | 扭蛋随机标签名串（开启扭蛋模式时输出） |
+| PREVIEW_IMAGES | IMAGE | 选中标签代表作批量预览（仅内存，不落盘） |
+
+#### 使用方法
+1. 在 `naiba-node` 分类下添加 `Naiba Tag Picker` 节点
+2. 点击节点上的「打开标签画廊」按钮，在弹窗内切换 画师/角色/IP 标签页搜索并多选
+3. 切到「扭蛋」标签页，分别设定每类数量，点「部分随机」或「完全随机」生成随机标签
+4. 点「应用选中」写回数据；需要清空时点「清除已选」（节点侧）或「清除」（扭蛋面板内）
+5. 开启 `gacha_mode` 后，`RANDOM_TAGS` 输出扭蛋组合，可直接接入提示词
+
+#### 注意事项
+- Danbooru 匿名 API 有访问频率限制，搜索与预览走限流 + 重试（429/403 指数退避）；如遇持续 403/限流，设置环境变量 `DANBOORU_USER` / `DANBOURU_API_KEY` 可提升限额
+- 预览图字节仅做魔数 MIME 识别 + 进程内内存缓存（上限 100、TTL 1h），绝不写盘
+- UA 刻意避开 "ComfyUI" 字样（Danbooru/Cloudflare 对含该字样的请求返回 403），仅以本项目名 `naiba` 标识
+
+---
+
 ## 安装方法
 
 1. 将 `naiba-test` 文件夹复制到 `ComfyUI/custom_nodes/` 目录
@@ -467,6 +515,7 @@ naiba-test/
 ├── custom_data_reader.py                   # 自定义数据读取节点
 ├── power_lora_config_reader.py             # Power LoRA Config Reader节点
 ├── naiba_textbox.py                        # 可编辑文本框节点（Textbox）
+├── naiba_tag_picker.py                     # Danbooru 标签画廊选择器 / 扭蛋节点
 ├── civitai_utils.py                        # Civitai API工具模块
 ├── preset_routes.py                        # 预设管理API路由
 ├── presets/                                # 预设存储目录（运行时自动创建）
@@ -477,6 +526,7 @@ naiba-test/
 │   ├── lora_data_preview.js                # Lora Data Preview前端UI
 │   ├── lora_testing_converter.js           # Lora Testing Converter前端扩展
 │   ├── naiba_textbox.js                    # Naiba Textbox前端UI
+│   ├── naiba_tag_picker.js                 # Naiba Tag Picker 前端画廊扩展
 │   └── naiba_preset_utils.js               # 共享预设模态框和工具函数
 └── README.md                               # 项目说明文档
 ```
@@ -535,6 +585,25 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 > **注意**: Multi LoRA Loader (only model) 节点导入含 `strength_clip` 的预设时会自动忽略 clip 字段。两个节点的预设可以互相导入。
 
 ## 更新日志
+
+### v2.8.0
+- 新增 Naiba Tag Picker 节点（标签画廊选择器 / 扭蛋）
+  - 通过 Danbooru 公开 API（`/tags.json`）搜索 画师(artist) / 角色(character) / IP(copyright) 三类标签
+  - 前端三标签页画廊多选，缩略图走两步法代理（`/naiba/tag/preview` 取代表作 URL → `/naiba/tag/image` 取字节），懒加载 + 并发队列 + 失败自动重试
+  - 输出三类标签名串（ARTIST_NAMES / CHARACTER_NAMES / IP_NAMES）+ 选中标签代表作批量预览 IMAGE（仅内存、不落盘，绝不写盘）
+  - 预览图魔数 MIME 识别 + 进程内内存缓存（上限 100、TTL 1h）
+- 修复 Danbooru 搜索 403（Cloudflare 风控）
+  - 根因：Danbooru/Cloudflare 已把 UA 中含 "ComfyUI" 字样的请求列入黑名单，一律返回 403
+  - 请求 UA 改为 `naiba-tag-picker/1.0 (+naiba-node)`（绝不含 "ComfyUI"），实测 tags.json / posts.json / CDN 图片均恢复 200
+  - 429 / 403 做指数退避重试；可选 `DANBOURU_USER` / `DANBOURU_API_KEY` 环境变量走 Basic Auth 提升限额
+- 扭蛋模式重构：由「输入候选画师/角色/IP」改为「指定每类数量」
+  - 弹窗内分别设定 画师 / 角色 / IP 各抽几个（0~10）
+  - 「部分随机」：由后端 `get_random_tags_from_category` 从 Danbooru 实时随机取样（a 个画师 + c 个角色 + i 个 IP），无需手填候选
+  - 「完全随机」：忽略数量，随机抽 0~(a+c+i) 个标签
+  - 新增路由 `GET /naiba/tag/gacha_partial`（按数量实时取样）
+- 新增清除能力
+  - 扭蛋面板内「清除」按钮：清空当前扭蛋结果
+  - 节点外部「清除已选」按钮：重置 `selection_data` / `gacha_data` 控件，并通过 `node._tpClearSelection` 同步清空弹窗内存状态（含选中与扭蛋结果）
 
 ### v2.7.0
 - Lora Data Preview 主弹窗复用 Visual LoRA Loader 结构

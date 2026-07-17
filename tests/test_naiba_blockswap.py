@@ -57,6 +57,7 @@ class FakePatcher:
     def __init__(self, unet, offload_device):
         self.model = types.SimpleNamespace(diffusion_model=unet)
         self.offload_device = offload_device
+        self.load_device = offload_device  # 测试环境无 cuda，load 与 offload 同设备
         self.model_options = {"transformer_options": {}}
         self._callbacks = {}
 
