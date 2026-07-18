@@ -1,655 +1,420 @@
-"""
-Naiba Tag Picker 节点
-调用 Danbooru 公开 API 搜索 画师(artist) / 角色(character) / IP(copyright) 三类标签，
-前端三标签页画廊多选，选图结果以分组 JSON 写回隐藏 STRING 控件，
-节点输出三类标签名串 + 选中图批量预览（IMAGE 张量，内存传递，绝不落盘）。
-
-设计要点：
-- 搜索走 Danbooru 公开 /tags.json 接口，按 search[category] 直接列出标签名 + 出现次数
-  （artist=1 / character=4 / ip(copyright)=3），匿名即可稳定使用，无需登录。
-- 预览图：选中/画廊缩略图通过 /naiba/tag/preview?name=<tag> 取该标签代表作首图（内部
-  调 /posts.json?tags=<name>&limit=1 拿 preview_file_url，再同源代理 cdn.donmai.us）。
-- 搜索与预览均走限流 + 重试 + 可选 Basic Auth；图片字节仅做魔数 MIME 识别 + 内存缓存
-  （上限 100、TTL 1h），绝不写盘（与 anima-t8 的预览策略一致）。
-- 本模块完全独立：不 import 任何内置节点类或其他节点文件，仅用 ComfyUI 基础库
-  （torch / PIL / numpy / 标准库）与 server.PromptServer。
-"""
-
 import os
-import io
+import sys
 import json
 import time
-import base64
 import random
+import base64
 import threading
+import hashlib
 import asyncio
 import urllib.request
 import urllib.parse
 import urllib.error
+import io
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import torch
-from PIL import Image
+import folder_paths
 
-from server import PromptServer
-from aiohttp import web
+# 仅在 ComfyUI 环境下导入（避免纯语法/单测时缺失）
+try:
+    from PIL import Image
+except Exception:
+    Image = None
 
+# 后端令牌桶：兜底限流，避免瞬时高并发把 Danbooru 打爆
+try:
+    import aiohttp
+    from aiohttp import web
+    from server import PromptServer
+except Exception:  # pragma: no cover
+    aiohttp = None
+    web = None
+    PromptServer = None
 
-# ============================================================
-# 配置
-# ============================================================
-DANBOORU_BASE = "https://danbooru.donmai.us"
-CDN_HOST_SUFFIX = "donmai.us"          # 仅允许代理该域名下的图片，防 SSRF
-API_RATE_LIMIT_SEC = 0.5               # 令牌桶稳态最小间隔（1/该值 = 稳态 req/s）；越小越快
-API_RATE_BURST = 12                     # 令牌桶突发容量：首屏/可见批量可瞬时放行，不被硬串行拖慢
+BASE = "https://danbooru.donmai.us"
+# 原版可用 UA：Danbooru/Cloudflare 会封含 "ComfyUI" 的 UA，故用自定义标识
+UA = {"User-Agent": "naiba-tag-picker/1.0 (+naiba-node)"}
 
-# 关键修复：Danbooru/Cloudflare 已把 UA 中含 "ComfyUI" 字样的请求列入黑名单，一律返回 403
-# （实测验证：含 "ComfyUI" 的 UA → 403；换成不含该字样的自定 UA → 200）。故 UA 只用本项目名
-# naiba 作为标识，绝不能写 "ComfyUI"。API 请求仅带 User-Agent（不带 Accept），与图片 CDN 分开。
-# 可选 Basic Auth（DANBOORU_USER / DANBOORU_API_KEY）可进一步提升限额。
-USER_AGENT = "naiba-tag-picker/1.0 (+naiba-node)"
-DANBOORU_REFERER = "https://danbooru.donmai.us/"
+# Danbooru category 字段为数字 ID；分类字符串 <-> 数字 ID <-> 显示名 互转
+CATEGORY_ID = {"artist": 1, "character": 4, "copyright": 3, "tag": 0}
+CATEGORY_NAME_BY_ID = {0: "tag", 1: "artist", 3: "copyright", 4: "character"}
 
-# 可选环境变量：设置后使用 Basic Auth，可提升 Danbooru API 限额
-API_USER = os.environ.get("DANBOORU_USER") or ""
-API_KEY = os.environ.get("DANBOORU_API_KEY") or ""
+# ----------------------------- 后端令牌桶 -----------------------------
+_bucket_lock = threading.Lock()
+_bucket_tokens = 5.0
+_BUCKET_MAX = 5.0
+_BUCKET_REFILL = 5.0  # 每秒补充 5 个
 
-# Danbooru 标签 category 映射：artist=1 / character=4 / ip(copyright)=3
-# 与 comfyui-anima-t8 的 api/danbooru_client.py 一致
-CATEGORY_ID = {"artist": 1, "character": 4, "ip": 3}
-CATEGORY_NAME_BY_ID = {1: "artist", 3: "copyright", 4: "character"}
+def _bucket_allow():
+    global _bucket_tokens
+    now = time.time()
+    with _bucket_lock:
+        elapsed = now - getattr(_bucket_allow, "_t", now)
+        _bucket_allow._t = now
+        _bucket_tokens = min(_BUCKET_MAX, _bucket_tokens + elapsed * _BUCKET_REFILL)
+        if _bucket_tokens >= 1.0:
+            _bucket_tokens -= 1.0
+            return True
+        return False
 
+def _fetch_url(url, timeout=15, retries=3, backoff=1.0):
+    """带后端限流的网络 GET，返回字节或 None。
+    对 403/429/5xx 做指数退避重试（还原原版 _api_request 的稳健性）。"""
+    for attempt in range(retries + 1):
+        if not _bucket_allow():
+            time.sleep(0.25)
+        try:
+            req = urllib.request.Request(url, headers=UA)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as e:
+            if attempt < retries and e.code in (403, 429, 500, 502, 503):
+                time.sleep(backoff * (2 ** attempt))
+                continue
+            print(f"[naiba_tag_picker] fetch failed: {url} -> HTTP {e.code} {e.reason}")
+            return None
+        except Exception as e:
+            if attempt < retries:
+                time.sleep(backoff * (2 ** attempt))
+                continue
+            print(f"[naiba_tag_picker] fetch failed: {url} -> {e}")
+            return None
+    return None
 
-# ============================================================
-# 内存图片缓存（自备，不引用其他节点模块）
-# ============================================================
+# ----------------------------- 图片 MIME 识别 -----------------------------
+def detect_image_mime(data):
+    if not data:
+        return "application/octet-stream"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:6] in (b"GIF89a", b"GIF87a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return "application/octet-stream"
+
+# ----------------------------- L1 内存缓存 -----------------------------
 class ImageCache:
-    """简单的进程内图片字节缓存，带上限与 TTL。"""
-
     def __init__(self, max_size=100, ttl=3600):
-        self.cache = {}
-        self.access_times = {}
         self.max_size = max_size
         self.ttl = ttl
+        self._store = {}
         self._lock = threading.Lock()
 
     def get(self, key):
         with self._lock:
-            if key not in self.cache:
+            item = self._store.get(key)
+            if item is None:
                 return None
-            if time.time() - self.access_times[key] > self.ttl:
-                self._remove(key)
+            data, ts = item
+            if time.time() - ts > self.ttl:
+                self._store.pop(key, None)
                 return None
-            self.access_times[key] = time.time()
-            return self.cache[key]
+            return data
 
-    def set(self, key, value):
-        with self._lock:
-            if len(self.cache) >= self.max_size:
-                self._remove_oldest()
-            self.cache[key] = value
-            self.access_times[key] = time.time()
-
-    def _remove(self, key):
-        self.cache.pop(key, None)
-        self.access_times.pop(key, None)
-
-    def _remove_oldest(self):
-        if not self.cache:
+    def set(self, key, data):
+        if not data:
             return
-        oldest = min(self.access_times.items(), key=lambda x: x[1])[0]
-        self._remove(oldest)
-
+        with self._lock:
+            self._store[key] = (data, time.time())
+            if len(self._store) > self.max_size:
+                # 简单淘汰最旧
+                oldest = min(self._store.items(), key=lambda kv: kv[1][1])
+                self._store.pop(oldest[0], None)
 
 _IMAGE_CACHE = ImageCache(max_size=100, ttl=3600)
 
-
-def detect_image_mime(data: bytes) -> str:
-    """依据魔数识别真实图片 MIME，不依赖扩展名。"""
-    if len(data) >= 8 and data[:8] == b"\x89PNG\r\n\x1a\n":
-        return "image/png"
-    if len(data) >= 3 and data[:3] == b"\xff\xd8\xff":
-        return "image/jpeg"
-    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "image/webp"
-    if len(data) >= 4 and data[:4] == b"GIF8":
-        return "image/gif"
-    if len(data) >= 4 and data[:4] in (b"II*\x00", b"MM\x00*"):
-        return "image/tiff"
-    if len(data) >= 4 and data[:4] == b"\x00\x00\x01\x00":
-        return "image/x-icon"
-    if len(data) >= 12 and data[4:8] in (b"avif", b"heic", b"heif", b"mif1"):
-        return "image/avif"
-    return "application/octet-stream"
-
-
-# ============================================================
-# 限流 + 请求
-# ============================================================
-# 令牌桶限流：允许短时突发（匹配前端 4 并发），稳态约 1/API_RATE_LIMIT_SEC req/s。
-# 替代原先「每次请求固定 sleep 2s」的全局硬串行锁：原先会把一页 50 个预览 posts.json
-# 串行化到 ~100s，首屏要等很久；令牌桶让首批（≤API_RATE_BURST）瞬时放行，其余按
-# 稳态速率补齐，首屏可见图 1s 内出现。遇 429/403 仍有下方指数退避重试兜底。
-class _TokenBucket:
-    def __init__(self, rate, capacity):
-        self.rate = float(rate)
-        self.capacity = float(capacity)
-        self.tokens = float(capacity)
-        self.last = time.time()
+# ----------------------------- L2 磁盘缓存 -----------------------------
+# 与扭蛋逻辑完全解耦；插件全局目录，多节点实例共享；按 URL sha1 命名。
+class DiskCache:
+    def __init__(self, base_dir, max_items=300, enabled=True):
+        self.dir = base_dir
+        self.max_items = max(10, min(int(max_items), 5000))
+        self.enabled = bool(enabled)
         self.lock = threading.Lock()
+        if self.enabled:
+            try:
+                os.makedirs(self.dir, exist_ok=True)
+            except Exception:
+                self.enabled = False  # 目录不可写则降级，绝不中断主流程
 
-    def acquire(self):
+    def _path(self, key):
+        h = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+        return os.path.join(self.dir, h + ".img")
+
+    def get(self, key):
+        if not self.enabled:
+            return None
+        p = self._path(key)
+        if not os.path.exists(p):
+            return None
+        try:
+            with open(p, "rb") as f:
+                data = f.read()
+            if not data or detect_image_mime(data) == "application/octet-stream":
+                return None
+            # 命中更新 atime，实现真正 LRU（按访问时间裁剪）
+            os.utime(p, None)
+            return data
+        except Exception:
+            return None
+
+    def set(self, key, data):
+        if not self.enabled or not data:
+            return
+        p = self._path(key)
+        tmp = p + ".tmp"
+        try:
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.replace(tmp, p)  # 原子重命名，避免并发半文件
+        except Exception:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+            return
+        self._prune()
+
+    def _prune(self):
         with self.lock:
-            now = time.time()
-            self.tokens = min(self.capacity, self.tokens + (now - self.last) * self.rate)
-            self.last = now
-            if self.tokens >= 1.0:
-                self.tokens -= 1.0
-                return
-            # 令牌不足：等到凑够 1 个再放行（最多阻塞一个请求周期）
-            deficit = 1.0 - self.tokens
-            time.sleep(deficit / self.rate)
-            self.tokens = 0.0
-            self.last = time.time()
+            try:
+                entries = []
+                for fn in os.listdir(self.dir):
+                    if not fn.endswith(".img"):
+                        continue
+                    fp = os.path.join(self.dir, fn)
+                    try:
+                        st = os.stat(fp)
+                        entries.append((st.st_atime, fp))
+                    except Exception:
+                        pass
+                if len(entries) > self.max_items:
+                    entries.sort()
+                    excess = len(entries) - self.max_items
+                    for _, fp in entries[:excess]:
+                        try:
+                            os.remove(fp)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
 
+# 全局磁盘缓存单例；由 execute() / 预览路由按需 configure
+_DISK_CACHE = None
 
-_RATE_LIMITER = _TokenBucket(rate=1.0 / API_RATE_LIMIT_SEC, capacity=API_RATE_BURST)
+def configure_disk_cache(enabled, max_items):
+    global _DISK_CACHE
+    enabled = bool(enabled)
+    max_items = max(10, min(int(max_items), 5000))
+    if _DISK_CACHE is None:
+        cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "preview_cache")
+        _DISK_CACHE = DiskCache(cache_dir, max_items, enabled)
+    else:
+        _DISK_CACHE.enabled = enabled
+        _DISK_CACHE.max_items = max_items
 
-
-def _api_request(url: str, retries: int = 3):
-    """带令牌桶限流的 Danbooru API 请求（同步，供 executor 调用）。
-
-    仅带自定义应用 User-Agent（不带 Referer / Accept），规避 Danbooru 匿名 403 风控。
-    429（限流）与 403（临时风控 / IP 封禁前兆）均做指数退避重试；若重试耗尽仍 403，
-    调用方会拿到异常，由上层转为空结果与友好提示，不会让浏览器出现破图。
-    """
-    headers = {"User-Agent": USER_AGENT}
-    if API_USER and API_KEY:
-        auth = base64.b64encode(f"{API_USER}:{API_KEY}".encode()).decode()
-        headers["Authorization"] = f"Basic {auth}"
-
-    last_err = None
-    for attempt in range(retries):
-        _RATE_LIMITER.acquire()
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=25) as resp:
-                return resp.read(), resp.headers.get("Content-Type", "")
-        except urllib.error.HTTPError as e:
-            last_err = e
-            if e.code == 429:
-                time.sleep(3 * (attempt + 1))          # 限流：退避后重试
-                continue
-            if e.code == 403:
-                # 临时风控 / 区域拦截前兆：更长退避再试（导入 anime-t8 同样依赖请求成功，
-                # 若持续 403 多半是网络/IP 被挡，需要 DANBOORU_USER/DANBOORU_API_KEY）。
-                print(f"[NaibaTagPicker] Danbooru 返回 403（匿名被风控），第 {attempt+1} 次重试…")
-                time.sleep(5 * (attempt + 1))
-                continue
-            if attempt == retries - 1:
-                raise
-            time.sleep(2 * (attempt + 1))
-        except Exception as e:  # noqa: BLE001
-            last_err = e
-            if attempt == retries - 1:
-                raise
-            time.sleep(2 * (attempt + 1))
-    if last_err:
-        raise last_err
-    return b"", ""
-
-
-def _fetch_url(url: str, retries: int = 2):
-    """不限流的图片字节请求（CDN 限额宽松）。带 Referer + SSL 上下文，规避 donmai 防盗链。"""
-    import ssl
-    headers = {"User-Agent": USER_AGENT, "Referer": DANBOORU_REFERER}
-    ctx = ssl.create_default_context()
-    last_err = None
-    for attempt in range(retries):
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=20, context=ctx) as resp:
-                return resp.read()
-        except Exception as e:  # noqa: BLE001
-            last_err = e
-            time.sleep(1.5 * (attempt + 1))
-    if last_err:
-        print(f"[NaibaTagPicker] 图片下载失败 {url}: {last_err}")
-    return b""
-
-
-def fetch_image_bytes(url: str) -> bytes:
-    """取图片字节，命中内存缓存则直接返回（路由与 execute 共用）。"""
+def fetch_image_bytes(url):
+    """L1(内存) -> L2(磁盘) -> 网络 三级查找。"""
     cached = _IMAGE_CACHE.get(url)
     if cached is not None:
         return cached
+    if _DISK_CACHE is not None:
+        disk = _DISK_CACHE.get(url)
+        if disk:
+            _IMAGE_CACHE.set(url, disk)
+            return disk
     data = _fetch_url(url)
     if data:
         _IMAGE_CACHE.set(url, data)
+        if _DISK_CACHE is not None:
+            _DISK_CACHE.set(url, data)
     return data
 
-
-# ============================================================
-# Danbooru 搜索
-# ============================================================
-def search_tags(query: str, category: str, limit: int, page: int = 1):
-    """按分类用 Danbooru 公开 /tags.json 直接列出标签（artist/character/ip）。
-
-    参考 comfyui-anima-t8/api/danbooru_client.py：
-      - search[category]=1|3|4
-      - search[order]=count          按出现次数降序（热门优先）
-      - search[hide_empty]=yes
-      - search[post_count_gteq]=10   过滤掉极少使用的标签
-      - search[name_matches]=*q*     关键词过滤（留空则浏览全部分类热门标签）
-      - limit / page                 分页
-    返回 {items, warn, page, has_more}。
+# ----------------------------- Danbooru 搜索 -----------------------------
+def search_tags(query, category="", limit=100, page=1):
     """
-    cat_id = CATEGORY_ID.get(category, 1)
-    limit = max(1, min(int(limit), 100))
-    page = max(1, int(page))
-
+    category: "tag"/"artist"/"character"/"copyright"(ip) 或空。
+    返回 {"items":[{"id","tag","post_count","category","preview_url","source_url"}], "total":int}
+    注意：
+      - Danbooru 标签字段名为 name（非 tag），且匿名禁用 random 排序 -> 走 search[order]=count。
+      - category 请求用数字 ID（1/3/4），更稳；返回时再映射回显示名字符串。
+    """
+    cat_id = CATEGORY_ID.get(category, 0)
     params = {
-        "search[category]": cat_id,
-        "search[order]": "count",
-        "search[hide_empty]": "yes",
-        "search[post_count_gteq]": 10,
         "limit": limit,
         "page": page,
+        "search[order]": "count",
+        "search[hide_empty]": "yes",
+        "search[post_count_gteq]": "10",
     }
-    if query and query.strip():
-        params["search[name_matches]"] = f"*{query.strip()}*"
-
-    url = f"{DANBOORU_BASE}/tags.json?{urllib.parse.urlencode(params)}"
-
-    warn = None
+    if query:
+        params["search[name_matches]"] = query + ("*" if not query.endswith("*") else "")
+    if cat_id:
+        params["search[category]"] = cat_id
+    url = BASE + "/tags.json?" + urllib.parse.urlencode(params)
+    raw = _fetch_url(url)
+    if not raw:
+        return {"items": [], "total": 0}
     try:
-        raw, _ = _api_request(url)
-        rows = json.loads(raw)
-        if not isinstance(rows, list):
-            rows = []
-    except Exception as e:  # noqa: BLE001
-        print(f"[NaibaTagPicker] 搜索失败: {e}")
-        return {"items": [], "warn": f"搜索失败: {e}", "page": page, "has_more": False}
-
-    if not rows:
-        warn = "未找到结果（关键词无匹配，或触发 Danbooru 匿名限流，请稍后重试）"
-
+        arr = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return {"items": [], "total": 0}
+    if not isinstance(arr, list):
+        return {"items": [], "total": 0}
     items = []
-    for r in rows:
-        if not isinstance(r, dict):
+    for it in arr:
+        tag = it.get("name") or it.get("tag")
+        if not tag:
             continue
-        name = (r.get("name") or "").strip()
-        if not name:
-            continue
-        cat = int(r.get("category", cat_id))
-        post_count = int(r.get("post_count", 0))
+        cid = it.get("category", cat_id)
+        cname = CATEGORY_NAME_BY_ID.get(cid, category)
         items.append({
-            "id": name,  # 以标签名作为稳定唯一键（前端 Map key）
-            "tag": name,
-            "category": cat,
-            "category_name": CATEGORY_NAME_BY_ID.get(cat, category),
-            "post_count": post_count,
-            # 预览图不在搜索时解析（避免一页 50 次 posts.json 触发限流）；
-            # 前端经 IntersectionObserver 懒加载 /naiba/tag/preview?name=<tag> 取代理 URL。
+            "id": it.get("id"),
+            "tag": tag,
+            "post_count": it.get("post_count", 0),
+            "category": cname,
             "preview_url": "",
+            "source_url": f"{BASE}/posts?tags={urllib.parse.quote(tag)}",
         })
+    return {"items": items, "total": len(items)}
 
-    return {"items": items, "warn": warn, "page": page, "has_more": len(rows) >= limit}
-
-
-# ============================================================
-# 标签代表作预览图（按标签名）
-# ============================================================
-_PREVIEW_URL_CACHE = {}  # tag name -> 代表作图片真实 URL（内存缓存，避免重复 posts.json 调用）
-
-
-def fetch_tag_preview_url(name: str) -> str:
-    """调 /posts.json?tags=<name>&limit=20 取该标签代表作首图的真实 URL。
-
-    扫描多张帖子，返回首个带 preview_file_url 的（部分帖子的首图字段为 null，
-    故不能只取 limit=1 的第一张）。已限流 + 重试；结果进进程内存缓存避免重复调用。
-    """
-    if not name:
-        return ""
-    cached = _PREVIEW_URL_CACHE.get(name)
-    if cached is not None:
-        return cached
-    tag_q = urllib.parse.quote(name, safe=":/_")
-    url = f"{DANBOORU_BASE}/posts.json?tags={tag_q}&limit=20"
-    preview = ""
-    # 注意：此处不吞掉异常——网络/403 错误要向上抛出，让路由标记 error，
-    # 前端据此判定为「可重试的限流」而非「真无图」。
-    raw, _ = _api_request(url)
-    data = json.loads(raw) if raw else []
-    if isinstance(data, list):
-        for p in data:
-            if not isinstance(p, dict):
-                continue
-            pv = (p.get("preview_file_url")
-                  or p.get("large_file_url")
-                  or p.get("file_url") or "")
-            if pv:
-                preview = pv
-                break
-    # 仅缓存成功结果；空结果不缓存以便下次重试
-    if preview:
-        _PREVIEW_URL_CACHE[name] = preview
-    return preview
-
-
-def build_preview_proxy(name: str) -> str:
-    """按标签名取代表作首图，并返回同源代理 URL（/naiba/tag/image?u=<base64>）。
-
-    与 comfyui-anima-t8 的 dtags/preview 一致：该路由只做 posts.json 解析，
-    真正的图片字节由前端再请求 /naiba/tag/image 代理获取，两步解耦、各自可缓存。
-    取不到时返回空串，由前端显示占位（标签名）。
-    """
-    real = fetch_tag_preview_url(name)
-    if not real:
-        return ""
-    enc = base64.urlsafe_b64encode(real.encode()).decode()
-    return f"/naiba/tag/image?u={enc}"
-
-
-def fetch_tag_preview_bytes(name: str) -> bytes:
-    """取某标签代表作首图字节（命中 ImageCache 则直接返回）。供 execute 批量预览用。"""
-    url = fetch_tag_preview_url(name)
-    if not url:
-        return b""
-    return fetch_image_bytes(url)
-
-
-# ============================================================
-# 扭蛋模式：随机标签生成
-# ============================================================
-def get_random_tags_from_category(category: str, n: int) -> list:
-    """从某分类取 n 个随机热门标签（随机翻页增加多样性）。失败返回空。"""
+# ----------------------------- 扭蛋取样（先过滤后采样，无重试死循环） -----------------------------
+def get_random_tags_from_category(category, n, blacklist=None):
+    """从 Danbooru 随机页聚集候选池（最多 2 页），一次性过滤黑名单、去重，sample(min(n, 可用))。"""
     if n <= 0:
         return []
+    bl = set(blacklist or [])
+    pool = []
+    seen = set()
     try:
-        page = random.randint(1, 20)
-        res = search_tags("", category, limit=100, page=page)
-        names = [it["tag"] for it in (res.get("items") or []) if it.get("tag")]
-        if not names:
-            return []
-        return random.sample(names, min(n, len(names)))
-    except Exception as e:  # noqa: BLE001
-        print(f"[NaibaTagPicker] 扭蛋随机标签失败({category}): {e}")
+        for _ in range(2):
+            pg = random.randint(1, 20)
+            res = search_tags("", category, limit=100, page=pg)
+            for it in (res.get("items") or []):
+                nm = it.get("tag")
+                if nm and nm not in seen:
+                    seen.add(nm)
+                    pool.append(nm)
+    except Exception as e:
+        print(f"[naiba_tag_picker] gacha pool error: {e}")
+    filtered = [t for t in pool if t not in bl]
+    if not filtered:
         return []
+    if len(filtered) <= n:
+        return list(filtered)
+    return random.sample(filtered, n)
 
-
-def get_completely_random_tags(total: int) -> list:
-    """完全随机：把 total 个名额随机分摊到画师/角色/IP 三类，各自随机取样。
-
-    返回 [{"tag": ..., "category": "artist"|"character"|"ip"}, ...]，
-    带上分类便于前端/输出按 artist_at 给画师加 @。
-    """
+def get_completely_random_tags(total, blacklist=None):
+    """完全随机：每个分类先聚一次候选池（先过滤黑名单），再按组抽样保证 trio 完整。"""
     if total <= 0:
         return []
-    total = min(total, 30)
-    cats = ["artist", "character", "ip"]
-    counts = [0, 0, 0]
+    bl = set(blacklist or [])
+    cats = ["artist", "character", "copyright"]
+    pools = {}
+    for c in cats:
+        pool = []
+        seen = set()
+        for _ in range(3):
+            res = search_tags("", c, limit=100, page=random.randint(1, 20))
+            for it in (res.get("items") or []):
+                nm = it.get("tag")
+                if nm and nm not in seen:
+                    seen.add(nm)
+                    pool.append(nm)
+        pools[c] = [t for t in pool if t not in bl]
+    out = []
+    used = set()
     for _ in range(total):
-        counts[random.randrange(3)] += 1
-    tags = []
-    for c, cnt in zip(cats, counts):
-        if cnt:
-            tags.extend({"tag": t, "category": c} for t in get_random_tags_from_category(c, cnt))
-    return tags
+        trio = []
+        ok = True
+        for c in cats:
+            avail = [t for t in pools[c] if t not in used]
+            if not avail:
+                ok = False
+                break
+            pick = random.choice(avail)
+            used.add(pick)
+            trio.append({"tag": pick, "category": c})
+        if ok:
+            out.extend(trio)
+    return out
 
+# 预生成预览图代理用的随机 post 图
+_PREVIEW_URL_CACHE = {}
 
-# ============================================================
-# HTTP 路由（import 即注册）
-# ============================================================
-@PromptServer.instance.routes.get('/naiba/tag/search')
-async def tag_search_handler(request):
-    q = request.query.get('q', '').strip()
-    category = request.query.get('category', 'artist')
+def get_random_post_image_url(tag):
+    key = "tag:" + tag
+    cached = _PREVIEW_URL_CACHE.get(key)
+    if cached:
+        return cached
+    # 不加 random=true（匿名会 403）；改为多取几条后客户端随机选一条，保证多样性
+    url = f"{BASE}/posts.json?tags={urllib.parse.quote(tag)}&limit=20"
+    raw = _fetch_url(url)
+    if not raw:
+        return None
     try:
-        limit = int(request.query.get('limit', '50'))
-    except (TypeError, ValueError):
-        limit = 50
-    try:
-        page = int(request.query.get('page', '1'))
-    except (TypeError, ValueError):
-        page = 1
-    loop = asyncio.get_event_loop()
-    try:
-        result = await loop.run_in_executor(None, lambda: search_tags(q, category, limit, page))
-        return web.json_response(result)
-    except Exception as e:  # noqa: BLE001
-        return web.json_response({"items": [], "warn": str(e), "page": page, "has_more": False})
+        arr = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return None
+    if not arr:
+        return None
+    it = random.choice(arr)
+    preview = it.get("preview_file_url") or it.get("media_asset", {}).get("preview_file_url")
+    if preview and not preview.startswith("http"):
+        preview = BASE + preview
+    if preview:
+        _PREVIEW_URL_CACHE[key] = preview
+    return preview
 
-
-@PromptServer.instance.routes.get('/naiba/tag/image')
-async def tag_image_handler(request):
-    u = request.query.get('u', '')
-    if not u:
-        return web.Response(status=400, text="Missing url")
-    try:
-        real_url = base64.urlsafe_b64decode(u + "===").decode()
-    except Exception:  # noqa: BLE001
-        return web.Response(status=400, text="Bad url")
-    # SSRF 防护：仅允许 Danbooru CDN 域名
-    if CDN_HOST_SUFFIX not in real_url:
-        return web.Response(status=403, text="Forbidden")
-    loop = asyncio.get_event_loop()
-    try:
-        data = await loop.run_in_executor(None, lambda: fetch_image_bytes(real_url))
-    except Exception as e:  # noqa: BLE001
-        return web.Response(status=500, text=str(e))
+def build_preview_proxy(tag):
+    real = get_random_post_image_url(tag)
+    if not real:
+        return None
+    data = fetch_image_bytes(real)
     if not data:
-        # 取不到图（CDN 404/限流）：返回占位 SVG，避免浏览器破图图标
-        svg = (
-            b'<svg xmlns="http://www.w3.org/2000/svg" width="140" height="120">'
-            b'<rect width="100%" height="100%" fill="#16213e"/>'
-            b'<text x="50%" y="50%" fill="#888" font-size="11" '
-            b'text-anchor="middle" dominant-baseline="middle">no image</text>'
-            b'</svg>'
-        )
-        return web.Response(
-            body=svg,
-            content_type="image/svg+xml",
-            headers={"Cache-Control": "public, max-age=3600"},
-        )
+        return None
     mime = detect_image_mime(data)
-    return web.Response(
-        body=data,
-        content_type=mime,
-        headers={"Cache-Control": "public, max-age=86400"},
-    )
+    b64 = base64.b64encode(data).decode("ascii")
+    return f"data:{mime};base64,{b64}"
 
-
-@PromptServer.instance.routes.get('/naiba/tag/preview')
-async def tag_preview_handler(request):
-    """按标签名取代表作首图代理 URL（懒加载用，与 comfyui-anima-t8 的 dtags/preview 一致）。
-
-    返回 JSON：{"image_url": "/naiba/tag/image?u=<base64>", "source_url": "..."}。
-    image_url 为空表示取不到（限流/无代表作），前端据此显示占位（标签名）。
-    """
-    name = (request.query.get('name', '') or '').strip()
-    if not name:
-        return web.json_response({"image_url": "", "source_url": ""}, status=400)
-    loop = asyncio.get_event_loop()
-    try:
-        proxy = await loop.run_in_executor(None, lambda: build_preview_proxy(name))
-    except Exception as e:  # noqa: BLE001
-        return web.json_response({"image_url": "", "source_url": "", "error": str(e)})
-    source = f"{DANBOORU_BASE}/posts?tags={urllib.parse.quote(name)}" if name else ""
-    return web.json_response({"image_url": proxy, "source_url": source})
-
-
-@PromptServer.instance.routes.get('/naiba/tag/gacha_random')
-async def tag_gacha_random_handler(request):
-    """扭蛋「完全随机」：按 total（0~3N）个名额随机取标签。返回 {"tags": [...]}。"""
-    try:
-        total = int(request.query.get('total', '9'))
-    except (TypeError, ValueError):
-        total = 9
-    total = max(0, min(int(total), 30))
-    loop = asyncio.get_event_loop()
-    try:
-        tags = await loop.run_in_executor(None, lambda: get_completely_random_tags(total))
-        return web.json_response({"tags": tags})
-    except Exception as e:  # noqa: BLE001
-        return web.json_response({"tags": [], "error": str(e)})
-
-
-@PromptServer.instance.routes.get('/naiba/tag/gacha_partial')
-async def tag_gacha_partial_handler(request):
-    """扭蛋「部分随机」：按前端指定的每类数量（artist/character/ip 各 0~10）直接从 Danbooru
-    实时随机取样，返回 {"tags": [画师…, 角色…, IP…]}。不依赖任何候选输入。"""
-    def _parse(name, default):
-        try:
-            v = int(request.query.get(name, str(default)))
-        except (TypeError, ValueError):
-            v = default
-        return max(0, min(int(v), 10))
-    a = _parse('artist', 3)
-    c = _parse('character', 3)
-    i = _parse('ip', 3)
-    loop = asyncio.get_event_loop()
-    try:
-        def _job():
-            arts = get_random_tags_from_category("artist", a)
-            chars = get_random_tags_from_category("character", c)
-            ips = get_random_tags_from_category("ip", i)
-            return ([{"tag": t, "category": "artist"} for t in arts]
-                    + [{"tag": t, "category": "character"} for t in chars]
-                    + [{"tag": t, "category": "ip"} for t in ips])
-        tags = await loop.run_in_executor(None, _job)
-        return web.json_response({"tags": tags, "counts": {"artist": a, "character": c, "ip": i}})
-    except Exception as e:  # noqa: BLE001
-        return web.json_response({"tags": [], "error": str(e)})
-
-
-# ============================================================
-# 工具：解码 proxy url → 真实 url
-# ============================================================
-def _format_gacha_tags(gt, artist_at: bool) -> list:
-    """把扭蛋标签（兼容 [str] 旧格式 与 [{"tag","category"}] 新格式）转为输出名列表。
-
-    开启 artist_at 时，分类为 artist 的标签加 @ 前缀。
-    """
-    parts = []
-    if not isinstance(gt, list):
-        return parts
-    for t in gt:
-        if isinstance(t, dict):
-            name = t.get("tag", "")
-            cat = t.get("category", "")
-        else:
-            name = str(t)
-            cat = ""
-        if not name:
-            continue
-        if artist_at and cat == "artist":
-            name = "@" + name
-        parts.append(name)
-    return parts
-
-
-def _decode_proxy_url(proxy_url: str):
-    if not proxy_url:
-        return None
-    if "/naiba/tag/image?u=" in proxy_url:
-        enc = proxy_url.split("u=", 1)[1]
-        try:
-            return base64.urlsafe_b64decode(enc + "===").decode()
-        except Exception:  # noqa: BLE001
-            return None
-    if proxy_url.startswith("http"):
-        return proxy_url
-    return None
-
-
-def _load_preview_tensor(real_url: str, size: int):
-    """下载一张预览图 → 缩放(保持比例)并居中贴到 size×size 黑底 → [H,W,3] float32。"""
-    try:
-        data = fetch_image_bytes(real_url)
-        if not data:
-            return None
-        with Image.open(io.BytesIO(data)) as im:
-            im = im.convert("RGB")
-            im.thumbnail((size, size), Image.LANCZOS)
-            canvas = Image.new("RGB", (size, size), (0, 0, 0))
-            canvas.paste(im, ((size - im.width) // 2, (size - im.height) // 2))
-            arr = np.asarray(canvas, dtype=np.float32) / 255.0
-            return torch.from_numpy(arr)
-    except Exception as e:  # noqa: BLE001
-        print(f"[NaibaTagPicker] 预览加载失败 {real_url}: {e}")
-        return None
-
-
-def _load_preview_tensor_by_name(name: str, size: int):
-    """按标签名取代表作首图 → 居中贴到 size×size 黑底 → [H,W,3] float32。"""
-    try:
-        data = fetch_tag_preview_bytes(name)
-        if not data:
-            return None
-        with Image.open(io.BytesIO(data)) as im:
-            im = im.convert("RGB")
-            im.thumbnail((size, size), Image.LANCZOS)
-            canvas = Image.new("RGB", (size, size), (0, 0, 0))
-            canvas.paste(im, ((size - im.width) // 2, (size - im.height) // 2))
-            arr = np.asarray(canvas, dtype=np.float32) / 255.0
-            return torch.from_numpy(arr)
-    except Exception as e:  # noqa: BLE001
-        print(f"[NaibaTagPicker] 预览加载失败 {name}: {e}")
-        return None
-
-
-# ============================================================
-# 节点类
-# ============================================================
+# ----------------------------- 节点 -----------------------------
 class NaibaTagPicker:
-    """
-    标签画廊选择器：
-    - 前端三标签页（画师/角色/IP）画廊多选，把分组 JSON 写回隐藏控件 selection_data。
-    - execute 解析 JSON，输出三类标签名串 + 选中图批量预览 IMAGE。
-    """
-
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "selection_data": ("STRING", {
-                    "default": "{}",
-                    "multiline": True,
-                    "tooltip": "三分类选中数据（由前端画廊自动管理，无需手动编辑）",
-                }),
-                "max_images": ("INT", {
-                    "default": 16,
-                    "min": 1,
-                    "max": 64,
-                    "step": 1,
-                    "tooltip": "批量预览图最大张数（超出截断）",
-                }),
-                "preview_size": ("INT", {
-                    "default": 320,
-                    "min": 64,
-                    "max": 512,
-                    "step": 8,
-                    "tooltip": "预览图边长上限（保持比例居中贴到正方形，控制显存）",
-                }),
+                # —— 计划前（原版）外部 UI：仅 6 个控件 ——
+                "selection_data": ("STRING", {"multiline": True, "default": "{}", "label": "已选标签(JSON，隐藏)"}),
+                "max_images": ("INT", {"default": 16, "min": 1, "max": 64, "step": 1, "tooltip": "批量预览图最大张数（超出截断）"}),
+                "preview_size": ("INT", {"default": 320, "min": 64, "max": 512, "step": 8, "tooltip": "预览图边长上限（保持比例居中贴到正方形，控制显存）"}),
                 "artist_at": ("BOOLEAN", {
                     "default": False,
                     "label_on": "画师加 @",
                     "label_off": "画师不加 @",
-                    "tooltip": "开启后画师标签输出为 @画师名（ARTIST_NAMES 与扭蛋 RANDOM_TAGS 中的画师标签都会加 @）；关闭则原样输出画师名",
+                    "tooltip": "开启后画师标签输出为 @画师名；关闭则原样输出画师名",
                 }),
                 "gacha_mode": ("BOOLEAN", {
                     "default": False,
                     "label_on": "扭蛋开",
                     "label_off": "扭蛋关",
-                    "tooltip": "开启后输出 RANDOM_TAGS（扭蛋随机标签组合）；关闭则输出空串",
+                    "tooltip": "开启后输出扭蛋随机标签组合；关闭则输出空串",
                 }),
-                "gacha_data": ("STRING", {
-                    "default": "{}",
-                    "multiline": True,
-                    "tooltip": "扭蛋结果（由弹窗扭蛋标签页自动管理）：{\"tags\": [...]}",
-                }),
+                "gacha_data": ("STRING", {"multiline": True, "default": "{}", "label": "扭蛋结果(JSON，隐藏)"}),
+            },
+            "hidden": {
+                # —— v2 增强功能：控件不显示在节点上，改由前端弹窗管理 ——
+                "cache_enabled": ("BOOLEAN", {"default": True}),
+                "cache_max_items": ("INT", {"default": 300, "min": 10, "max": 5000, "step": 10}),
+                "sync_external_random": ("BOOLEAN", {"default": False}),
+                "blacklist_data": ("STRING", {"multiline": True, "default": "{}"}),
+                "favorites_data": ("STRING", {"multiline": True, "default": "{}"}),
+                "prompt": "PROMPT",
+                "extra_pnginfo": "EXTRA_PNGINFO",
             },
         }
 
@@ -657,29 +422,41 @@ class NaibaTagPicker:
     RETURN_NAMES = ("ARTIST_NAMES", "CHARACTER_NAMES", "IP_NAMES", "MERGED_TAGS", "RANDOM_TAGS", "PREVIEW_IMAGES")
     FUNCTION = "execute"
     CATEGORY = "naiba-node"
-    DESCRIPTION = (
-        "标签画廊选择器 - 通过 Danbooru API 搜索画师/角色/IP，前端三标签页画廊多选。\n"
-        "扭蛋模式：弹窗内分别指定「画师/角色/IP 每类抽几个（0~10）」，\n"
-        "部分随机由后端从 Danbooru 实时随机取样（画师 a + 角色 c + IP i 个），或完全随机产出一组随机标签，并从 RANDOM_TAGS 输出；\n"
-        "扭蛋面板内与节点外部均提供一键「清除」按钮。\n"
-        "输出三类标签名串（画师/角色/IP）、扭蛋随机标签串、选中图批量预览（IMAGE，仅内存、不落盘）。\n"
-        "可选环境变量 DANBOORU_USER / DANBOORU_API_KEY 提升 API 限额。"
-    )
-    SEARCH_ALIASES = ["naiba", "tag picker", "danbooru", "artist", "character", "copyright", "gacha", "扭蛋"]
 
-    def execute(self, selection_data, max_images, preview_size, artist_at, gacha_mode, gacha_data):
+    def execute(self, selection_data, max_images, preview_size, artist_at, gacha_mode, gacha_data,
+                cache_enabled, cache_max_items, sync_external_random, blacklist_data, favorites_data,
+                prompt=None, extra_pnginfo=None):
+        # 配置磁盘缓存（仅当开启且目录可写时生效；否则降级内存）
+        configure_disk_cache(cache_enabled, cache_max_items)
+
+        # 已选标签：兼容 v2（selected 列表）与原版（artist/character/ip 分组）两种结构
         try:
-            sel = json.loads(selection_data) if selection_data and selection_data.strip() else {}
-        except (json.JSONDecodeError, TypeError):
+            sel = json.loads(selection_data) if isinstance(selection_data, str) else selection_data
+            if not isinstance(sel, dict):
+                sel = {}
+        except Exception:
             sel = {}
+        selected = []
+        if isinstance(sel, dict):
+            if "selected" in sel:
+                selected = sel.get("selected") or []
+            else:
+                for cat in ("artist", "character", "ip"):
+                    for it in (sel.get(cat) or []):
+                        if isinstance(it, dict) and it.get("tag"):
+                            selected.append({"tag": it["tag"], "category": cat})
+        if not isinstance(selected, list):
+            selected = []
 
-        if not isinstance(sel, dict):
-            sel = {}
+        def _norm_cat(c):
+            c = c or "tag"
+            return "ip" if c in ("copyright", "ip") else c
 
-        artist_items = sel.get("artist", []) or []
-        character_items = sel.get("character", []) or []
-        ip_items = sel.get("ip", []) or []
+        artist_items = [it for it in selected if _norm_cat(it.get("category")) == "artist"]
+        character_items = [it for it in selected if _norm_cat(it.get("category")) == "character"]
+        ip_items = [it for it in selected if _norm_cat(it.get("category")) == "ip"]
 
+        # 画师按 artist_at 开关加 @ 前缀
         artist_names_list = [
             (("@" + t) if artist_at else t)
             for t in (it.get("tag", "") for it in artist_items)
@@ -691,63 +468,216 @@ class NaibaTagPicker:
         artist_names = ", ".join(artist_names_list)
         character_names = ", ".join(character_names_list)
         ip_names = ", ".join(ip_names_list)
-        # 合并标签：画师 + 角色 + IP 选中项一起输出（画师按 artist_at 加 @）
         merged_tags = ", ".join(artist_names_list + character_names_list + ip_names_list)
 
-        # 扭蛋随机标签组合
+        # 扭蛋随机标签组合（gacha_mode 开启时输出；画师按 artist_at 加 @）
         random_tags = ""
         if gacha_mode:
             gacha = {}
             try:
-                gacha = json.loads(gacha_data) if gacha_data and gacha_data.strip() else {}
+                gacha = json.loads(gacha_data) if gacha_data and str(gacha_data).strip() else {}
             except (json.JSONDecodeError, TypeError):
                 gacha = {}
             gt = gacha.get("tags") if isinstance(gacha, dict) else None
             if isinstance(gt, list) and gt:
-                # 弹窗已选：输出该随机组合（画师标签按 artist_at 加 @）
                 random_tags = ", ".join(_format_gacha_tags(gt, artist_at))
-            else:
-                # 弹窗未选择：等于完全随机标签
-                random_tags = ", ".join(t.get("tag", "") for t in get_completely_random_tags(9))
 
-        # 合并三类选中标签，按标签名去重（跨分类同名只取一次预览）
+        # 批量预览：所有选中标签名去重（预览图不带 @）
         seen = set()
         tag_names = []
-        for it in artist_items + character_items + ip_items:
-            name = it.get("tag")
+        for it in selected:
+            name = it.get("tag") if isinstance(it, dict) else it
             if name and name not in seen:
                 seen.add(name)
                 tag_names.append(name)
 
-        tensors = []
-        warn = ""
+        preview_tensors = []
         if tag_names:
             if len(tag_names) > max_images:
-                warn = f"预览图 {len(tag_names)} 张超过上限 {max_images}，已截断"
                 tag_names = tag_names[:max_images]
-            size = int(preview_size)
-            with ThreadPoolExecutor(max_workers=6) as ex:
-                results = list(ex.map(lambda n: _load_preview_tensor_by_name(n, size), tag_names))
-            tensors = [t for t in results if t is not None]
+            for name in tag_names:
+                try:
+                    preview_tensors.append(_load_preview_tensor_by_name(name, preview_size))
+                except Exception as e:
+                    print(f"[naiba_tag_picker] preview fail {name}: {e}")
 
-        if tensors:
-            batch = torch.stack(tensors, dim=0)
+        if preview_tensors:
+            previews = torch.cat(preview_tensors, dim=0)
         else:
-            batch = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
+            previews = torch.zeros((1, preview_size, preview_size, 3), dtype=torch.float32)
 
-        if warn:
-            print(f"[NaibaTagPicker] {warn}")
+        return (artist_names, character_names, ip_names, merged_tags, random_tags, previews)
 
-        return (artist_names, character_names, ip_names, merged_tags, random_tags, batch)
+def _format_gacha_tags(gt, artist_at: bool) -> list:
+    """把扭蛋标签（兼容 [str] 旧格式 与 [{"tag","category"}] 新格式）转为输出名列表。
+    开启 artist_at 时，分类为 artist 的标签加 @ 前缀。"""
+    parts = []
+    if not isinstance(gt, list):
+        return parts
+    for t in gt:
+        if isinstance(t, str):
+            name, cat = t, "tag"
+        elif isinstance(t, dict):
+            name = t.get("tag", "")
+            cat = t.get("category", "tag")
+        else:
+            continue
+        if not name:
+            continue
+        if artist_at and cat == "artist":
+            name = "@" + name
+        parts.append(name)
+    return parts
 
 
-# 节点映射
+def _load_preview_tensor_by_name(name, size):
+    real = get_random_post_image_url(name)
+    if real:
+        data = fetch_image_bytes(real)
+        if data:
+            img = Image.open(io.BytesIO(data)).convert("RGB")
+            img = img.resize((size, size))
+            arr = np.array(img).astype(np.float32) / 255.0
+            return torch.from_numpy(arr)[None,]
+    # 失败兜底：纯色块
+    arr = np.zeros((size, size, 3), dtype=np.float32)
+    return torch.from_numpy(arr)[None,]
+
+# ----------------------------- 路由注册 -----------------------------
+def _parse_json_list(raw):
+    try:
+        v = json.loads(raw) if isinstance(raw, str) else raw
+        if isinstance(v, list):
+            return [str(x) for x in v if x]
+    except Exception:
+        pass
+    return []
+
+def register_routes():
+    if PromptServer is None or web is None:
+        return
+
+    @PromptServer.instance.routes.get("/naiba/tag/search")
+    async def tag_search(request):
+        q = request.query.get("q", "")
+        cat = request.query.get("cat", "tag")
+        try:
+            limit = int(request.query.get("limit", "100"))
+        except Exception:
+            limit = 100
+        try:
+            page = int(request.query.get("page", "1"))
+        except Exception:
+            page = 1
+        category = {"artist": "artist", "character": "character", "ip": "copyright", "tag": "tag"}.get(cat, "tag")
+        res = await _run_in_exec(search_tags, q, category, limit, page)
+        return web.json_response(res)
+
+    @PromptServer.instance.routes.get("/naiba/tag/preview")
+    async def tag_preview(request):
+        tag = request.query.get("tag", "")
+        try:
+            size = int(request.query.get("size", "220"))
+        except Exception:
+            size = 220
+        _consume_cache_params(request)
+        if not tag:
+            return web.json_response({"preview_url": None, "source_url": None})
+        # 在后台线程构造 base64 预览
+        data = await _run_in_exec(build_preview_proxy, tag)
+        source_url = f"{BASE}/posts?tags={urllib.parse.quote(tag)}"
+        return web.json_response({"preview_url": data, "source_url": source_url})
+
+    @PromptServer.instance.routes.get("/naiba/tag/image")
+    async def tag_image(request):
+        u = request.query.get("u", "")
+        _consume_cache_params(request)
+        if not u:
+            return web.Response(status=400, text="missing u")
+        data = await _run_in_exec(fetch_image_bytes, u)
+        if not data:
+            return web.Response(status=502, text="fetch failed")
+        mime = detect_image_mime(data)
+        return web.Response(body=data, content_type=mime)
+
+    @PromptServer.instance.routes.get("/naiba/tag/gacha_partial")
+    async def gacha_partial(request):
+        try:
+            a = int(request.query.get("artist", "0"))
+        except Exception:
+            a = 0
+        try:
+            c = int(request.query.get("character", "0"))
+        except Exception:
+            c = 0
+        try:
+            i = int(request.query.get("ip", "0"))
+        except Exception:
+            i = 0
+        blacklist = _parse_json_list(request.query.get("blacklist", "[]"))
+        out, shortfall = await _run_in_exec(_gacha_partial_job, a, c, i, blacklist)
+        return web.json_response({"tags": out, "shortfall": shortfall})
+
+    @PromptServer.instance.routes.get("/naiba/tag/gacha_random")
+    async def gacha_random(request):
+        try:
+            total = int(request.query.get("total", "9"))
+        except Exception:
+            total = 9
+        blacklist = _parse_json_list(request.query.get("blacklist", "[]"))
+        tags = await _run_in_exec(get_completely_random_tags, total, blacklist)
+        return web.json_response({"tags": tags})
+
+    @PromptServer.instance.routes.get("/naiba/tag/hello")
+    async def tag_hello(request):
+        return web.json_response({"ok": True})
+
+def _consume_cache_params(request):
+    cache_on = request.query.get("cache", "1") not in ("0", "false", "False", "0")
+    try:
+        max_items = int(request.query.get("max", "300"))
+    except Exception:
+        max_items = 300
+    configure_disk_cache(cache_on, max_items)
+
+def _gacha_partial_job(a, c, i, blacklist):
+    cats = [("artist", a), ("character", c), ("copyright", i)]
+    out = []
+    shortfall = {}
+    for cname, cnt in cats:
+        tags = get_random_tags_from_category(cname, cnt, blacklist)
+        actual = len(tags)
+        for t in tags:
+            out.append({"tag": t, "category": cname})
+        if cnt > 0 and actual < cnt:
+            reason = "blacklist_or_insufficient"
+            shortfall[cname] = {"requested": cnt, "actual": actual, "reason": reason}
+    return out, shortfall
+
+_EXECUTOR = None
+_EXECUTOR_LOCK = threading.Lock()
+def _get_executor():
+    global _EXECUTOR
+    if _EXECUTOR is None:
+        with _EXECUTOR_LOCK:
+            if _EXECUTOR is None:
+                _EXECUTOR = ThreadPoolExecutor(max_workers=4)
+    return _EXECUTOR
+
+async def _run_in_exec(fn, *args):
+    """在后台线程执行阻塞 IO，返回结果（路由处理器在事件循环内 await）。"""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_get_executor(), fn, *args)
+
+# ----------------------------- 注册 -----------------------------
+try:
+    register_routes()
+except Exception as e:
+    print(f"[naiba_tag_picker] register_routes error: {e}")
+
 NODE_CLASS_MAPPINGS = {
     "NaibaTagPicker": NaibaTagPicker,
 }
-
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "NaibaTagPicker": "Naiba Tag Picker (画师/角色/IP/扭蛋)",
+    "NaibaTagPicker": "Naiba Tag Picker 🎯",
 }
-
-print("[NaibaTagPicker] loaded: routes /naiba/tag/search, /naiba/tag/preview, /naiba/tag/image, /naiba/tag/gacha_random, /naiba/tag/gacha_partial")
