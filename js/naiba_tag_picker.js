@@ -195,7 +195,8 @@ function createTagPickerModal(node) {
         try {
             const resp = await api.fetchApi(`/naiba/tag/gacha_partial?artist=${a}&character=${c}&ip=${i}`);
             const data = await resp.json();
-            gachaState.resultTags = (data.tags || []).filter(Boolean);
+            // 后端返回 [{"tag","category"}]，兼容旧版纯字符串
+            gachaState.resultTags = (data.tags || []).map((t) => typeof t === "string" ? { tag: t, category: "" } : t).filter((x) => x && x.tag);
         } catch (e) {
             console.warn("[NaibaTagPicker] 部分随机失败:", e);
             gachaState.resultTags = [];
@@ -213,7 +214,8 @@ function createTagPickerModal(node) {
         try {
             const resp = await api.fetchApi(`/naiba/tag/gacha_random?total=${total}`);
             const data = await resp.json();
-            gachaState.resultTags = (data.tags || []).filter(Boolean);
+            // 后端返回 [{"tag","category"}]，兼容旧版纯字符串
+            gachaState.resultTags = (data.tags || []).map((t) => typeof t === "string" ? { tag: t, category: "" } : t).filter((x) => x && x.tag);
         } catch (e) {
             console.warn("[NaibaTagPicker] 完全随机失败:", e);
             gachaState.resultTags = [];
@@ -520,7 +522,8 @@ function createTagPickerModal(node) {
         statusLine.textContent = `扭蛋结果：共 ${tags.length} 个随机标签（上限 ${gachaState.artistN + gachaState.charN + gachaState.ipN}）`;
         statusLine.style.color = COLORS.success;
 
-        tags.forEach((tag) => {
+        tags.forEach((item, idx) => {
+            const tag = item.tag || "";
             const card = document.createElement("div");
             card.style.cssText = `
                 position:relative;background:${COLORS.cardBg};border:1px solid ${COLORS.cardBorder};
@@ -537,6 +540,21 @@ function createTagPickerModal(node) {
             cap.style.cssText = `padding:4px 6px;font-size:11px;color:${COLORS.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
             cap.textContent = tag;
             card.appendChild(cap);
+
+            // 单标签删除按钮：移除此扭蛋结果（不想要的标签）
+            const del = document.createElement("div");
+            del.textContent = "✕";
+            del.title = "删除此标签";
+            del.style.cssText = `position:absolute;top:4px;right:4px;width:18px;height:18px;border-radius:50%;
+                background:${COLORS.danger};color:white;font-size:12px;display:flex;align-items:center;justify-content:center;
+                cursor:pointer;z-index:2;transition:background 0.15s;`;
+            del.addEventListener("mouseenter", () => del.style.background = "#ff8585");
+            del.addEventListener("mouseleave", () => del.style.background = COLORS.danger);
+            del.addEventListener("click", () => {
+                gachaState.resultTags = gachaState.resultTags.filter((_, i) => i !== idx);
+                renderGachaGallery();
+            });
+            card.appendChild(del);
 
             grid.appendChild(card);
 
@@ -610,7 +628,9 @@ function createTagPickerModal(node) {
                 });
             });
             if (Array.isArray(saved.gacha?.tags)) {
-                gachaState.resultTags = saved.gacha.tags.filter(Boolean);
+                gachaState.resultTags = saved.gacha.tags.filter(Boolean).map((t) =>
+                    typeof t === "string" ? { tag: t, category: "" } : (t && t.tag ? t : null)
+                ).filter(Boolean);
             }
         } catch (e) { /* ignore */ }
     }
@@ -620,7 +640,9 @@ function createTagPickerModal(node) {
         try {
             const gd = JSON.parse(gachaWidget.value);
             if (Array.isArray(gd.tags) && gd.tags.length && !gachaState.resultTags.length) {
-                gachaState.resultTags = gd.tags.filter(Boolean);
+                gachaState.resultTags = gd.tags.filter(Boolean).map((t) =>
+                    typeof t === "string" ? { tag: t, category: "" } : (t && t.tag ? t : null)
+                ).filter(Boolean);
             }
         } catch (e) { /* ignore */ }
     }
@@ -699,12 +721,18 @@ app.registerExtension({
                         ? `<div style="margin:2px 0;"><span style="color:${COLORS.accent};">${label} ${arr.length}：</span>${arr.map((x) => x.tag).filter(Boolean).join(", ")}</div>`
                         : "";
                     html += fmt("画师", data.artist || []) + fmt("角色", data.character || []) + fmt("IP", data.ip || []);
+                    const merged = [...(data.artist || []), ...(data.character || []), ...(data.ip || [])]
+                        .map((x) => x.tag).filter(Boolean);
+                    if (merged.length) {
+                        html += `<div style="margin:2px 0;"><span style="color:${COLORS.text};">合并 ${merged.length}：</span>${merged.join(", ")}</div>`;
+                    }
                 } catch (e) { /* ignore */ }
                 try {
                     const gd = JSON.parse(gw?.value || "{}");
                     const gt = Array.isArray(gd.tags) ? gd.tags.filter(Boolean) : [];
                     if (gt.length) {
-                        html += `<div style="margin:2px 0;"><span style="color:${gachaOn ? COLORS.success : COLORS.textDim};">扭蛋标签 ${gt.length}${gachaOn ? "" : "（未启用）"}：</span>${gt.join(", ")}</div>`;
+                        const names = gt.map((x) => (x && x.tag) || x).join(", ");
+                        html += `<div style="margin:2px 0;"><span style="color:${gachaOn ? COLORS.success : COLORS.textDim};">扭蛋标签 ${gt.length}${gachaOn ? "" : "（未启用）"}：</span>${names}</div>`;
                     }
                 } catch (e) { /* ignore */ }
                 if (!html) {

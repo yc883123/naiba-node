@@ -41,7 +41,8 @@ from aiohttp import web
 # ============================================================
 DANBOORU_BASE = "https://danbooru.donmai.us"
 CDN_HOST_SUFFIX = "donmai.us"          # 仅允许代理该域名下的图片，防 SSRF
-API_RATE_LIMIT_SEC = 2.0               # Danbooru 匿名约 20 req/min(≈3s)；留余量，Basic Auth 可提升
+API_RATE_LIMIT_SEC = 0.5               # 令牌桶稳态最小间隔（1/该值 = 稳态 req/s）；越小越快
+API_RATE_BURST = 12                     # 令牌桶突发容量：首屏/可见批量可瞬时放行，不被硬串行拖慢
 
 # 关键修复：Danbooru/Cloudflare 已把 UA 中含 "ComfyUI" 字样的请求列入黑名单，一律返回 403
 # （实测验证：含 "ComfyUI" 的 UA → 403；换成不含该字样的自定 UA → 200）。故 UA 只用本项目名
@@ -126,12 +127,38 @@ def detect_image_mime(data: bytes) -> str:
 # ============================================================
 # 限流 + 请求
 # ============================================================
-_rate_lock = threading.Lock()
-_last_api_ts = [0.0]
+# 令牌桶限流：允许短时突发（匹配前端 4 并发），稳态约 1/API_RATE_LIMIT_SEC req/s。
+# 替代原先「每次请求固定 sleep 2s」的全局硬串行锁：原先会把一页 50 个预览 posts.json
+# 串行化到 ~100s，首屏要等很久；令牌桶让首批（≤API_RATE_BURST）瞬时放行，其余按
+# 稳态速率补齐，首屏可见图 1s 内出现。遇 429/403 仍有下方指数退避重试兜底。
+class _TokenBucket:
+    def __init__(self, rate, capacity):
+        self.rate = float(rate)
+        self.capacity = float(capacity)
+        self.tokens = float(capacity)
+        self.last = time.time()
+        self.lock = threading.Lock()
+
+    def acquire(self):
+        with self.lock:
+            now = time.time()
+            self.tokens = min(self.capacity, self.tokens + (now - self.last) * self.rate)
+            self.last = now
+            if self.tokens >= 1.0:
+                self.tokens -= 1.0
+                return
+            # 令牌不足：等到凑够 1 个再放行（最多阻塞一个请求周期）
+            deficit = 1.0 - self.tokens
+            time.sleep(deficit / self.rate)
+            self.tokens = 0.0
+            self.last = time.time()
+
+
+_RATE_LIMITER = _TokenBucket(rate=1.0 / API_RATE_LIMIT_SEC, capacity=API_RATE_BURST)
 
 
 def _api_request(url: str, retries: int = 3):
-    """带限流的 Danbooru API 请求（同步，供 executor 调用）。
+    """带令牌桶限流的 Danbooru API 请求（同步，供 executor 调用）。
 
     仅带自定义应用 User-Agent（不带 Referer / Accept），规避 Danbooru 匿名 403 风控。
     429（限流）与 403（临时风控 / IP 封禁前兆）均做指数退避重试；若重试耗尽仍 403，
@@ -144,12 +171,7 @@ def _api_request(url: str, retries: int = 3):
 
     last_err = None
     for attempt in range(retries):
-        with _rate_lock:
-            now = time.time()
-            wait = API_RATE_LIMIT_SEC - (now - _last_api_ts[0])
-            if wait > 0:
-                time.sleep(wait)
-            _last_api_ts[0] = time.time()
+        _RATE_LIMITER.acquire()
         try:
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=25) as resp:
@@ -358,7 +380,11 @@ def get_random_tags_from_category(category: str, n: int) -> list:
 
 
 def get_completely_random_tags(total: int) -> list:
-    """完全随机：把 total 个名额随机分摊到画师/角色/IP 三类，各自随机取样。"""
+    """完全随机：把 total 个名额随机分摊到画师/角色/IP 三类，各自随机取样。
+
+    返回 [{"tag": ..., "category": "artist"|"character"|"ip"}, ...]，
+    带上分类便于前端/输出按 artist_at 给画师加 @。
+    """
     if total <= 0:
         return []
     total = min(total, 30)
@@ -369,7 +395,7 @@ def get_completely_random_tags(total: int) -> list:
     tags = []
     for c, cnt in zip(cats, counts):
         if cnt:
-            tags.extend(get_random_tags_from_category(c, cnt))
+            tags.extend({"tag": t, "category": c} for t in get_random_tags_from_category(c, cnt))
     return tags
 
 
@@ -485,11 +511,14 @@ async def tag_gacha_partial_handler(request):
     i = _parse('ip', 3)
     loop = asyncio.get_event_loop()
     try:
-        tags = await loop.run_in_executor(None, lambda: (
-            get_random_tags_from_category("artist", a)
-            + get_random_tags_from_category("character", c)
-            + get_random_tags_from_category("ip", i)
-        ))
+        def _job():
+            arts = get_random_tags_from_category("artist", a)
+            chars = get_random_tags_from_category("character", c)
+            ips = get_random_tags_from_category("ip", i)
+            return ([{"tag": t, "category": "artist"} for t in arts]
+                    + [{"tag": t, "category": "character"} for t in chars]
+                    + [{"tag": t, "category": "ip"} for t in ips])
+        tags = await loop.run_in_executor(None, _job)
         return web.json_response({"tags": tags, "counts": {"artist": a, "character": c, "ip": i}})
     except Exception as e:  # noqa: BLE001
         return web.json_response({"tags": [], "error": str(e)})
@@ -498,6 +527,29 @@ async def tag_gacha_partial_handler(request):
 # ============================================================
 # 工具：解码 proxy url → 真实 url
 # ============================================================
+def _format_gacha_tags(gt, artist_at: bool) -> list:
+    """把扭蛋标签（兼容 [str] 旧格式 与 [{"tag","category"}] 新格式）转为输出名列表。
+
+    开启 artist_at 时，分类为 artist 的标签加 @ 前缀。
+    """
+    parts = []
+    if not isinstance(gt, list):
+        return parts
+    for t in gt:
+        if isinstance(t, dict):
+            name = t.get("tag", "")
+            cat = t.get("category", "")
+        else:
+            name = str(t)
+            cat = ""
+        if not name:
+            continue
+        if artist_at and cat == "artist":
+            name = "@" + name
+        parts.append(name)
+    return parts
+
+
 def _decode_proxy_url(proxy_url: str):
     if not proxy_url:
         return None
@@ -581,6 +633,12 @@ class NaibaTagPicker:
                     "step": 8,
                     "tooltip": "预览图边长上限（保持比例居中贴到正方形，控制显存）",
                 }),
+                "artist_at": ("BOOLEAN", {
+                    "default": False,
+                    "label_on": "画师加 @",
+                    "label_off": "画师不加 @",
+                    "tooltip": "开启后画师标签输出为 @画师名（ARTIST_NAMES 与扭蛋 RANDOM_TAGS 中的画师标签都会加 @）；关闭则原样输出画师名",
+                }),
                 "gacha_mode": ("BOOLEAN", {
                     "default": False,
                     "label_on": "扭蛋开",
@@ -595,8 +653,8 @@ class NaibaTagPicker:
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "IMAGE")
-    RETURN_NAMES = ("ARTIST_NAMES", "CHARACTER_NAMES", "IP_NAMES", "RANDOM_TAGS", "PREVIEW_IMAGES")
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "IMAGE")
+    RETURN_NAMES = ("ARTIST_NAMES", "CHARACTER_NAMES", "IP_NAMES", "MERGED_TAGS", "RANDOM_TAGS", "PREVIEW_IMAGES")
     FUNCTION = "execute"
     CATEGORY = "naiba-node"
     DESCRIPTION = (
@@ -609,7 +667,7 @@ class NaibaTagPicker:
     )
     SEARCH_ALIASES = ["naiba", "tag picker", "danbooru", "artist", "character", "copyright", "gacha", "扭蛋"]
 
-    def execute(self, selection_data, max_images, preview_size, gacha_mode, gacha_data):
+    def execute(self, selection_data, max_images, preview_size, artist_at, gacha_mode, gacha_data):
         try:
             sel = json.loads(selection_data) if selection_data and selection_data.strip() else {}
         except (json.JSONDecodeError, TypeError):
@@ -622,9 +680,19 @@ class NaibaTagPicker:
         character_items = sel.get("character", []) or []
         ip_items = sel.get("ip", []) or []
 
-        artist_names = ", ".join(it.get("tag", "") for it in artist_items if it.get("tag"))
-        character_names = ", ".join(it.get("tag", "") for it in character_items if it.get("tag"))
-        ip_names = ", ".join(it.get("tag", "") for it in ip_items if it.get("tag"))
+        artist_names_list = [
+            (("@" + t) if artist_at else t)
+            for t in (it.get("tag", "") for it in artist_items)
+            if t
+        ]
+        character_names_list = [it.get("tag", "") for it in character_items if it.get("tag")]
+        ip_names_list = [it.get("tag", "") for it in ip_items if it.get("tag")]
+
+        artist_names = ", ".join(artist_names_list)
+        character_names = ", ".join(character_names_list)
+        ip_names = ", ".join(ip_names_list)
+        # 合并标签：画师 + 角色 + IP 选中项一起输出（画师按 artist_at 加 @）
+        merged_tags = ", ".join(artist_names_list + character_names_list + ip_names_list)
 
         # 扭蛋随机标签组合
         random_tags = ""
@@ -636,11 +704,11 @@ class NaibaTagPicker:
                 gacha = {}
             gt = gacha.get("tags") if isinstance(gacha, dict) else None
             if isinstance(gt, list) and gt:
-                # 弹窗已选：输出该随机组合
-                random_tags = ", ".join(str(t) for t in gt if t)
+                # 弹窗已选：输出该随机组合（画师标签按 artist_at 加 @）
+                random_tags = ", ".join(_format_gacha_tags(gt, artist_at))
             else:
                 # 弹窗未选择：等于完全随机标签
-                random_tags = ", ".join(get_completely_random_tags(9))
+                random_tags = ", ".join(t.get("tag", "") for t in get_completely_random_tags(9))
 
         # 合并三类选中标签，按标签名去重（跨分类同名只取一次预览）
         seen = set()
@@ -670,7 +738,7 @@ class NaibaTagPicker:
         if warn:
             print(f"[NaibaTagPicker] {warn}")
 
-        return (artist_names, character_names, ip_names, random_tags, batch)
+        return (artist_names, character_names, ip_names, merged_tags, random_tags, batch)
 
 
 # 节点映射

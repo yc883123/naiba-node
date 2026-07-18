@@ -461,25 +461,28 @@
 | selection_data | STRING | {} | 三分类选中数据（由前端画廊自动管理，无需手动编辑） |
 | max_images | INT | 16 | 批量预览图最大张数（超出截断） |
 | preview_size | INT | 320 | 预览图边长上限（保持比例居中贴到正方形，控制显存） |
+| artist_at | BOOLEAN | False | 开启后画师标签输出为 `@画师名`（ARTIST_NAMES 与扭蛋 RANDOM_TAGS 中的画师标签都会加 @）；关闭则原样输出画师名 |
 | gacha_mode | BOOLEAN | False | 开启后输出 RANDOM_TAGS（扭蛋随机标签组合）；关闭则输出空串 |
-| gacha_data | STRING | {} | 扭蛋结果（由弹窗扭蛋标签页自动管理）：`{"tags": [...]}` |
+| gacha_data | STRING | {} | 扭蛋结果（由弹窗扭蛋标签页自动管理）：`{"tags": [{"tag","category"}]}` |
 
 #### 输出
 
 | 输出 | 类型 | 说明 |
 |------|------|------|
-| ARTIST_NAMES | STRING | 选中的画师标签名串（逗号分隔） |
+| ARTIST_NAMES | STRING | 选中的画师标签名串（逗号分隔，artist_at 开启时加 @） |
 | CHARACTER_NAMES | STRING | 选中的角色标签名串 |
 | IP_NAMES | STRING | 选中的 IP 标签名串 |
-| RANDOM_TAGS | STRING | 扭蛋随机标签名串（开启扭蛋模式时输出） |
+| MERGED_TAGS | STRING | 画师+角色+IP 选中项合并成一条（artist_at 开启时画师部分加 @） |
+| RANDOM_TAGS | STRING | 扭蛋随机标签名串（开启扭蛋模式时输出，画师标签同样按 artist_at 加 @） |
 | PREVIEW_IMAGES | IMAGE | 选中标签代表作批量预览（仅内存，不落盘） |
 
 #### 使用方法
 1. 在 `naiba-node` 分类下添加 `Naiba Tag Picker` 节点
 2. 点击节点上的「打开标签画廊」按钮，在弹窗内切换 画师/角色/IP 标签页搜索并多选
-3. 切到「扭蛋」标签页，分别设定每类数量，点「部分随机」或「完全随机」生成随机标签
+3. 切到「扭蛋」标签页，分别设定每类数量，点「部分随机」或「完全随机」生成随机标签；每个扭蛋结果卡片右上角「✕」可删除不想要的标签
 4. 点「应用选中」写回数据；需要清空时点「清除已选」（节点侧）或「清除」（扭蛋面板内）
-5. 开启 `gacha_mode` 后，`RANDOM_TAGS` 输出扭蛋组合，可直接接入提示词
+5. 节点上 `artist_at`（画师加 @）开关控制画师标签是否加 @ 前缀（作用于 ARTIST_NAMES / MERGED_TAGS / 扭蛋 RANDOM_TAGS）
+6. 开启 `gacha_mode` 后，`RANDOM_TAGS` 输出扭蛋组合；需要合并全部选中标签时用 `MERGED_TAGS`，可直接接入提示词
 
 #### 注意事项
 - Danbooru 匿名 API 有访问频率限制，搜索与预览走限流 + 重试（429/403 指数退避）；如遇持续 403/限流，设置环境变量 `DANBOORU_USER` / `DANBOURU_API_KEY` 可提升限额
@@ -585,6 +588,14 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 > **注意**: Multi LoRA Loader (only model) 节点导入含 `strength_clip` 的预设时会自动忽略 clip 字段。两个节点的预设可以互相导入。
 
 ## 更新日志
+
+### v2.8.1
+- Naiba Tag Picker 体验与输出增强
+  - 新增 `MERGED_TAGS` 输出：把弹窗中选中的 画师 + 角色 + IP 标签合并成一条（顺序 画师→角色→IP），方便直接接提示词
+  - 新增 `artist_at` 开关（位于 `preview_size` 下方）：开启后画师标签输出为 `@画师名`，作用于 `ARTIST_NAMES` / `MERGED_TAGS` / 扭蛋 `RANDOM_TAGS` 中的画师标签
+  - 扭蛋结果卡片新增「✕」删除按钮：逐个移除不想要的随机标签
+  - 扭蛋随机标签结果改为携带 `category`（画师/角色/IP），`RANDOM_TAGS` 中画师部分可按 `artist_at` 加 @（旧版纯字符串扭蛋数据仍可兼容加载）
+  - 后端预览请求限流由「固定 2s 硬串行」改为令牌桶（稳态 ~2 req/s、突发 12），首屏可见图 ~1s 内出现，一页 50 图由 ~100s 降至 ~20s；保留 429/403 指数退避重试兜底
 
 ### v2.8.0
 - 新增 Naiba Tag Picker 节点（标签画廊选择器 / 扭蛋）
