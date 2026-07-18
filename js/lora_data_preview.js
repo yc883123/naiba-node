@@ -280,6 +280,24 @@ function createLoraDataPreviewModal(node, loraList) {
     toolbar.appendChild(statusDisplay);
     modal.appendChild(toolbar);
 
+    // 当前目录面包屑（对标 visual_lora_loader.js：必须声明 currentPath 为 DOM 元素，
+    // 否则目录点击 handler 中访问 currentPath.textContent 会抛 ReferenceError，导致列表不刷新）
+    const pathBar = document.createElement("div");
+    pathBar.style.cssText = `
+        display:flex;align-items:center;gap:6px;padding:6px 16px;
+        background:${COLORS.headerBg};border-bottom:1px solid ${COLORS.border};
+        font-size:12px;color:${COLORS.textDim};
+    `;
+    const pathLabel = document.createElement("span");
+    pathLabel.textContent = "当前目录:";
+    pathLabel.style.cssText = `color:${COLORS.textDim};`;
+    const currentPath = document.createElement("span");
+    currentPath.style.cssText = `color:${COLORS.accent};font-weight:500;`;
+    currentPath.textContent = "/";
+    pathBar.appendChild(pathLabel);
+    pathBar.appendChild(currentPath);
+    modal.appendChild(pathBar);
+
     // ========== 内容区域 ==========
     const content = document.createElement("div");
     content.style.cssText = `
