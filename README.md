@@ -449,10 +449,12 @@
 #### 功能说明
 通过 Danbooru 公开 API 搜索 画师(artist) / 角色(character) / IP(copyright) 三类标签，前端三标签页画廊多选（带缩略图预览），选图结果以分组 JSON 写回隐藏控件，并输出三类标签名串 + 选中图批量预览（IMAGE，仅内存、不落盘）。
 
-内置**扭蛋模式**：弹窗内分别指定「画师 / 角色 / IP 每类抽几个（0~10）」：
+内置**扭蛋随机**功能：弹窗内分别指定「画师 / 角色 / IP 每类抽几个（0~10）」：
 - **部分随机**：由后端从 Danbooru 实时随机取样 画师 a 个 + 角色 c 个 + IP i 个；
 - **完全随机**：忽略数量，随机抽 0~(a+c+i) 个标签；
 - 扭蛋面板内与节点外部均提供「清除」按钮一键清空。
+- **节点外部「随机生成」按钮**：无需打开弹窗、无需开启任何开关，点击即直接生成一组随机标签，实时显示在节点预览区并输出到 `RANDOM_TAGS`；可反复点击重新生成。
+- 弹窗内或外部生成 / 删除扭蛋结果会**自动开启**后端扭蛋输出并实时刷新预览，不必再点「应用选中」或手动开关。
 
 #### 输入参数
 
@@ -462,7 +464,7 @@
 | max_images | INT | 16 | 批量预览图最大张数（超出截断） |
 | preview_size | INT | 320 | 预览图边长上限（保持比例居中贴到正方形，控制显存） |
 | artist_at | BOOLEAN | False | 开启后画师标签输出为 `@画师名`（ARTIST_NAMES 与扭蛋 RANDOM_TAGS 中的画师标签都会加 @）；关闭则原样输出画师名 |
-| gacha_mode | BOOLEAN | False | 开启后输出 RANDOM_TAGS（扭蛋随机标签组合）；关闭则输出空串 |
+| gacha_mode | BOOLEAN | False | 由前端自动管理（无需手动操作）：有扭蛋结果时自动开启以输出 RANDOM_TAGS，清除时关闭 |
 | gacha_data | STRING | {} | 扭蛋结果（由弹窗扭蛋标签页自动管理）：`{"tags": [{"tag","category"}]}` |
 
 #### 输出
@@ -473,7 +475,7 @@
 | CHARACTER_NAMES | STRING | 选中的角色标签名串 |
 | IP_NAMES | STRING | 选中的 IP 标签名串 |
 | MERGED_TAGS | STRING | 画师+角色+IP 选中项合并成一条（artist_at 开启时画师部分加 @） |
-| RANDOM_TAGS | STRING | 扭蛋随机标签名串（开启扭蛋模式时输出，画师标签同样按 artist_at 加 @） |
+| RANDOM_TAGS | STRING | 扭蛋随机标签名串（有扭蛋结果时自动输出，画师标签同样按 artist_at 加 @） |
 | PREVIEW_IMAGES | IMAGE | 选中标签代表作批量预览（仅内存，不落盘） |
 
 #### 使用方法
@@ -482,7 +484,7 @@
 3. 切到「扭蛋」标签页，分别设定每类数量，点「部分随机」或「完全随机」生成随机标签；每个扭蛋结果卡片右上角「✕」可删除不想要的标签
 4. 点「应用选中」写回数据；需要清空时点「清除已选」（节点侧）或「清除」（扭蛋面板内）
 5. 节点上 `artist_at`（画师加 @）开关控制画师标签是否加 @ 前缀（作用于 ARTIST_NAMES / MERGED_TAGS / 扭蛋 RANDOM_TAGS）
-6. 开启 `gacha_mode` 后，`RANDOM_TAGS` 输出扭蛋组合；需要合并全部选中标签时用 `MERGED_TAGS`，可直接接入提示词
+6. 点击「随机生成」即可直接得到扭蛋组合并输出到 `RANDOM_TAGS`（无需开启开关）；需要合并全部选中标签时用 `MERGED_TAGS`，可直接接入提示词
 
 #### 注意事项
 - Danbooru 匿名 API 有访问频率限制，搜索与预览走限流 + 重试（429/403 指数退避）；如遇持续 403/限流，设置环境变量 `DANBOORU_USER` / `DANBOURU_API_KEY` 可提升限额
@@ -588,6 +590,10 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 > **注意**: Multi LoRA Loader (only model) 节点导入含 `strength_clip` 的预设时会自动忽略 clip 字段。两个节点的预设可以互相导入。
 
 ## 更新日志
+
+### v2.8.2
+- Naiba Tag Picker 扭蛋体验简化
+  - 移除节点上的「扭蛋模式」手动开关；点击「随机生成」或在弹窗内生成/删除扭蛋结果时，后端扭蛋输出（`RANDOM_TAGS`）由前端自动开启/关闭，无需手动操作
 
 ### v2.8.1
 - Naiba Tag Picker 体验与输出增强

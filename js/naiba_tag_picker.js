@@ -202,6 +202,7 @@ function createTagPickerModal(node) {
             gachaState.resultTags = [];
         }
         renderGachaGallery();
+        syncGachaToWidget();
     });
     const fullBtn = document.createElement("button");
     fullBtn.textContent = "完全随机";
@@ -221,6 +222,7 @@ function createTagPickerModal(node) {
             gachaState.resultTags = [];
         }
         renderGachaGallery();
+        syncGachaToWidget();
     });
     const clearGachaBtn = document.createElement("button");
     clearGachaBtn.textContent = "清除";
@@ -553,6 +555,7 @@ function createTagPickerModal(node) {
             del.addEventListener("click", () => {
                 gachaState.resultTags = gachaState.resultTags.filter((_, i) => i !== idx);
                 renderGachaGallery();
+                syncGachaToWidget();
             });
             card.appendChild(del);
 
@@ -584,6 +587,21 @@ function createTagPickerModal(node) {
         if (node._updateTagPickerPreview) node._updateTagPickerPreview();
     }
     node._tpClearSelection = clearAll;   // 供节点外部「清除已选」按钮调用，同步清空弹窗内内存状态
+
+    // 扭蛋结果变更时实时写回 gacha_data 控件并刷新节点外部预览（无需点「应用选中」）
+    function syncGachaToWidget() {
+        const gw = node.widgets?.find((x) => x.name === "gacha_data");
+        if (gw) gw.value = JSON.stringify({ tags: gachaState.resultTags });
+        // 有扭蛋结果即自动开启后端扭蛋输出；清空则关闭（免去手动开关）
+        const gm = node.widgets?.find((x) => x.name === "gacha_mode");
+        if (gm) gm.value = gachaState.resultTags.length > 0;
+        if (node._updateTagPickerPreview) node._updateTagPickerPreview();
+    }
+    // 供节点外部「随机生成」按钮调用：直接替换弹窗内扭蛋结果并刷新画廊
+    node._tpSetGacha = (tags) => {
+        gachaState.resultTags = tags;
+        renderGachaGallery();
+    };
 
     function applySelection() {
         const gachaTags = gachaState.resultTags || [];
@@ -676,28 +694,44 @@ app.registerExtension({
                 }
             });
 
-            // 扭蛋模式开关按钮（位于预览区上方）
-            const gachaBtn = document.createElement("button");
-            gachaBtn.style.cssText = `
-                width:100%;padding:8px;margin:8px 0 0;
-                background:${COLORS.inputBg};color:${COLORS.text};
-                border:1px solid ${COLORS.border};border-radius:6px;cursor:pointer;
-                font-size:12px;font-weight:500;transition:all 0.2s;
-            `;
-            const refreshGachaBtn = () => {
+            // 自动管理后端 gacha_mode：点击「随机生成」即开启扭蛋输出，清除时关闭，
+            // 用户无需再手动开关扭蛋模式。
+            const setGachaMode = (val) => {
                 const w = node.widgets?.find((x) => x.name === "gacha_mode");
-                const on = !!(w && w.value);
-                gachaBtn.textContent = on ? "扭蛋模式：开（输出 RANDOM_TAGS）" : "扭蛋模式：关";
-                gachaBtn.style.background = on ? COLORS.success : COLORS.inputBg;
-                gachaBtn.style.color = on ? "white" : COLORS.text;
-                gachaBtn.style.border = `1px solid ${on ? COLORS.success : COLORS.border}`;
+                if (w) w.value = val;
             };
-            gachaBtn.addEventListener("click", () => {
-                const w = node.widgets?.find((x) => x.name === "gacha_mode");
-                if (w) {
-                    w.value = !w.value;
-                    refreshGachaBtn();
+
+            // 外部「随机生成」按钮：直接生成一组随机标签并实时显示（可反复点再生）
+            const randomBtn = document.createElement("button");
+            randomBtn.textContent = "随机生成";
+            randomBtn.style.cssText = `
+                width:100%;padding:8px;margin:8px 0 0;
+                background:${COLORS.warning};color:#1a1a2e;
+                border:none;border-radius:6px;cursor:pointer;
+                font-size:12px;font-weight:600;transition:background 0.2s;
+            `;
+            randomBtn.addEventListener("mouseenter", () => { if (!randomBtn.disabled) randomBtn.style.background = "#ffbe3d"; });
+            randomBtn.addEventListener("mouseleave", () => { if (!randomBtn.disabled) randomBtn.style.background = COLORS.warning; });
+            randomBtn.addEventListener("click", async () => {
+                randomBtn.disabled = true;
+                const origText = randomBtn.textContent;
+                randomBtn.textContent = "生成中…";
+                try {
+                    const resp = await api.fetchApi(`/naiba/tag/gacha_random?total=9`);
+                    const data = await resp.json();
+                    const tags = (data.tags || [])
+                        .map((t) => typeof t === "string" ? { tag: t, category: "" } : t)
+                        .filter((x) => x && x.tag);
+                    const gw = node.widgets?.find((x) => x.name === "gacha_data");
+                    if (gw) gw.value = JSON.stringify({ tags });
+                    setGachaMode(true);   // 自动开启扭蛋输出，无需手动开关
                     updatePreview();
+                    if (node._tpSetGacha) node._tpSetGacha(tags);  // 弹窗打开时同步内存与画廊
+                } catch (e) {
+                    console.warn("[NaibaTagPicker] 外部随机生成失败:", e);
+                } finally {
+                    randomBtn.disabled = false;
+                    randomBtn.textContent = origText;
                 }
             });
 
@@ -710,10 +744,9 @@ app.registerExtension({
                 font-size:11px;color:${COLORS.text};
             `;
 
-            const updatePreview = () => {
+                const updatePreview = () => {
                 const w = node.widgets?.find((x) => x.name === "selection_data");
                 const gw = node.widgets?.find((x) => x.name === "gacha_data");
-                const gachaOn = !!node.widgets?.find((x) => x.name === "gacha_mode")?.value;
                 let html = "";
                 try {
                     const data = JSON.parse(w?.value || "{}");
@@ -732,7 +765,7 @@ app.registerExtension({
                     const gt = Array.isArray(gd.tags) ? gd.tags.filter(Boolean) : [];
                     if (gt.length) {
                         const names = gt.map((x) => (x && x.tag) || x).join(", ");
-                        html += `<div style="margin:2px 0;"><span style="color:${gachaOn ? COLORS.success : COLORS.textDim};">扭蛋标签 ${gt.length}${gachaOn ? "" : "（未启用）"}：</span>${names}</div>`;
+                        html += `<div style="margin:2px 0;"><span style="color:${COLORS.success};">扭蛋标签 ${gt.length}：</span>${names}</div>`;
                     }
                 } catch (e) { /* ignore */ }
                 if (!html) {
@@ -741,7 +774,6 @@ app.registerExtension({
                 previewArea.innerHTML = html;
             };
             updatePreview();
-            refreshGachaBtn();
             node._updateTagPickerPreview = updatePreview;
 
             // 打开画廊按钮
@@ -773,13 +805,14 @@ app.registerExtension({
                 if (sd) sd.value = "{}";
                 const gd = node.widgets?.find((x) => x.name === "gacha_data");
                 if (gd) gd.value = JSON.stringify({ tags: [] });
+                setGachaMode(false);   // 清除后关闭扭蛋输出
                 if (node._tpClearSelection) node._tpClearSelection();  // 弹窗打开时同步清内存
                 updatePreview();
             });
 
             const container = document.createElement("div");
             container.style.cssText = "display:flex;flex-direction:column;gap:4px;width:100%;box-sizing:border-box;";
-            container.appendChild(gachaBtn);
+            container.appendChild(randomBtn);
             container.appendChild(previewArea);
             container.appendChild(clearBtn);
             container.appendChild(openBtn);
