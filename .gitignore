@@ -28,6 +28,8 @@ favorites/images/
 
 # 忽略用户预设目录（包含用户自定义预设）
 presets/
+# 但保留目录结构：克隆后默认存在 presets/ 空目录（仅跟踪占位文件）
+!presets/.gitkeep
 
 # 忽略预设目录中的预览图（如果存在）
 # presets/*.png
