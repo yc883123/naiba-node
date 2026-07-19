@@ -406,13 +406,18 @@ class NaibaTagPicker:
                 }),
                 "gacha_data": ("STRING", {"multiline": True, "default": "{}", "label": "扭蛋结果(JSON，隐藏)"}),
             },
-            "hidden": {
-                # —— v2 增强功能：控件不显示在节点上，改由前端弹窗管理 ——
+            "optional": {
+                # —— v2 增强功能：控件由前端弹窗管理，节点上由 JS 隐藏 ——
+                # 注意：普通类型（BOOLEAN/INT/STRING）不能放在 hidden 段，
+                # ComfyUI 的 hidden 只会填充 PROMPT/EXTRA_PNGINFO/UNIQUE_ID 等特殊类型，
+                # 放 hidden 会导致这些参数不被传入 execute（报“缺少必需参数”）。
                 "cache_enabled": ("BOOLEAN", {"default": True}),
                 "cache_max_items": ("INT", {"default": 300, "min": 10, "max": 5000, "step": 10}),
                 "sync_external_random": ("BOOLEAN", {"default": False}),
                 "blacklist_data": ("STRING", {"multiline": True, "default": "{}"}),
                 "favorites_data": ("STRING", {"multiline": True, "default": "{}"}),
+            },
+            "hidden": {
                 "prompt": "PROMPT",
                 "extra_pnginfo": "EXTRA_PNGINFO",
             },
@@ -424,7 +429,8 @@ class NaibaTagPicker:
     CATEGORY = "naiba-node"
 
     def execute(self, selection_data, max_images, preview_size, artist_at, gacha_mode, gacha_data,
-                cache_enabled, cache_max_items, sync_external_random, blacklist_data, favorites_data,
+                cache_enabled=True, cache_max_items=300, sync_external_random=False,
+                blacklist_data="{}", favorites_data="{}",
                 prompt=None, extra_pnginfo=None):
         # 配置磁盘缓存（仅当开启且目录可写时生效；否则降级内存）
         configure_disk_cache(cache_enabled, cache_max_items)
