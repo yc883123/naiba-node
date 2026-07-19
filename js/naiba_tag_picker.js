@@ -319,9 +319,8 @@ function buildResultCard(item, isGacha) {
         el("div", { class: "tp-res-name", title: item.tag }, item.tag),
         el("div", { class: "tp-res-cat" }, CATEGORY_CN[item.category] || item.category || ""),
     );
-    const block = el("button", { class: "tp-res-block", title: "加入黑名单", onclick: (e) => { e.stopPropagation(); toggleBlacklist(item.tag); if (isGacha) removeGacha(item.tag); } }, "🚫");
     const del = el("button", { class: "tp-res-del", title: "移除", onclick: (e) => { e.stopPropagation(); if (isGacha) removeGacha(item.tag); else removeSelected(item.tag); } }, "✕");
-    card.append(img, info, block, del);
+    card.append(img, info, del);
     card.addEventListener("click", (e) => {
         if (e.ctrlKey || e.metaKey) { window.open(`${DANBOORU_BASE}/posts?tags=${encodeURIComponent(item.tag)}`, "_blank", "noopener"); }
     });
@@ -760,8 +759,6 @@ function injectStyle() {
 .tp-res-info{flex:1;min-width:0;}
 .tp-res-name{color:${COLORS.text};font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .tp-res-cat{color:${COLORS.textDim};font-size:11px;}
-.tp-res-block{background:none;border:none;cursor:pointer;font-size:13px;padding:2px 6px;border-radius:4px;}
-.tp-res-block:hover{background:rgba(255,107,107,.15);}
 .tp-res-del{background:none;border:none;color:${COLORS.danger};cursor:pointer;font-size:13px;padding:2px 6px;border-radius:4px;}
 .tp-res-del:hover{background:rgba(255,107,107,.15);}
 .tp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;}
@@ -823,38 +820,10 @@ app.registerExtension({
         if (nodeData.name !== "NaibaTagPicker") return;
         const origOnNodeCreated = nodeType.prototype.onNodeCreated;
 
-        // 修复旧工作流存档控件值错位导致的校验失败：加载/创建时把越界或 None 的控件值夹回合法范围
-        function repairNodeWidgets(node) {
-            if (!node || !node.widgets) return;
-            const clampInt = (name, dflt, lo, hi) => {
-                const w = node.widgets.find((x) => x.name === name);
-                if (!w) return;
-                let v = w.value;
-                if (v === null || v === undefined || v === "" || isNaN(v)) v = dflt;
-                v = Math.max(lo, Math.min(hi, parseInt(v, 10) || dflt));
-                w.value = v;
-            };
-            clampInt("max_images", 16, 1, 64);
-            clampInt("preview_size", 320, 64, 512);
-            const toBool = (name) => {
-                const w = node.widgets.find((x) => x.name === name);
-                if (w && typeof w.value !== "boolean") w.value = !!w.value;
-            };
-            toBool("artist_at");
-            toBool("gacha_mode");
-        }
-
-        const origOnConfigure = nodeType.prototype.onConfigure;
-        nodeType.prototype.onConfigure = function (o) {
-            origOnConfigure?.apply(this, arguments);
-            repairNodeWidgets(this);
-        };
-
         nodeType.prototype.onNodeCreated = function () {
             origOnNodeCreated?.apply(this, arguments);
             const node = this;
             nodeRef = node;   // 供弹窗（设置页等）读取当前节点
-            repairNodeWidgets(node);
 
             // 隐藏由前端代理的控件；gacha_mode 为自动托管（随机生成=开，清除=关），不显示在节点上
             const hiddenWidgets = ["selection_data", "gacha_data", "gacha_mode",
@@ -891,33 +860,16 @@ app.registerExtension({
                 const origText = randomBtn.textContent;
                 randomBtn.textContent = "生成中…";
                 try {
-                    // 读取当前黑名单，传给后端使其排除已拉黑标签
-                    let bl = [];
-                    try {
-                        const bv = JSON.parse(node.widgets?.find((x) => x.name === "blacklist_data")?.value || "[]");
-                        bl = Array.isArray(bv) ? bv.map((x) => (x && x.tag) || x).filter(Boolean) : [];
-                    } catch (e) { bl = []; }
-                    // 随机 3~9 组（每组 画师+角色+IP），避免每次都是固定数量
-                    const total = 3 + Math.floor(Math.random() * 7);
-                    const resp = await api.fetchApi(`/naiba/tag/gacha_random?total=${total}&blacklist=${encodeURIComponent(JSON.stringify(bl))}`);
+                    const resp = await api.fetchApi(`/naiba/tag/gacha_random?total=9`);
                     const data = await resp.json();
                     const tags = (data.tags || [])
                         .map((t) => typeof t === "string" ? { tag: t, category: "" } : t)
                         .filter((x) => x && x.tag);
                     const gw = node.widgets?.find((x) => x.name === "gacha_data");
                     if (gw) gw.value = JSON.stringify({ tags });
-                    gachaState.resultTags = tags.slice();
-                    serializeGacha();
                     setGachaMode(true);
                     updatePreview();
-                    nodeRef = node;
-                    // 仅当勾选「外部随机同步」或弹窗已打开时，才把结果同步/刷新到弹窗；
-                    // 不打钩且弹窗未开 → 只写回节点控件与预览框，不主动打开/同步弹窗（设置勾选框恢复生效）
-                    const sync = !!getWidget(node, "sync_external_random", false);
-                    if (sync || currentModal) {
-                        if (currentModal) { renderGachaPanel(); switchTab("gacha"); }
-                        else { createTagPickerModal(node); switchTab("gacha"); }
-                    }
+                    if (node._tpSetGacha) node._tpSetGacha(tags);
                 } catch (e) {
                     console.warn("[NaibaTagPicker] 外部随机生成失败:", e);
                 } finally {

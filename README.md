@@ -591,6 +591,13 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 
 ## 更新日志
 
+### v2.9.1
+- Naiba Tag Picker 分类与输出修复
+  - 修复「IP」分页与「标签」分页内容一模一样的问题：根因是后端搜索路由的 `cat` 映射字典键写成 `ip`，而前端已把 IP 映射为 `copyright` 后再传参，导致 IP 页被兜底成 `tag`、与标签页返回同一批 general 标签；现改为按 `copyright` 键匹配，IP 页返回版权/IP 标签、标签页返回 general 标签，彻底分离
+  - 新增 `TAG_NAMES` 输出口：此前「标签」分类即便选中也无处输出（节点缺该输出端），现四类均有独立输出（`ARTIST_NAMES` / `CHARACTER_NAMES` / `IP_NAMES` / `TAG_NAMES`）
+  - `MERGED_TAGS` 整合全部分类：由原先仅合并 画师+角色+IP，改为 画师+角色+IP+标签，可直接作为最终提示词使用
+  - 节点开启 `OUTPUT_NODE`，画布上可直接查看各输出文本
+
 ### v2.9.0
 - Naiba Tag Picker 节点 UI 还原与体验修复
   - 恢复「随机生成 → 预览框 → 清除已选 → 打开标签画廊」DOM 控件布局（此前被改为纯按钮且误删预览框与清除已选，并将 `gacha_mode` 误设为节点可见开关）

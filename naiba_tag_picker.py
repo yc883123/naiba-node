@@ -254,7 +254,10 @@ def search_tags(query, category="", limit=100, page=1):
     }
     if query:
         params["search[name_matches]"] = query + ("*" if not query.endswith("*") else "")
-    if cat_id:
+    # 始终按 category 过滤；tag(cat_id=0=general) 也加过滤，
+    # 否则"标签"页会返回全部分类（含 IP/角色/画师），与 IP 页高度重合让人误以为"内容一样"。
+    # 仅当 category 为空（内部兜底）时才不过滤返回全部。
+    if category:
         params["search[category]"] = cat_id
     url = BASE + "/tags.json?" + urllib.parse.urlencode(params)
     raw = _fetch_url(url)
@@ -423,8 +426,9 @@ class NaibaTagPicker:
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "IMAGE")
-    RETURN_NAMES = ("ARTIST_NAMES", "CHARACTER_NAMES", "IP_NAMES", "MERGED_TAGS", "RANDOM_TAGS", "PREVIEW_IMAGES")
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "IMAGE")
+    RETURN_NAMES = ("ARTIST_NAMES", "CHARACTER_NAMES", "IP_NAMES", "TAG_NAMES", "MERGED_TAGS", "RANDOM_TAGS", "PREVIEW_IMAGES")
+    OUTPUT_NODE = True
     FUNCTION = "execute"
     CATEGORY = "naiba-node"
 
@@ -461,6 +465,7 @@ class NaibaTagPicker:
         artist_items = [it for it in selected if _norm_cat(it.get("category")) == "artist"]
         character_items = [it for it in selected if _norm_cat(it.get("category")) == "character"]
         ip_items = [it for it in selected if _norm_cat(it.get("category")) == "ip"]
+        tag_items = [it for it in selected if _norm_cat(it.get("category")) == "tag"]
 
         # 画师按 artist_at 开关加 @ 前缀
         artist_names_list = [
@@ -470,11 +475,14 @@ class NaibaTagPicker:
         ]
         character_names_list = [it.get("tag", "") for it in character_items if it.get("tag")]
         ip_names_list = [it.get("tag", "") for it in ip_items if it.get("tag")]
+        tag_names_list = [it.get("tag", "") for it in tag_items if it.get("tag")]
 
         artist_names = ", ".join(artist_names_list)
         character_names = ", ".join(character_names_list)
         ip_names = ", ".join(ip_names_list)
-        merged_tags = ", ".join(artist_names_list + character_names_list + ip_names_list)
+        tag_names = ", ".join(tag_names_list)
+        # merged 整合全部分类（画师/角色/IP/标签），便于直接作为最终提示词使用
+        merged_tags = ", ".join(artist_names_list + character_names_list + ip_names_list + tag_names_list)
 
         # 扭蛋随机标签组合（gacha_mode 开启时输出；画师按 artist_at 加 @）
         random_tags = ""
@@ -490,18 +498,18 @@ class NaibaTagPicker:
 
         # 批量预览：所有选中标签名去重（预览图不带 @）
         seen = set()
-        tag_names = []
+        preview_tag_names = []
         for it in selected:
             name = it.get("tag") if isinstance(it, dict) else it
             if name and name not in seen:
                 seen.add(name)
-                tag_names.append(name)
+                preview_tag_names.append(name)
 
         preview_tensors = []
-        if tag_names:
-            if len(tag_names) > max_images:
-                tag_names = tag_names[:max_images]
-            for name in tag_names:
+        if preview_tag_names:
+            if len(preview_tag_names) > max_images:
+                preview_tag_names = preview_tag_names[:max_images]
+            for name in preview_tag_names:
                 try:
                     preview_tensors.append(_load_preview_tensor_by_name(name, preview_size))
                 except Exception as e:
@@ -512,7 +520,7 @@ class NaibaTagPicker:
         else:
             previews = torch.zeros((1, preview_size, preview_size, 3), dtype=torch.float32)
 
-        return (artist_names, character_names, ip_names, merged_tags, random_tags, previews)
+        return (artist_names, character_names, ip_names, tag_names, merged_tags, random_tags, previews)
 
 def _format_gacha_tags(gt, artist_at: bool) -> list:
     """把扭蛋标签（兼容 [str] 旧格式 与 [{"tag","category"}] 新格式）转为输出名列表。
@@ -575,7 +583,10 @@ def register_routes():
             page = int(request.query.get("page", "1"))
         except Exception:
             page = 1
-        category = {"artist": "artist", "character": "character", "ip": "copyright", "tag": "tag"}.get(cat, "tag")
+        # 注意：前端 doSearch 已通过 TAB_CAT 把 ip 映射成 "copyright" 再传 cat 参数，
+        # 故此处收到的 cat 是 "artist"/"character"/"copyright"/"tag"，键必须用 "copyright" 而非 "ip"，
+        # 否则 IP 页会被兜底成 "tag"，导致 IP 页与标签页内容一模一样。
+        category = {"artist": "artist", "character": "character", "copyright": "copyright", "tag": "tag"}.get(cat, "tag")
         res = await _run_in_exec(search_tags, q, category, limit, page)
         return web.json_response(res)
 
