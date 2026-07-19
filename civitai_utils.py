@@ -140,13 +140,15 @@ class CivitaiClient:
         
         return None, "Max retries exceeded"
     
-    async def download_image(self, image_url: str, save_path: str) -> bool:
+    async def download_image(self, image_url: str, save_path: str, validate: bool = True) -> bool:
         """
-        下载图片到本地
+        下载图片/视频到本地
         
         Args:
-            image_url: 图片URL
+            image_url: 资源 URL
             save_path: 保存路径
+            validate: 是否校验响应确为图片（静态图默认开启，可拒绝 HTML/JSON
+                错误页落地；下载视频/GIF 等动态预览中间文件时应关闭，因其本身非图片）
             
         Returns:
             bool: 是否成功
@@ -156,11 +158,14 @@ class CivitaiClient:
             
             async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                 if response.status == 200:
+                    content = await response.read()
+                    # 校验响应确为图片：拒绝 Civitai/CDN 返回的 HTML/JSON 错误页被当图片存盘
+                    if validate and not _looks_like_image(content):
+                        print(f"[CivitaiClient] 跳过非图片响应（疑似错误页），URL: {image_url}")
+                        return False
                     # 确保目录存在
                     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-                    
                     # 写入文件
-                    content = await response.read()
                     with open(save_path, "wb") as f:
                         f.write(content)
                     return True
@@ -199,45 +204,57 @@ class CivitaiClient:
     @staticmethod
     def select_preview_image(images: List[Dict], max_nsfw_level: int = NSFW_LEVELS["R"]) -> Optional[Dict]:
         """
-        从图片列表中选择合适的预览图（NSFW过滤，排除视频和GIF）
-        
-        Args:
-            images: 图片列表，每个图片包含nsfwLevel字段
-            max_nsfw_level: 最大允许的NSFW级别
-            
+        从图片列表中选择合适的预览（NSFW过滤）。
+        优先静态图片；若无静态图片，则回退到视频/GIF 预览
+        （由调用方下载后抽首帧作为封面）。音频/视频模型在 Civitai 仅有视频预览，
+        此回退可让其也能生成预览封面。
+
         Returns:
-            Optional[Dict]: 选中的图片信息，如果没有合适的静态图片返回None
+            Optional[Dict]: 选中的图片信息；回退到视频/GIF 时附带标记
+                `_is_motion_preview=True`，供调用方抽帧。无可用预览返回 None。
         """
         if not images:
             return None
-        
+
         # 过滤有效图片
         valid_images = [img for img in images if isinstance(img, dict) and "url" in img]
         if not valid_images:
             return None
-        
-        # 排除视频和动画图片（GIF），只保留静态图片
-        UNSUPPORTED_FORMATS = {".gif", ".mp4", ".avi", ".mov", ".webm", ".apng"}
-        static_images = []
-        for img in valid_images:
+
+        # 视频/GIF 等动态格式（无静态图时回退选用）
+        MOTION_FORMATS = {".gif", ".mp4", ".avi", ".mov", ".webm", ".apng"}
+
+        def _classify(img: Dict) -> str:
             url = img.get("url", "")
             ext = os.path.splitext(url.split("?")[0])[1].lower()
-            if ext in UNSUPPORTED_FORMATS:
-                continue
-            static_images.append(img)
-        
-        # 如果没有静态图片，返回None（不拉取视频/GIF）
-        if not static_images:
-            return None
-        
-        # 优先选择安全图片（NSFW级别小于等于阈值）
-        # 注意：使用 <= 而不是 <，这样R级图片在R级阈值下也能显示
-        safe_images = [img for img in static_images if img.get("nsfwLevel", 0) <= max_nsfw_level]
-        if safe_images:
-            return safe_images[0]
-        
-        # 如果所有图片都超过阈值，选择NSFW级别最低的
-        return min(static_images, key=lambda x: x.get("nsfwLevel", 0))
+            return "motion" if ext in MOTION_FORMATS else "static"
+
+        static_images = [img for img in valid_images if _classify(img) == "static"]
+        motion_images = [img for img in valid_images if _classify(img) == "motion"]
+
+        def _pick(pool: List[Dict]) -> Optional[Dict]:
+            if not pool:
+                return None
+            # 优先安全图片（NSFW 级别 <= 阈值）；使用 <= 以便 R 级在 R 阈值下也显示
+            safe = [img for img in pool if img.get("nsfwLevel", 0) <= max_nsfw_level]
+            if safe:
+                return safe[0]
+            # 全部超阈值时，取 NSFW 级别最低的
+            return min(pool, key=lambda x: x.get("nsfwLevel", 0))
+
+        # 1) 优先静态图片
+        chosen = _pick(static_images)
+        if chosen is not None:
+            return chosen
+
+        # 2) 回退视频/GIF 预览（音频/视频模型场景）
+        chosen = _pick(motion_images)
+        if chosen is not None:
+            chosen = dict(chosen)  # 复制，避免修改原始 API 数据
+            chosen["_is_motion_preview"] = True
+            return chosen
+
+        return None
     
     @staticmethod
     def get_preview_extension(image_url: str) -> str:
@@ -265,6 +282,190 @@ class CivitaiClient:
                 return ".webp"  # 默认使用webp
         except:
             return ".webp"
+
+
+# ============================================================
+# 图片 MIME 探测 & 视频/GIF 首帧抽帧（自包含，供 Civitai 同步复用）
+# 依赖运行时 import 探测，不写死解释器路径：
+#   GIF 用 PIL（随 ComfyUI 自带）；视频用 cv2 / imageio / ffmpeg 兜底。
+# 与 preset_routes.py 行为一致，但本文件内独立完成，避免跨模块 import。
+# ============================================================
+_EXT_MIME_MAP = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".webp": "image/webp", ".gif": "image/gif", ".bmp": "image/bmp",
+    ".tiff": "image/tiff", ".tif": "image/tiff", ".svg": "image/svg+xml",
+    ".avif": "image/avif", ".heic": "image/heic", ".heif": "image/heif",
+    ".ico": "image/x-icon", ".apng": "image/apng",
+}
+
+
+def detect_image_mime(data: bytes, fallback_ext: str = "") -> str:
+    """
+    根据文件内容（魔数）检测真实图片 MIME 类型，不依赖扩展名。
+    无法识别时回退到扩展名映射（仅当魔数匹配失败时使用）。
+    """
+    if len(data) >= 8 and data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if len(data) >= 3 and data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if len(data) >= 4 and data[:4] == b"GIF8":
+        return "image/gif"
+    if len(data) >= 4 and data[:4] in (b"II*\x00", b"MM\x00*"):
+        return "image/tiff"
+    if len(data) >= 4 and data[:4] == b"\x00\x00\x01\x00":
+        return "image/x-icon"
+    if len(data) >= 12 and data[4:8] in (b"avif", b"heic", b"heif", b"mif1"):
+        return "image/avif"
+    ext = fallback_ext.lower()
+    if not ext.startswith("."):
+        ext = "." + ext
+    return _EXT_MIME_MAP.get(ext, "application/octet-stream")
+
+
+def _looks_like_image(data: bytes) -> bool:
+    """严格校验字节是否为真实图片（基于魔数），拒绝 HTML/JSON 错误页。"""
+    if len(data) < 4:
+        return False
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return True
+    if data[:3] == b"\xff\xd8\xff":
+        return True
+    if data[:4] == b"RIFF" and len(data) >= 12 and data[8:12] == b"WEBP":
+        return True
+    if data[:4] == b"GIF8":
+        return True
+    if data[:4] in (b"II*\x00", b"MM\x00*"):
+        return True
+    return False
+
+
+_VIDEO_EXTS = {".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v"}
+_GIF_EXT = ".gif"
+
+_CV2 = None
+_CV2_TRIED = False
+_IMAGEIO = None
+_IMAGEIO_TRIED = False
+
+
+def _try_import_cv2():
+    global _CV2, _CV2_TRIED
+    if _CV2_TRIED:
+        return _CV2
+    _CV2_TRIED = True
+    try:
+        import cv2
+        _CV2 = cv2
+    except Exception:
+        _CV2 = None
+    return _CV2
+
+
+def _try_import_imageio():
+    global _IMAGEIO, _IMAGEIO_TRIED
+    if _IMAGEIO_TRIED:
+        return _IMAGEIO
+    _IMAGEIO_TRIED = True
+    try:
+        import imageio.v2 as imageio_mod
+        _IMAGEIO = imageio_mod
+    except Exception:
+        try:
+            import imageio
+            _IMAGEIO = imageio
+        except Exception:
+            _IMAGEIO = None
+    return _IMAGEIO
+
+
+def _gif_first_frame_png(path: str):
+    """用 PIL 抽取 GIF 首帧为 PNG 字节（PIL 随 ComfyUI 自带）。"""
+    try:
+        from PIL import Image
+        import io
+        with Image.open(path) as im:
+            im.seek(0)
+            frame = im.convert("RGB")
+            buf = io.BytesIO()
+            frame.save(buf, format="PNG")
+            return buf.getvalue()
+    except Exception as e:  # noqa: BLE001
+        print(f"[CivitaiUtils] GIF 首帧抽取失败 {path}: {e}")
+        return None
+
+
+def _video_first_frame_png(path: str):
+    """从视频抽取首帧为 PNG 字节：优先 cv2，其次 imageio，再次 ffmpeg 子进程。"""
+    cv2 = _try_import_cv2()
+    if cv2 is not None:
+        try:
+            cap = cv2.VideoCapture(path)
+            try:
+                if not cap.isOpened():
+                    return None
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    return None
+                from PIL import Image
+                import numpy as np
+                import io
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                im = Image.fromarray(rgb)
+                buf = io.BytesIO()
+                im.save(buf, format="PNG")
+                return buf.getvalue()
+            finally:
+                cap.release()
+        except Exception as e:  # noqa: BLE001
+            print(f"[CivitaiUtils] cv2 首帧抽取失败 {path}: {e}")
+
+    imageio = _try_import_imageio()
+    if imageio is not None:
+        try:
+            import numpy as np
+            from PIL import Image
+            import io
+            reader = imageio.get_reader(path)
+            try:
+                frame = reader.get_data(0)
+                rgb = np.asarray(frame)[..., :3] if frame.ndim == 3 else frame
+                im = Image.fromarray(rgb)
+                buf = io.BytesIO()
+                im.save(buf, format="PNG")
+                return buf.getvalue()
+            finally:
+                reader.close()
+        except Exception as e:  # noqa: BLE001
+            print(f"[CivitaiUtils] imageio 首帧抽取失败 {path}: {e}")
+
+    try:
+        from PIL import Image
+        import io
+        import subprocess
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-i", path, "-vframes", "1", "-f", "image2pipe",
+             "-vcodec", "png", "pipe:1"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
+        )
+        if proc.returncode == 0 and proc.stdout and proc.stdout[:8] == b"\x89PNG\r\n\x1a\n":
+            return proc.stdout
+    except FileNotFoundError:
+        pass
+    except Exception as e:  # noqa: BLE001
+        print(f"[CivitaiUtils] ffmpeg 首帧抽取失败 {path}: {e}")
+    return None
+
+
+def extract_first_frame_as_png(path: str) -> "bytes | None":
+    """抽取视频/GIF 首帧为 PNG 字节；失败或无可抽帧依赖时返回 None。"""
+    ext = os.path.splitext(path)[1].lower()
+    if ext == _GIF_EXT:
+        return _gif_first_frame_png(path)
+    if ext in _VIDEO_EXTS:
+        return _video_first_frame_png(path)
+    return None
 
 
 def load_cached_metadata(cache_path: str) -> Optional[Dict]:
@@ -380,10 +581,13 @@ async def sync_lora_from_civitai(
     if not force:
         cached = load_cached_metadata(metadata_path)
         if cached:
-            # 检查预览图是否存在
+            # 预览图存在且本地文件存在，直接返回
             preview_path = cached.get("preview_path")
             if preview_path and os.path.exists(preview_path):
                 return cached, preview_path, None
+            # 已尝试同步但确实无可用预览（守卫标记），避免无图模型反复请求 Civitai
+            if cached.get("_preview_resolved") is True:
+                return cached, cached.get("preview_path"), None
     
     # 计算SHA256哈希（在线程池中运行，避免阻塞事件循环）
     loop = asyncio.get_event_loop()
@@ -413,9 +617,10 @@ async def sync_lora_from_civitai(
             "trained_words": trained_words,
             "trigger_words": trained_words,  # 别名，兼容前端
             "nsfw_level": version_data.get("nsfwLevel", 0),
-            "download_count": version_data.get("downloadCount", 0),
-            "rating_count": version_data.get("ratingCount", 0),
-            "rating": version_data.get("rating", 0),
+            # v6 API 将统计字段包在 stats{} 内；此处优先读 stats，并兼容旧 API 顶层字段
+            "download_count": (_stats := version_data.get("stats", {}) or {}).get("downloadCount", version_data.get("downloadCount", 0)),
+            "rating_count": _stats.get("ratingCount", version_data.get("ratingCount", 0)),
+            "rating": _stats.get("rating", version_data.get("rating", 0)),
             "published_at": version_data.get("publishedAt"),
             "updated_at": version_data.get("updatedAt"),
         }
@@ -431,7 +636,7 @@ async def sync_lora_from_civitai(
         # 选择预览图
         images = version_data.get("images", [])
         selected_image = CivitaiClient.select_preview_image(images, max_nsfw_level)
-        
+
         preview_path = None
         if selected_image:
             image_url = selected_image.get("url")
@@ -439,22 +644,56 @@ async def sync_lora_from_civitai(
                 # 生成预览图保存路径
                 lora_dir = os.path.dirname(lora_path)
                 lora_basename = os.path.splitext(os.path.basename(lora_path))[0]
-                ext = CivitaiClient.get_preview_extension(image_url)
-                preview_filename = f"{lora_basename}.preview{ext}"
-                preview_path = os.path.join(lora_dir, preview_filename)
-                
-                # 下载预览图
-                success = await client.download_image(image_url, preview_path)
-                if success:
-                    metadata["preview_url"] = image_url
-                    metadata["preview_path"] = preview_path
-                    metadata["preview_nsfw_level"] = selected_image.get("nsfwLevel", 0)
+
+                if selected_image.get("_is_motion_preview"):
+                    # 视频/GIF 预览：下载为 motion 文件后抽首帧为 .preview.png 封面
+                    from urllib.parse import urlparse
+                    url_ext = os.path.splitext(urlparse(image_url).path)[1].lower()
+                    if url_ext not in (".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v", ".gif"):
+                        url_ext = ".mp4"
+                    motion_filename = f"{lora_basename}.preview{url_ext}"
+                    motion_path = os.path.join(lora_dir, motion_filename)
+                    if await client.download_image(image_url, motion_path, validate=False):
+                        png_bytes = extract_first_frame_as_png(motion_path)
+                        if png_bytes:
+                            preview_filename = f"{lora_basename}.preview.png"
+                            preview_path = os.path.join(lora_dir, preview_filename)
+                            with open(preview_path, "wb") as f:
+                                f.write(png_bytes)
+                            metadata["preview_url"] = image_url
+                            metadata["preview_path"] = preview_path
+                            metadata["preview_nsfw_level"] = selected_image.get("nsfwLevel", 0)
+                            metadata["preview_is_motion"] = True
+                            # 抽帧成功，删除中间视频/GIF 文件以节省空间
+                            try:
+                                os.remove(motion_path)
+                            except Exception:
+                                pass
+                        else:
+                            preview_path = None
+                    else:
+                        preview_path = None
                 else:
-                    preview_path = None
-        
+                    # 静态图：直接下载
+                    ext = CivitaiClient.get_preview_extension(image_url)
+                    preview_filename = f"{lora_basename}.preview{ext}"
+                    preview_path = os.path.join(lora_dir, preview_filename)
+
+                    # 下载预览图
+                    success = await client.download_image(image_url, preview_path)
+                    if success:
+                        metadata["preview_url"] = image_url
+                        metadata["preview_path"] = preview_path
+                        metadata["preview_nsfw_level"] = selected_image.get("nsfwLevel", 0)
+                    else:
+                        preview_path = None
+
+        # 标记预览已处理（无论最终是否有图），避免无图模型反复请求 Civitai API
+        metadata["_preview_resolved"] = True
+
         # 保存缓存
         save_cached_metadata(metadata_path, metadata)
-        
+
         return metadata, preview_path, None
         
     finally:

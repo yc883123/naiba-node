@@ -591,6 +591,19 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 
 ## 更新日志
 
+### v2.9.2
+- Civitai 同步视频/GIF 预览支持
+  - `select_preview_image` 不再排除视频和 GIF：当模型在 Civitai 仅有视频/动态预览时（如音频/视频模型），回退选用视频/GIF 并标记 `_is_motion_preview=True`
+  - `sync_lora_from_civitai` 遇到动态预览自动下载后抽取首帧保存为 `.preview.png` 封面，抽帧成功后删除中间视频/GIF 文件节省空间
+  - 首帧抽取三路兜底：PIL（GIF）→ cv2 → imageio → ffmpeg 子进程，任一可用即可
+- 下载图片 MIME 校验（拒绝 HTML/JSON 错误页）
+  - `download_image` 新增 `validate` 参数（默认开启），基于魔数严格校验响应是否为真实图片
+  - 新增 `_looks_like_image` / `detect_image_mime` 工具函数，支持 PNG/JPEG/WebP/GIF/TIFF/AVIF/HEIC/ICO 等魔数识别
+  - 静态图下载默认开启校验，视频/GIF 中间文件下载时关闭（`validate=False`）
+- 避免无图模型反复请求 Civitai
+  - 元数据新增 `_preview_resolved` 守卫标记：无论最终是否有预览图，处理完成后标记为已解析，后续同步时直接跳过 API 请求
+  - 解决无预览模型（如纯音频模型）每次同步都重复查询 Civitai 的性能浪费
+
 ### v2.9.1
 - Naiba Tag Picker 分类与输出修复
   - 修复「IP」分页与「标签」分页内容一模一样的问题：根因是后端搜索路由的 `cat` 映射字典键写成 `ip`，而前端已把 IP 映射为 `copyright` 后再传参，导致 IP 页被兜底成 `tag`、与标签页返回同一批 general 标签；现改为按 `copyright` 键匹配，IP 页返回版权/IP 标签、标签页返回 general 标签，彻底分离
