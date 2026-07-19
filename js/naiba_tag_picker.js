@@ -50,9 +50,9 @@ const state = {
     blacklist: new Set(),     // tag 字符串
     favorites: new Map(),     // tag -> category
     gachaConfig: {            // 每类扭蛋配置
-        artist: { source: "live", n: 3 },
-        character: { source: "live", n: 3 },
-        copyright: { source: "live", n: 3 },
+        artist: { source: "live", n: 1 },
+        character: { source: "live", n: 0 },
+        copyright: { source: "live", n: 0 },
     },
     tabState: {
         artist: { items: [], page: 1, loading: false, seq: 0, query: "", single: false },
@@ -69,9 +69,12 @@ let nodeRef = null;
 let mainScroll = null;
 let pagerBar = null;
 let resultPanel = null;
-let statusEl = null;
 let tabEls = {};
 let gachaPanelEl = null;
+let gachaCurrentGrid = null;   // 扭蛋主面板中「当前扭蛋结果」的 grid，用于即时刷新
+let toolbarEl = null;           // 搜索工具栏，扭蛋/设置分页隐藏
+let searchInputEl = null;       // 搜索输入框引用，供分页切换时同步关键字
+let listFilter = "";            // 黑名单/收藏分页的搜索关键字
 
 // ========== 工具 ==========
 function el(tag, props = {}, ...children) {
@@ -167,14 +170,12 @@ function selectTag(item) {
     serializeSelection();
     renderGallerySelectionStates();
     renderResult();
-    renderStatus();
 }
 function removeSelected(tag) {
     state.selectedMap.delete(tag);
     serializeSelection();
     renderGallerySelectionStates();
     renderResult();
-    renderStatus();
 }
 function toggleBlacklist(tag) {
     if (!tag) return;
@@ -206,12 +207,13 @@ function replaceGachaCategory(catName, tags) {
         .concat(tags.map((t) => ({ tag: typeof t === "string" ? t : t.tag, category: catName })).filter((t) => t.tag));
     serializeGacha();
     renderResult();
+    refreshGachaCurrent();
     refreshGachaPreview();
 }
 function setGachaAll(tags, { syncModal = true } = {}) {
     gachaState.resultTags = tags.map((t) => ({ tag: t.tag || t, category: t.category || "" }));
     serializeGacha();
-    if (syncModal) { renderResult(); refreshGachaPreview(); }
+    if (syncModal) { renderResult(); refreshGachaCurrent(); refreshGachaPreview(); }
 }
 
 // ========== 网络 ==========
@@ -319,8 +321,18 @@ function buildResultCard(item, isGacha) {
         el("div", { class: "tp-res-name", title: item.tag }, item.tag),
         el("div", { class: "tp-res-cat" }, CATEGORY_CN[item.category] || item.category || ""),
     );
-    const del = el("button", { class: "tp-res-del", title: "移除", onclick: (e) => { e.stopPropagation(); if (isGacha) removeGacha(item.tag); else removeSelected(item.tag); } }, "✕");
-    card.append(img, info, del);
+    if (isGacha) {
+        // 扭蛋结果卡片：按钮定位与画师分页一致 —— 删除(✕)左上，黑名单/收藏右上
+        const isFav = state.favorites.has(item.tag);
+        const category = item.category || "tag";
+        const blk = el("button", { class: "tp-hover-btn tp-block", title: "加入黑名单并从扭蛋结果移除", onclick: (e) => { e.stopPropagation(); toggleBlacklist(item.tag); removeGacha(item.tag); } }, "🚫");
+        const fav = el("button", { class: "tp-hover-btn tp-fav" + (isFav ? " active" : ""), title: "收藏", onclick: (e) => { e.stopPropagation(); toggleFavorite({ tag: item.tag, category }); if (currentModal) refreshGachaCurrent(); } }, isFav ? "★" : "☆");
+        const del = el("button", { class: "tp-hover-btn tp-del", title: "移除", onclick: (e) => { e.stopPropagation(); removeGacha(item.tag); } }, "✕");
+        card.append(img, info, blk, fav, del);
+    } else {
+        const del = el("button", { class: "tp-res-del", title: "移除", onclick: (e) => { e.stopPropagation(); removeSelected(item.tag); } }, "✕");
+        card.append(img, info, del);
+    }
     card.addEventListener("click", (e) => {
         if (e.ctrlKey || e.metaKey) { window.open(`${DANBOORU_BASE}/posts?tags=${encodeURIComponent(item.tag)}`, "_blank", "noopener"); }
     });
@@ -330,6 +342,7 @@ function removeGacha(tag) {
     gachaState.resultTags = gachaState.resultTags.filter((t) => t.tag !== tag);
     serializeGacha();
     renderResult();
+    refreshGachaCurrent();
     refreshGachaPreview();
 }
 
@@ -380,15 +393,17 @@ function renderGachaPanel() {
     if (!mainScroll) return;
     mainScroll.innerHTML = "";
     const wrap = el("div", { class: "tp-gacha" });
-    wrap.appendChild(el("div", { class: "tp-gacha-hint" }, "每类可独立设置来源（实时=Danbooru 随机 / 候选=从当前页抽）与数量；「重抽」仅重roll该分类，其余保留。"));
+    const hint = el("div", { class: "tp-gacha-hint" });
+    hint.innerHTML = "每个分类单独选 <b>抽取方式</b> 和 <b>数量</b>：<br>· 全库随机：从 Danbooru 整个标签库随机取<br>· 当前页：从你正在看的画廊页里已有的标签随机取<br>点「重抽」只重摇这一分类，其余结果保留。";
+    wrap.appendChild(hint);
 
     const rows = el("div", { class: "tp-gacha-rows" });
     for (const key of ["artist", "character", "copyright"]) {
         const cfg = state.gachaConfig[key];
         const label = CATEGORY_CN[key] || key;
         const srcSel = el("select", { class: "tp-mini-select" },
-            el("option", { value: "live" }, "实时"),
-            el("option", { value: "candidate" }, "候选"),
+            el("option", { value: "live" }, "全库随机"),
+            el("option", { value: "candidate" }, "当前页"),
         );
         srcSel.value = cfg.source;
         srcSel.addEventListener("change", () => { cfg.source = srcSel.value; });
@@ -405,7 +420,7 @@ function renderGachaPanel() {
 
     const actions = el("div", { class: "tp-gacha-actions" },
         el("button", { class: "tp-btn primary", onclick: () => runGachaGenerate() }, "按配置生成"),
-        el("button", { class: "tp-btn", onclick: () => runGachaAllCandidate() }, "全部按当前页抽取"),
+        el("button", { class: "tp-btn", onclick: () => runGachaAllCandidate() }, "全部用当前页"),
         el("button", { class: "tp-btn", onclick: () => clearGacha() }, "清空扭蛋"),
     );
     wrap.appendChild(actions);
@@ -413,15 +428,28 @@ function renderGachaPanel() {
     // 当前扭蛋结果预览
     const cur = el("div", { class: "tp-gacha-current" });
     cur.appendChild(el("div", { class: "tp-gacha-sub" }, "当前扭蛋结果"));
-    const grid = el("div", { class: "tp-grid small" });
+    const grid = el("div", { class: "tp-grid small gacha-big" });
+    gachaCurrentGrid = grid;   // 保存引用，供 clearGacha/setGachaAll 等即时刷新
     gachaState.resultTags.forEach((t) => grid.appendChild(buildResultCard(t, true)));
     if (!gachaState.resultTags.length) grid.appendChild(el("div", { class: "tp-empty" }, "尚无扭蛋结果"));
     cur.appendChild(grid);
     wrap.appendChild(cur);
 
     mainScroll.appendChild(wrap);
+    refreshGachaCurrent();
     refreshGachaPreview();
     updatePager();
+}
+
+// 即时刷新扭蛋主面板里的「当前扭蛋结果」预览（无需切走再切回）
+function refreshGachaCurrent() {
+    if (!gachaCurrentGrid) return;
+    gachaCurrentGrid.innerHTML = "";
+    if (!gachaState.resultTags.length) {
+        gachaCurrentGrid.appendChild(el("div", { class: "tp-empty" }, "尚无扭蛋结果"));
+    } else {
+        gachaState.resultTags.forEach((t) => gachaCurrentGrid.appendChild(buildResultCard(t, true)));
+    }
 }
 function renderBlacklist() {
     if (state.currentTab !== "blacklist") return;
@@ -432,8 +460,10 @@ function renderBlacklist() {
     );
     mainScroll.appendChild(head);
     if (!state.blacklist.size) { mainScroll.appendChild(el("div", { class: "tp-empty" }, "黑名单为空")); return; }
+    const tags = [...state.blacklist].filter((t) => !listFilter || t.toLowerCase().includes(listFilter));
+    if (!tags.length) { mainScroll.appendChild(el("div", { class: "tp-empty" }, listFilter ? `未找到「${listFilter}」` : "黑名单为空")); return; }
     const list = el("div", { class: "tp-list" });
-    [...state.blacklist].forEach((tag) => {
+    tags.forEach((tag) => {
         list.appendChild(buildListItemCard({ tag, category: "" }, {
             onAdd: (it) => selectTag({ tag: it.tag, category: "tag" }),
             onRemove: (it) => toggleBlacklist(it.tag),
@@ -451,8 +481,10 @@ function renderFavorites() {
     );
     mainScroll.appendChild(head);
     if (!state.favorites.size) { mainScroll.appendChild(el("div", { class: "tp-empty" }, "收藏为空，画廊卡片悬停点 ☆ 即可收藏")); return; }
+    const entries = [...state.favorites.entries()].filter(([tag]) => !listFilter || tag.toLowerCase().includes(listFilter));
+    if (!entries.length) { mainScroll.appendChild(el("div", { class: "tp-empty" }, listFilter ? `未找到「${listFilter}」` : "收藏为空")); return; }
     const list = el("div", { class: "tp-list" });
-    [...state.favorites.entries()].forEach(([tag, category]) => {
+    entries.forEach(([tag, category]) => {
         list.appendChild(buildListItemCard({ tag, category }, {
             onAdd: (it) => selectTag({ tag: it.tag, category: it.category || "tag" }),
             onRemove: (it) => toggleFavorite({ tag: it.tag, category: it.category }),
@@ -528,7 +560,7 @@ function buildSettingsPanel() {
     mainScroll.appendChild(wrap);
     updatePager();
 }
-function renderAll() { renderMain(); renderResult(); renderStatus(); }
+function renderAll() { renderMain(); renderResult(); }
 
 function updateTabStyle() {
     for (const cat of TABS) {
@@ -541,10 +573,14 @@ function updateTabStyle() {
     }
     // pager 仅画廊页显示
     if (pagerBar) pagerBar.style.display = GALLERY_TABS.includes(state.currentTab) ? "flex" : "none";
+    // 搜索工具栏：仅画廊/黑名单/收藏分页显示；扭蛋与设置分页无意义，隐藏
+    if (toolbarEl) toolbarEl.style.display = (state.currentTab === "gacha" || state.currentTab === "settings") ? "none" : "flex";
 }
 function switchTab(cat) {
     state.currentTab = cat;
     updateTabStyle();
+    // 进入黑名单/收藏时，把搜索框显示与当前过滤关键字同步
+    if (searchInputEl && (cat === "blacklist" || cat === "favorites")) searchInputEl.value = listFilter;
     renderMain();
     renderResult();
     if (GALLERY_TABS.includes(cat) && !state.tabState[cat].items.length) doSearch(cat);
@@ -562,17 +598,15 @@ function updatePager() {
     pagerBar.append(prev, info, next);
 }
 
-function renderStatus() {
-    if (!statusEl) return;
-    statusEl.textContent = `已选 ${state.selectedMap.size} · 扭蛋 ${gachaState.resultTags.length} · 黑名单 ${state.blacklist.size} · 收藏 ${state.favorites.size}`;
-}
 let _flashTimer = null;
 function flashStatus(msg) {
-    if (!statusEl) return;
-    const base = `已选 ${state.selectedMap.size} · 扭蛋 ${gachaState.resultTags.length} · 黑名单 ${state.blacklist.size} · 收藏 ${state.favorites.size}`;
-    statusEl.textContent = msg + "   ｜   " + base;
+    if (!currentModal) return;
+    let t = currentModal.querySelector(".tp-toast");
+    if (!t) { t = el("div", { class: "tp-toast" }); currentModal.appendChild(t); }
+    t.textContent = msg;
+    t.classList.add("show");
     clearTimeout(_flashTimer);
-    _flashTimer = setTimeout(renderStatus, 2500);
+    _flashTimer = setTimeout(() => { if (t) t.classList.remove("show"); }, 2500);
 }
 
 // ========== 扭蛋逻辑 ==========
@@ -582,6 +616,22 @@ async function gachaLive(catKey, n) {
     const path = `/naiba/tag/gacha_partial?${cfg.param}=${n}&blacklist=${encodeURIComponent(blacklist)}`;
     const data = await apiGetJson(path);
     return (data.tags || []).map((t) => ({ tag: t.tag, category: t.category }));
+}
+// 把总数 total 随机拆成 画师(a)/角色(c)/IP(i) 三个非负整数，三者之和 = total
+function splitTotal(n) {
+    n = Math.max(0, n | 0);
+    const a = Math.floor(Math.random() * (n + 1));
+    const c = Math.floor(Math.random() * (n - a + 1));
+    const i = n - a - c;
+    return { a, c, i };
+}
+// 按总数随机拆分到三类并取标签（各自独立随机，和 = total），替代原「混合随机」
+async function fetchGachaByTotal(total) {
+    const { a, c, i } = splitTotal(total);
+    const blacklist = JSON.stringify([...state.blacklist]);
+    const path = `/naiba/tag/gacha_partial?artist=${a}&character=${c}&copyright=${i}&blacklist=${encodeURIComponent(blacklist)}`;
+    const data = await apiGetJson(path);
+    return (data.tags || []).map((t) => ({ tag: t.tag || t, category: t.category || "" })).filter((x) => x.tag);
 }
 function candidateSample(catKey, n) {
     const cfg = GACHA_CATS[catKey];
@@ -606,11 +656,11 @@ async function runGachaGenerate() {
         if (cfg.source === "candidate") {
             const s = candidateSample(key, cfg.n);
             results[key] = s;
-            if (s.length < cfg.n) shortfall.push(`${CATEGORY_CN[key]}候选仅${s.length}/${cfg.n}`);
+            if (s.length < cfg.n) shortfall.push(`${CATEGORY_CN[key]}当前页仅${s.length}/${cfg.n}`);
         } else {
             const s = await gachaLive(key, cfg.n);
             results[key] = s;
-            if (s.length < cfg.n) shortfall.push(`${CATEGORY_CN[key]}实只得${s.length}/${cfg.n}`);
+            if (s.length < cfg.n) shortfall.push(`${CATEGORY_CN[key]}全库只得${s.length}/${cfg.n}`);
         }
     }
     for (const key of ["artist", "character", "copyright"]) replaceGachaCategory(key, results[key].map((t) => t.tag));
@@ -634,20 +684,20 @@ function clearGacha() {
     gachaState.resultTags = [];
     serializeGacha();
     renderResult();
+    refreshGachaCurrent();
     refreshGachaPreview();
 }
 
 // ========== 外部随机 ==========
-async function runExternalRandom(node) {
-    const sync = !!getWidget(node, "sync_external_random", false);
-    const resp = await api.fetchApi(`/naiba/tag/gacha_random?total=9`);
-    const data = await resp.json();
-    const tags = (data.tags || []).map((t) => ({ tag: t.tag || t, category: t.category || "" })).filter((x) => x.tag);
+    async function runExternalRandom(node) {
+        const sync = !!getWidget(node, "sync_external_random", false);
+        const total = (node && node._randomTotal) ? node._randomTotal : 9;
+        const tags = await fetchGachaByTotal(total);
     gachaState.resultTags = tags.slice();
     serializeGacha();
     setWidget(node, "gacha_mode", true);
     const modalOpen = !!currentModal;
-    if (sync || modalOpen) { renderResult(); refreshGachaPreview(); }
+    if (sync || modalOpen) { renderResult(); refreshGachaCurrent(); refreshGachaPreview(); }
 }
 
 // ========== 恢复 ==========
@@ -682,14 +732,32 @@ function createTagPickerModal(node) {
     // 工具栏（搜索行 + 每页数量，仅画廊页有效）
     const toolbar = el("div", { class: "tp-toolbar" });
     const searchInput = el("input", { class: "tp-search", type: "text", placeholder: "搜索标签（回车搜索）" });
-    const searchBtn = el("button", { class: "tp-btn small", onclick: () => { const cat = state.currentTab; if (GALLERY_TABS.includes(cat)) { state.tabState[cat].query = searchInput.value.trim(); state.tabState[cat].page = 1; doSearch(cat); } } }, "搜索");
+    const searchBtn = el("button", { class: "tp-btn small", onclick: () => {
+        const cat = state.currentTab;
+        if (GALLERY_TABS.includes(cat)) {
+            state.tabState[cat].query = searchInput.value.trim(); state.tabState[cat].page = 1; doSearch(cat);
+        } else if (cat === "blacklist" || cat === "favorites") {
+            listFilter = searchInput.value.trim().toLowerCase(); renderMain();
+        }
+    } }, "搜索");
     searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") searchBtn.click(); });
+    // 「默认」按钮：清空搜索词，恢复该分类的默认（热门）标签列表，免去手动搜空白的奇怪交互
+    const defaultBtn = el("button", { class: "tp-btn small", title: "清空搜索，恢复默认标签列表", onclick: () => {
+        const cat = state.currentTab;
+        if (GALLERY_TABS.includes(cat)) {
+            searchInput.value = ""; state.tabState[cat].query = ""; state.tabState[cat].page = 1; doSearch(cat);
+        } else if (cat === "blacklist" || cat === "favorites") {
+            searchInput.value = ""; listFilter = ""; renderMain();
+        }
+    } }, "默认");
     const perPage = el("div", { class: "tp-perpage" }, "每页 ", (() => {
         const s = el("input", { class: "tp-mini-num", type: "number", min: "1", max: "100", value: String(getWidget(node, "max_images", 9)) });
         s.addEventListener("change", () => { const v = Math.max(1, Math.min(100, parseInt(s.value, 10) || 9)); s.value = String(v); setWidget(node, "max_images", v); if (GALLERY_TABS.includes(state.currentTab)) doSearch(state.currentTab); });
         return s;
     })());
-    toolbar.append(searchInput, searchBtn, perPage);
+    toolbar.append(searchInput, defaultBtn, searchBtn, perPage);
+    toolbarEl = toolbar;   // 保存引用，供 updateTabStyle 按分页显隐
+    searchInputEl = searchInput;   // 保存引用，供分页切换时同步关键字
 
     // 主体：左画廊 + 右结果
     const body = el("div", { class: "tp-body" });
@@ -699,11 +767,10 @@ function createTagPickerModal(node) {
     resultPanel = el("div", { class: "tp-result" });
     body.append(leftCol, resultPanel);
 
-    // 底部状态栏
-    statusEl = el("div", { class: "tp-status" });
+    // 底部：仅保留「应用」按钮（原状态栏计数不同步，已移除，临时提示改用浮动 toast）
     const applyBtn = el("button", { class: "tp-btn primary", onclick: () => { serializeSelection(); serializeGacha(); if (nodeRef) setWidget(nodeRef, "gacha_mode", gachaState.resultTags.length > 0); closeModal(); } }, "应用");
 
-    modal.append(header, tabGroup, toolbar, body, el("div", { class: "tp-footer" }, statusEl, applyBtn));
+    modal.append(header, tabGroup, toolbar, body, el("div", { class: "tp-footer" }, applyBtn));
     overlay.append(modal);
     document.body.appendChild(overlay);
     currentModal = overlay;
@@ -716,12 +783,12 @@ function createTagPickerModal(node) {
     // 初始化
     restoreFromNode(node);
     updateTabStyle();
-    renderStatus();
-    switchTab("artist");
+    // 记住上次所在分页：再次打开时停留在关闭前的 tab（首次或无效时兜底 artist）
+    switchTab(TABS.includes(state.currentTab) ? state.currentTab : "artist");
 }
 function closeModal() {
     if (currentModal) { currentModal.remove(); currentModal = null; }
-    mainScroll = null; pagerBar = null; resultPanel = null; statusEl = null; tabEls = {}; gachaPanelEl = null;
+    mainScroll = null; pagerBar = null; resultPanel = null; tabEls = {}; gachaPanelEl = null; toolbarEl = null; searchInputEl = null;
     // 弹窗关闭后刷新节点上的已选摘要预览框（应用/取消关闭都会触发，读到的是最新控件值）
     if (nodeRef && nodeRef._updateTagPickerPreview) nodeRef._updateTagPickerPreview();
 }
@@ -763,6 +830,17 @@ function injectStyle() {
 .tp-res-del:hover{background:rgba(255,107,107,.15);}
 .tp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;}
 .tp-grid.small{grid-template-columns:repeat(auto-fill,minmax(120px,1fr));}
+/* 扭蛋当前结果：卡片放大至约 4 倍（缩略图 42px -> 168px），竖向布局，按钮同画师卡片角落定位 */
+.tp-gacha-current .tp-grid.small.gacha-big{grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;}
+.tp-gacha-current .tp-grid.small.gacha-big .tp-res-card{position:relative;overflow:hidden;flex-direction:column;align-items:stretch;text-align:center;padding:8px;gap:6px;}
+.tp-gacha-current .tp-grid.small.gacha-big .tp-res-thumb{width:168px;height:168px;margin:0 auto;}
+.tp-gacha-current .tp-grid.small.gacha-big .tp-res-info{min-width:0;}
+.tp-gacha-current .tp-grid.small.gacha-big .tp-res-name{white-space:normal;word-break:break-all;}
+.tp-gacha-current .tp-grid.small.gacha-big .tp-hover-btn{position:absolute;top:6px;width:28px;height:28px;border-radius:50%;border:none;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;opacity:0;transition:.15s;box-shadow:0 2px 6px rgba(0,0,0,.4);}
+.tp-gacha-current .tp-grid.small.gacha-big .tp-res-card:hover .tp-hover-btn,.tp-gacha-current .tp-grid.small.gacha-big .tp-res-card:focus-within .tp-hover-btn{opacity:1;}
+.tp-gacha-current .tp-grid.small.gacha-big .tp-block{right:6px;background:${COLORS.danger};color:#fff;}
+.tp-gacha-current .tp-grid.small.gacha-big .tp-fav{right:40px;background:${COLORS.warning};color:#1a1a2e;}
+.tp-gacha-current .tp-grid.small.gacha-big .tp-del{left:6px;background:${COLORS.danger};color:#fff;}
 .tp-card{position:relative;background:${COLORS.cardBg};border:1px solid ${COLORS.cardBorder};border-radius:8px;overflow:hidden;cursor:pointer;transition:transform .12s,border-color .15s;outline:none;}
 .tp-card:hover{transform:translateY(-2px);border-color:${COLORS.accent};}
 .tp-card.selected{border-color:${COLORS.success};box-shadow:0 0 0 2px rgba(46,213,115,.4);}
@@ -781,8 +859,9 @@ function injectStyle() {
 .tp-btn.primary{background:${COLORS.accent};color:#fff;border-color:${COLORS.accent};}
 .tp-btn.primary:hover{background:${COLORS.accentHover};}
 .tp-btn.small{padding:6px 10px;font-size:12px;}
-.tp-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;background:${COLORS.headerBg};border-top:1px solid ${COLORS.border};}
-.tp-status{color:${COLORS.textDim};font-size:12px;flex:1;}
+.tp-footer{display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:10px 16px;background:${COLORS.headerBg};border-top:1px solid ${COLORS.border};}
+.tp-toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%) translateY(10px);background:rgba(0,0,0,.82);color:#fff;padding:8px 14px;border-radius:6px;font-size:12px;opacity:0;pointer-events:none;transition:.2s;z-index:9999;max-width:80vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tp-toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 .tp-gacha{padding:4px;}
 .tp-gacha-hint{color:${COLORS.textDim};font-size:12px;margin-bottom:10px;line-height:1.5;}
 .tp-gacha-rows{display:flex;flex-direction:column;gap:8px;margin-bottom:12px;}
@@ -848,7 +927,7 @@ app.registerExtension({
             const randomBtn = document.createElement("button");
             randomBtn.textContent = "随机生成";
             randomBtn.style.cssText = `
-                width:100%;padding:8px;margin:8px 0 0;
+                flex:1;padding:8px;margin:8px 0 0 0;
                 background:${COLORS.warning};color:#1a1a2e;
                 border:none;border-radius:6px;cursor:pointer;
                 font-size:12px;font-weight:600;transition:background 0.2s;
@@ -860,11 +939,7 @@ app.registerExtension({
                 const origText = randomBtn.textContent;
                 randomBtn.textContent = "生成中…";
                 try {
-                    const resp = await api.fetchApi(`/naiba/tag/gacha_random?total=9`);
-                    const data = await resp.json();
-                    const tags = (data.tags || [])
-                        .map((t) => typeof t === "string" ? { tag: t, category: "" } : t)
-                        .filter((x) => x && x.tag);
+                    const tags = await fetchGachaByTotal(node._randomTotal || 9);
                     const gw = node.widgets?.find((x) => x.name === "gacha_data");
                     if (gw) gw.value = JSON.stringify({ tags });
                     setGachaMode(true);
@@ -877,6 +952,33 @@ app.registerExtension({
                     randomBtn.textContent = origText;
                 }
             });
+
+            // 随机数目（组数：每组=画师+角色+IP，实际标签数=组数×3）；放在黄色按钮右侧
+            const randomCount = document.createElement("input");
+            randomCount.type = "number";
+            randomCount.min = "1";
+            randomCount.max = "30";
+            randomCount.value = "9";
+            randomCount.title = "随机标签总数：将随机分配给 画师 / 角色 / IP 三类，三者数量之和 = 该值（各自独立随机）";
+            randomCount.style.cssText = `
+                width:64px;padding:8px 4px;margin:8px 0 0 6px;
+                background:${COLORS.inputBg};color:${COLORS.text};
+                border:1px solid ${COLORS.border};border-radius:6px;
+                font-size:12px;text-align:center;box-sizing:border-box;
+            `;
+            const _clampCount = () => {
+                let v = parseInt(randomCount.value, 10);
+                if (isNaN(v) || v < 1) v = 1;
+                if (v > 30) v = 30;
+                randomCount.value = String(v);
+                node._randomTotal = v;
+            };
+            randomCount.addEventListener("change", _clampCount);
+            _clampCount();
+            const randomRow = document.createElement("div");
+            randomRow.style.cssText = "display:flex;flex-direction:row;align-items:stretch;width:100%;box-sizing:border-box;";
+            randomRow.appendChild(randomBtn);
+            randomRow.appendChild(randomCount);
 
             // 已选摘要预览区
             const previewArea = document.createElement("div");
@@ -956,7 +1058,7 @@ app.registerExtension({
 
             const container = document.createElement("div");
             container.style.cssText = "display:flex;flex-direction:column;gap:4px;width:100%;box-sizing:border-box;";
-            container.appendChild(randomBtn);
+            container.appendChild(randomRow);
             container.appendChild(previewArea);
             container.appendChild(clearBtn);
             container.appendChild(openBtn);
