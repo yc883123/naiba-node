@@ -65,7 +65,7 @@ function placeVisualLoraFloatPreview(ev) {
 function showVisualLoraFloatPreview(url) {
     if (!_visualLoraFloatPreview) {
         _visualLoraFloatPreview = document.createElement("div");
-        _visualLoraFloatPreview.style.cssText = "position:fixed;z-index:99999;background:#000;display:none;pointer-events:none;max-width:320px;max-height:480px;";
+        _visualLoraFloatPreview.style.cssText = "position:fixed;z-index:99999;background:#000;display:none;pointer-events:none;max-width:160px;max-height:480px;";
         _visualLoraFloatLoading = document.createElement("div");
         _visualLoraFloatLoading.textContent = "Loading preview...";
         _visualLoraFloatLoading.style.cssText = "color:#bbb;font-size:12px;padding:12px 16px;white-space:nowrap;";
@@ -75,7 +75,7 @@ function showVisualLoraFloatPreview(url) {
             if (_visualLoraFloatLoading) _visualLoraFloatLoading.style.display = "none";
             if (_visualLoraFloatImg) _visualLoraFloatImg.style.display = "";
         };
-        _visualLoraFloatImg.style.cssText = "display:none;max-width:320px;max-height:480px;";
+        _visualLoraFloatImg.style.cssText = "display:none;max-width:160px;max-height:480px;";
         _visualLoraFloatPreview.appendChild(_visualLoraFloatImg);
         document.body.appendChild(_visualLoraFloatPreview);
     }
