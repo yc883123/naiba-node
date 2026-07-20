@@ -32,6 +32,33 @@ const COLORS = {
     disabled: "#555555",       // 禁用状态颜色（灰色）
 };
 
+// ========== 开关组件 ==========
+function createToggle(initial, onChange) {
+    const el = document.createElement("div");
+    el.style.cssText = `
+        position:relative;width:36px;height:20px;border-radius:10px;
+        cursor:pointer;transition:background 0.2s;flex-shrink:0;
+        background:${initial ? COLORS.accent : "#3a3a5a"};
+    `;
+    const knob = document.createElement("div");
+    knob.style.cssText = `
+        position:absolute;top:2px;left:${initial ? "18" : "2"}px;
+        width:16px;height:16px;background:#fff;border-radius:50%;
+        transition:left 0.2s;pointer-events:none;
+    `;
+    el.appendChild(knob);
+
+    let val = initial;
+    const update = () => {
+        el.style.background = val ? COLORS.accent : "#3a3a5a";
+        knob.style.left = val ? "18px" : "2px";
+    };
+
+    el.addEventListener("click", () => { val = !val; update(); onChange(val); });
+
+    return { el, getValue: () => val, setValue: (v) => { val = v; update(); } };
+}
+
 // ========== 浮动预览管理 ==========
 let _visualLoraFloatPreview = null;
 let _visualLoraFloatImg = null;
@@ -1380,6 +1407,20 @@ app.registerExtension({
             });
 
             buttonRow.appendChild(openBtn);
+
+            // 悬停封面预览开关
+            const previewLabel = document.createElement("span");
+            previewLabel.textContent = "预览";
+            previewLabel.title = "悬停显示LoRA封面预览";
+            previewLabel.style.cssText = `color:${COLORS.textDim};font-size:11px;align-self:center;`;
+            buttonRow.appendChild(previewLabel);
+
+            const previewToggle = createToggle(true, (val) => {
+                node._previewEnabled = val;
+                if (!val) hideVisualLoraFloatPreview(); // 关闭时立即收起可能残留的浮层
+            });
+            buttonRow.appendChild(previewToggle.el);
+
             buttonRow.appendChild(clearBtn);
 
             // 创建显示区域，显示已选择的LoRA信息
@@ -1446,7 +1487,7 @@ app.registerExtension({
                     // 添加悬停预览事件
                     const previewUrl = `/naiba/lora/preview?name=${encodeURIComponent(lora.name || "")}`;
                     name.addEventListener("mouseenter", (ev) => {
-                        if (lora.name) scheduleVisualLoraFloatPreview(ev, previewUrl);
+                        if (lora.name && node._previewEnabled !== false) scheduleVisualLoraFloatPreview(ev, previewUrl);
                     });
                     name.addEventListener("mousemove", (ev) => {
                         _visualLoraFloatLastPointer = { x: ev.clientX, y: ev.clientY };
