@@ -30,10 +30,6 @@ class VisualLoRALoader:
             },
             "optional": {
                 "clip": ("CLIP", {"tooltip": "输入的CLIP模型（可选，不连接时仅加载模型部分）"}),
-                "output_lora_names": ("BOOLEAN", {
-                    "default": True,
-                    "tooltip": "是否输出 LoRA 名称列表（关闭后 lora_names 输出为空）"
-                }),
             }
         }
 
@@ -49,7 +45,7 @@ class VisualLoRALoader:
     )
     SEARCH_ALIASES = ["naiba", "visual lora", "lora picker", "lora browser", "lora gallery"]
 
-    def load_loras(self, model, lora_data="[]", clip=None, output_lora_names=True):
+    def load_loras(self, model, lora_data="[]", clip=None):
         """
         读取JSON配置，依次应用所有启用的LoRA
 
@@ -111,11 +107,7 @@ class VisualLoRALoader:
                 print(f"[VisualLoRALoader] 加载LoRA '{lora_name}' 失败: {e}")
                 continue
 
-        # 根据开关决定是否输出LoRA名称列表
-        if output_lora_names:
-            lora_names_json = json.dumps(enabled_lora_names, ensure_ascii=False)
-        else:
-            lora_names_json = "[]"
+        lora_names_json = json.dumps(enabled_lora_names, ensure_ascii=False)
         
         return (model, clip, lora_names_json)
 
