@@ -44,14 +44,7 @@ function hideVisualLoraFloatPreview() {
     if (_visualLoraFloatPreviewTimer) { clearTimeout(_visualLoraFloatPreviewTimer); _visualLoraFloatPreviewTimer = null; }
     if (_visualLoraFloatPreview) {
         _visualLoraFloatPreview.style.display = "none";
-        if (_visualLoraFloatImg) { _visualLoraFloatImg.style.display = "none"; _visualLoraFloatImg.removeAttribute("src"); }
-        if (_visualLoraFloatLoading) { _visualLoraFloatLoading.style.display = ""; }
-    }
-    if (_visualLoraFloatPreview && _visualLoraFloatPreview.parentNode) {
-        _visualLoraFloatPreview.parentNode.removeChild(_visualLoraFloatPreview);
-        _visualLoraFloatPreview = null;
-        _visualLoraFloatImg = null;
-        _visualLoraFloatLoading = null;
+        _visualLoraFloatPreview._name = null;
     }
 }
 
@@ -86,6 +79,12 @@ function showVisualLoraFloatPreview(url) {
         _visualLoraFloatPreview.appendChild(_visualLoraFloatImg);
         document.body.appendChild(_visualLoraFloatPreview);
     }
+    if (_visualLoraFloatPreview._name === url) {
+        _visualLoraFloatPreview.style.display = "block";
+        placeVisualLoraFloatPreview(_visualLoraFloatLastPointer);
+        return;
+    }
+    _visualLoraFloatPreview._name = url;
     _visualLoraFloatImg.style.display = "none";
     _visualLoraFloatImg.removeAttribute("src");
     if (_visualLoraFloatLoading) { _visualLoraFloatLoading.style.display = ""; _visualLoraFloatLoading.textContent = "Loading preview..."; }
@@ -97,7 +96,7 @@ function showVisualLoraFloatPreview(url) {
 function scheduleVisualLoraFloatPreview(ev, url) {
     _visualLoraFloatLastPointer = { x: ev.clientX, y: ev.clientY };
     if (_visualLoraFloatPreviewTimer) { clearTimeout(_visualLoraFloatPreviewTimer); _visualLoraFloatPreviewTimer = null; }
-    _visualLoraFloatPreviewTimer = setTimeout(function() { _visualLoraFloatPreviewTimer = null; showVisualLoraFloatPreview(url); }, 350);
+    _visualLoraFloatPreviewTimer = setTimeout(function() { _visualLoraFloatPreviewTimer = null; showVisualLoraFloatPreview(url); }, 320);
 }
 
 // ========== 单例模态框管理 ==========
