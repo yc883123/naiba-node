@@ -32,6 +32,85 @@ const COLORS = {
     disabled: "#555555",       // 禁用状态颜色（灰色）
 };
 
+// ========== 模块级单例浮动预览（卡片与下拉选项共用） ==========
+// 仅创建一次 DOM 浮层，悬停切换时只改 img.src（浏览器按 URL 缓存），避免重复建DOM与多浮层叠加
+let _loraFloatPreview = null;
+function getPreviewEl() {
+    if (!_loraFloatPreview) {
+        const wrap = document.createElement("div");
+        wrap.style.cssText = `
+            position:fixed;z-index:10002;pointer-events:none;display:none;
+            width:160px;border-radius:6px;overflow:hidden;
+            background:rgba(15,23,41,0.95);border:1px solid ${COLORS.accent};
+            box-shadow:0 6px 24px rgba(0,0,0,0.6);
+        `;
+        const img = document.createElement("img");
+        img.style.cssText = "width:100%;display:block;";
+        const ph = document.createElement("div");
+        ph.textContent = "无预览图";
+        ph.style.cssText = `display:none;padding:12px;color:${COLORS.textDim};font-size:11px;text-align:center;`;
+        wrap.appendChild(img);
+        wrap.appendChild(ph);
+        img.onerror = () => { img.style.display = "none"; ph.style.display = "block"; };
+        img.onload = () => { img.style.display = "block"; ph.style.display = "none"; };
+        wrap._img = img;
+        document.body.appendChild(wrap);
+        _loraFloatPreview = wrap;
+    }
+    return _loraFloatPreview;
+}
+
+function showLoraFloatPreview(name) {
+    if (!name) return;
+    const wrap = getPreviewEl();
+    if (wrap._name !== name) {
+        wrap._name = name;
+        wrap._img.src = `/naiba/lora/preview?name=${encodeURIComponent(name)}`;
+    }
+    wrap.style.display = "block";
+}
+
+function placeLoraFloatPreview(e) {
+    const wrap = _loraFloatPreview;
+    if (!wrap || wrap.style.display === "none") return;
+    const rect = wrap.getBoundingClientRect();
+    const x = Math.min(e.clientX + 16, window.innerWidth - rect.width - 8);
+    const y = Math.min(e.clientY + 16, window.innerHeight - rect.height - 8);
+    wrap.style.left = x + "px";
+    wrap.style.top = y + "px";
+}
+
+// 悬停延迟计时器：悬停一小段时间后才显示预览，避免快速划过时闪现
+let _previewShowTimer = null;
+
+function cancelScheduledPreview() {
+    if (_previewShowTimer) {
+        clearTimeout(_previewShowTimer);
+        _previewShowTimer = null;
+    }
+}
+
+function scheduleLoraFloatPreview(name, e, delay = 320) {
+    if (!name) return;
+    cancelScheduledPreview();
+    // 记录触发时的坐标，延迟结束后按此坐标定位
+    const cx = e.clientX, cy = e.clientY;
+    _previewShowTimer = setTimeout(() => {
+        _previewShowTimer = null;
+        showLoraFloatPreview(name);
+        placeLoraFloatPreview({ clientX: cx, clientY: cy });
+    }, delay);
+}
+
+function hideLoraFloatPreview() {
+    cancelScheduledPreview();
+    const wrap = _loraFloatPreview;
+    if (wrap) {
+        wrap.style.display = "none";
+        wrap._name = null;
+    }
+}
+
 // ========== 单例模态框管理 ==========
 let currentModal = null;
 
@@ -758,6 +837,12 @@ function createVisualLoraModal(node, loraList) {
                     color:${COLORS.text};font-size:12px;
                     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
                 `;
+                // 悬停预览LoRA图片
+                name.addEventListener("mouseenter", (e) => {
+                    scheduleLoraFloatPreview(lora, e);
+                });
+                name.addEventListener("mousemove", (e) => { placeLoraFloatPreview(e); });
+                name.addEventListener("mouseleave", () => { hideLoraFloatPreview(); });
 
                 // 文件路径
                 const path = document.createElement("div");
@@ -986,6 +1071,12 @@ function createVisualLoraModal(node, loraList) {
                 const name = document.createElement("span");
                 name.textContent = lora.split('/').pop().split('\\').pop();
                 name.style.cssText = `color:${COLORS.text};font-size:12px;flex:1;`;
+                // 悬停预览LoRA图片
+                name.addEventListener("mouseenter", (e) => {
+                    scheduleLoraFloatPreview(lora, e);
+                });
+                name.addEventListener("mousemove", (e) => { placeLoraFloatPreview(e); });
+                name.addEventListener("mouseleave", () => { hideLoraFloatPreview(); });
 
                 // 文件路径
                 const path = document.createElement("span");
@@ -1374,6 +1465,12 @@ app.registerExtension({
                         flex:1;min-width:0;color:${isEnabled ? COLORS.text : COLORS.disabled};
                         font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
                     `;
+                    // 悬停预览LoRA图片
+                    name.addEventListener("mouseenter", (e) => {
+                        scheduleLoraFloatPreview(lora.name, e);
+                    });
+                    name.addEventListener("mousemove", (e) => { placeLoraFloatPreview(e); });
+                    name.addEventListener("mouseleave", () => { hideLoraFloatPreview(); });
                     row.appendChild(name);
 
                     const mkNum = (label, val, onInput) => {
