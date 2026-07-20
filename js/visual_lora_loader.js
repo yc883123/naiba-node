@@ -1408,18 +1408,32 @@ app.registerExtension({
 
             buttonRow.appendChild(openBtn);
 
-            // 悬停封面预览开关
+            // 悬停封面预览开关（垂直布局：标签在上，开关在下）
+            const previewContainer = document.createElement("div");
+            previewContainer.style.cssText = `
+                display:flex;flex-direction:column;align-items:center;
+                justify-content:center;gap:2px;
+                padding:0 10px;margin:8px 0;
+                background:transparent;
+                border:1px solid ${COLORS.border};
+                border-radius:6px;
+                min-width:60px;
+                align-self:stretch;
+            `;
+
             const previewLabel = document.createElement("span");
             previewLabel.textContent = "预览";
             previewLabel.title = "悬停显示LoRA封面预览";
-            previewLabel.style.cssText = `color:${COLORS.textDim};font-size:11px;align-self:center;`;
-            buttonRow.appendChild(previewLabel);
+            previewLabel.style.cssText = `color:${COLORS.textDim};font-size:11px;`;
+            previewContainer.appendChild(previewLabel);
 
             const previewToggle = createToggle(true, (val) => {
                 node._previewEnabled = val;
                 if (!val) hideVisualLoraFloatPreview(); // 关闭时立即收起可能残留的浮层
             });
-            buttonRow.appendChild(previewToggle.el);
+            previewContainer.appendChild(previewToggle.el);
+
+            buttonRow.appendChild(previewContainer);
 
             buttonRow.appendChild(clearBtn);
 
