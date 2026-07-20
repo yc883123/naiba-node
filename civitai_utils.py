@@ -600,9 +600,28 @@ async def sync_lora_from_civitai(
     try:
         version_data, error = await client.query_by_hash(file_hash)
         if error:
+            # API/网络错误：仍把已算好的 SHA256 写入缓存，供本地读取；
+            # _preview_resolved=False 允许下次同步重试元数据。
+            try:
+                save_cached_metadata(metadata_path, {
+                    "hash": file_hash,
+                    "_preview_resolved": False,
+                    "_sha_only": True,
+                })
+            except Exception:
+                pass
             return None, None, error
         
         if not version_data:
+            # Civitai 无对应模型：同样缓存 SHA256（仍允许下次重试）。
+            try:
+                save_cached_metadata(metadata_path, {
+                    "hash": file_hash,
+                    "_preview_resolved": False,
+                    "_sha_only": True,
+                })
+            except Exception:
+                pass
             return None, None, "No data returned from Civitai"
         
         # 提取元数据

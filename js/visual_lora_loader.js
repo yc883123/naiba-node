@@ -438,11 +438,12 @@ function createVisualLoraModal(node, loraList) {
             const data = JSON.parse(loraDataWidget.value || "[]");
             data.forEach(item => {
                 if (item.name) {
-                    selectedLoras.set(item.name, {
-                        strength_model: item.strength_model || 1.0,
-                        strength_clip: item.strength_clip || 1.0,
-                        enabled: item.enabled !== undefined ? item.enabled : true
-                    });
+                    // 保留所有字段（包括 sha256 等额外字段）
+                    const config = { ...item };
+                    config.strength_model = config.strength_model || 1.0;
+                    config.strength_clip = config.strength_clip || 1.0;
+                    if (config.enabled === undefined) config.enabled = true;
+                    selectedLoras.set(item.name, config);
                 }
             });
         } catch (e) {
@@ -1443,7 +1444,7 @@ app.registerExtension({
                 width:100%;padding:8px;margin:4px 0;
                 background:${COLORS.inputBg};border:1px solid ${COLORS.border};
                 border-radius:4px;font-size:12px;color:${COLORS.text};
-                min-height:40px;max-height:200px;overflow-y:auto;box-sizing:border-box;
+                min-height:40px;overflow-y:auto;box-sizing:border-box;
                 overflow-x:hidden;flex-shrink:1;
             `;
             displayArea.innerHTML = "<div style='color:#888;'>未选择任何LoRA</div>";
@@ -1613,24 +1614,85 @@ app.registerExtension({
                     }
                 }
                 
-                // 计算可用高度，确保容器不会超出节点边界
-                const availableHeight = Math.max(120, h - otherWidgetsHeight - 20);
-                container.style.height = availableHeight + "px";
+                // 节点标题栏高度估计（ComfyUI默认）
+                const titleBarHeight = 30;
+                // 节点内边距
+                const nodeInnerPadding = 10;
                 
-                // 计算 displayArea 的最大高度
-                // buttonRow 大约 60px 高度，加上间距
-                const buttonRowHeight = 60;
-                const gapHeight = 8;
-                const maxDisplayHeight = Math.max(40, availableHeight - buttonRowHeight - gapHeight);
+                // 计算可用高度：节点高度 - 标题栏 - 其他widgets - 节点内边距
+                const availableHeight = h - titleBarHeight - otherWidgetsHeight - nodeInnerPadding;
+                const containerHeight = Math.max(120, Math.min(availableHeight, 500));
+                container.style.height = containerHeight + "px";
+                
+                // 动态计算buttonRow的实际高度
+                const buttonRowHeight = buttonRow.offsetHeight || 60;
+                const buttonRowMargin = 16; // buttonRow的margin 8px * 2
+                const containerGap = 4;      // 容器gap
+                const containerPadding = 16; // 容器padding 8px * 2
+                const containerBorder = 2;   // 容器border 1px * 2
+                
+                // 计算displayArea的可用高度
+                const displayAreaPadding = 16; // displayArea的padding 8px * 2
+                const displayAreaBorder = 2;   // displayArea的border 1px * 2
+                const displayAreaMargin = 8;   // displayArea的margin 4px * 2
+                
+                const contentHeight = containerHeight - containerPadding - containerBorder;
+                const maxDisplayHeight = Math.max(40, 
+                    contentHeight - buttonRowHeight - buttonRowMargin - containerGap - displayAreaPadding - displayAreaBorder - displayAreaMargin
+                );
                 displayArea.style.maxHeight = maxDisplayHeight + "px";
             };
 
             // 触发节点重绘 - 附加到节点对象上
             const triggerResize = () => {
                 setTimeout(() => {
+                    // 计算内容所需的高度
+                    const buttonRowHeight = buttonRow.offsetHeight || 60;
+                    const buttonRowMargin = 16;
+                    const containerGap = 4;
+                    const containerPadding = 16;
+                    const containerBorder = 2;
+                    const displayAreaPadding = 16;
+                    const displayAreaBorder = 2;
+                    const displayAreaMargin = 8;
+                    
+                    // 获取displayArea的内容高度
+                    const displayContentHeight = displayArea.scrollHeight;
+                    
+                    // 计算容器所需高度
+                    const containerContentHeight = buttonRowHeight + buttonRowMargin + containerGap + 
+                        displayContentHeight + displayAreaPadding + displayAreaBorder + displayAreaMargin;
+                    const containerTotalHeight = containerContentHeight + containerPadding + containerBorder;
+                    
+                    // 计算其他widgets的高度
+                    let otherWidgetsHeight = 0;
+                    if (node.widgets) {
+                        for (const widget of node.widgets) {
+                            if (widget.name === "visual_lora_container") continue;
+                            otherWidgetsHeight += (widget.computeSize ? widget.computeSize(node.size[0])[1] : 26) + 4;
+                        }
+                    }
+                    
+                    // 节点标题栏高度和内边距
+                    const titleBarHeight = 30;
+                    const nodeInnerPadding = 10;
+                    
+                    // 计算节点所需总高度
+                    const requiredNodeHeight = titleBarHeight + otherWidgetsHeight + nodeInnerPadding + containerTotalHeight;
+                    
+                    // 限制在合理范围内
+                    const minHeight = 120;
+                    const maxHeight = 600;
+                    const newHeight = Math.max(minHeight, Math.min(requiredNodeHeight, maxHeight));
+                    
+                    // 更新节点高度（保持宽度不变）
+                    const [currentWidth] = node.size;
+                    node.size = [currentWidth, newHeight];
+                    
+                    // 触发重绘
                     node.onResize?.();
                     node.graph?.setDirtyCanvas(true, true);
-                }, 50);
+                }, 100); // 增加延迟确保DOM已更新
             };
             node._triggerVisualLoraResize = triggerResize;
 
