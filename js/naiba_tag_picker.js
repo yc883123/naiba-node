@@ -839,7 +839,7 @@ function injectStyle() {
 .tp-gacha-current .tp-grid.small.gacha-big .tp-hover-btn{position:absolute;top:6px;width:28px;height:28px;border-radius:50%;border:none;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;opacity:0;transition:.15s;box-shadow:0 2px 6px rgba(0,0,0,.4);}
 .tp-gacha-current .tp-grid.small.gacha-big .tp-res-card:hover .tp-hover-btn,.tp-gacha-current .tp-grid.small.gacha-big .tp-res-card:focus-within .tp-hover-btn{opacity:1;}
 .tp-gacha-current .tp-grid.small.gacha-big .tp-block{right:6px;background:${COLORS.danger};color:#fff;}
-.tp-gacha-current .tp-grid.small.gacha-big .tp-fav{right:40px;background:${COLORS.warning};color:#1a1a2e;}
+.tp-gacha-current .tp-grid.small.gacha-big .tp-fav{right:40px;background:${COLORS.textDim};color:#1a1a2e;}
 .tp-gacha-current .tp-grid.small.gacha-big .tp-del{left:6px;background:${COLORS.danger};color:#fff;}
 .tp-card{position:relative;background:${COLORS.cardBg};border:1px solid ${COLORS.cardBorder};border-radius:8px;overflow:hidden;cursor:pointer;transition:transform .12s,border-color .15s;outline:none;}
 .tp-card:hover{transform:translateY(-2px);border-color:${COLORS.accent};}
@@ -850,7 +850,7 @@ function injectStyle() {
 .tp-hover-btn{position:absolute;top:6px;width:28px;height:28px;border-radius:50%;border:none;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;opacity:0;transition:.15s;box-shadow:0 2px 6px rgba(0,0,0,.4);}
 .tp-card:hover .tp-hover-btn,.tp-card:focus-within .tp-hover-btn,.tp-card:focus .tp-hover-btn{opacity:1;}
 .tp-block{right:6px;background:${COLORS.danger};color:#fff;}
-.tp-fav{right:40px;background:${COLORS.warning};color:#1a1a2e;}
+.tp-fav{right:40px;background:${COLORS.textDim};color:#1a1a2e;}
 .tp-fav.active{background:${COLORS.warning};}
 .tp-empty{color:${COLORS.textDim};font-size:13px;padding:40px 10px;text-align:center;}
 .tp-empty.small{padding:14px 6px;font-size:12px;}
