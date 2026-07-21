@@ -618,6 +618,15 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 
 ## 更新日志
 
+### v3.0.1 (2026-07-21)
+
+#### 问题修复
+- **DOM 节点高度修复（anima_prompt_node / naiba_tag_picker）**：
+  - 移除 `addDOMWidget` 高度计算中的硬编码 `Math.max(200, …)` 下限，改为按容器真实内容高度（`scrollHeight`）自适应，避免内容较少的节点被强制撑高
+  - 新增 `applyContainerHeight()`：在容器完成布局、宽度稳定后调用 `node.setSize()` 将节点高度收敛到真实内容高度
+  - 修复初次 `computeSize` 测量时节点 DOM 尚未布局、宽度未定导致 `scrollHeight` 误测成约 2 倍、且旧逻辑仅重绘未重设尺寸而长期停留于错误高度的问题
+  - `ResizeObserver` 与初始 `requestAnimationFrame` 均调用 `applyContainerHeight()`，带 >4px 阈值防抖，避免与尺寸监听互相触发抖动
+
 ### v3.0.0 (2026-07-21)
 
 #### 重大改进
