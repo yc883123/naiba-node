@@ -1,258 +1,365 @@
 """
-Anima Prompt Node - 基于ANIMA3提示词生成模板的自定义提示词节点
-从anima_prompts.json读取标签数据，支持分类选择、搜索和扭蛋功能
+Anima Prompt Node - 基于本地 anima_prompts.json 的交互式提示词节点
+按 naiba_tag_picker 风格重写：
+  - 模块级数据缓存（不再每次路由都实例化节点重读 JSON）
+  - 字符串控件放在 required（由前端 JS 隐藏），杜绝 hidden 段吞参数的坑
+  - execute 与前端统一状态结构（{selected:[...]}, {tags:[...]}）严格对齐
+数据源：本地 anima_prompts.json，结构为 {分类: [{en_tags, cn_description, raw_en}, ...]}
 """
 
-import json
 import os
+import json
 import random
-import time
-from typing import Dict, List, Any, Optional, Tuple
+import threading
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
-# 导入ComfyUI基础库
+# 仅在 ComfyUI 环境下导入（缺失时降级，便于纯语法检查）
 try:
-    import aiohttp
     from aiohttp import web
-    import server
+    from server import PromptServer
 except Exception:  # pragma: no cover
-    aiohttp = None
     web = None
-    server = None
+    PromptServer = None
 
-try:
-    import folder_paths
-except Exception:  # pragma: no cover
-    folder_paths = None
+DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "anima_prompts.json")
+
+# ----------------------------- 模块级数据缓存 -----------------------------
+_DATA = None
+_DATA_LOCK = threading.Lock()
 
 
+def _load_data(force=False):
+    """加载并缓存标签数据；线程安全，多路由/多节点实例共享。"""
+    global _DATA
+    if _DATA is not None and not force:
+        return _DATA
+    with _DATA_LOCK:
+        if _DATA is not None and not force:
+            return _DATA
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                data = {}
+            total = sum(len(v) for v in data.values() if isinstance(v, list))
+            print(f"[anima_prompt_node] 已加载标签数据：{len(data)} 个分类 / {total} 条")
+        except Exception as e:
+            print(f"[anima_prompt_node] 加载数据失败: {e}")
+            data = {}
+        _DATA = data
+        return _DATA
+
+
+def _get_categories():
+    return [c for c in _load_data().keys() if c not in _EXCLUDED_CATEGORIES]
+
+
+def _get_tags(category, query="", page=1, page_size=20):
+    data = _load_data()
+    tags = data.get(category) or []
+    if not isinstance(tags, list):
+        tags = []
+    if query:
+        q = query.lower()
+        tags = [
+            t for t in tags
+            if q in str(t.get("raw_en", "")).lower()
+            or q in str(t.get("cn_description", "")).lower()
+        ]
+    total = len(tags)
+    page = max(1, int(page))
+    page_size = max(1, int(page_size))
+    start = (page - 1) * page_size
+    items = tags[start:start + page_size]
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size if total else 1,
+    }
+
+
+def _gacha(category, count=1):
+    data = _load_data()
+    tags = data.get(category) or []
+    if not isinstance(tags, list) or not tags:
+        return []
+    count = max(1, int(count))
+    return random.sample(tags, min(count, len(tags)))
+
+
+_EXCLUDED_CATEGORIES = {"全库标签"}
+
+
+def _gacha_random(count=1):
+    """跨全部分类完全随机抽取，返回带 category 的条目。排除全库标签等聚合分类。"""
+    data = _load_data()
+    pool = []
+    for cat, tags in data.items():
+        if cat in _EXCLUDED_CATEGORIES:
+            continue
+        if isinstance(tags, list):
+            for t in tags:
+                if isinstance(t, dict) and t.get("raw_en"):
+                    item = dict(t)
+                    item["category"] = cat
+                    pool.append(item)
+    if not pool:
+        return []
+    count = max(1, int(count))
+    return random.sample(pool, min(count, len(pool)))
+
+
+def _gacha_multi(categories=None, count=1, category_counts=None):
+    """对给定分类列表，每个分类各自随机抽取 count 个（补 category 字段后合并）。
+    如果提供 category_counts 字典（{category: count}），则按每个分类的指定数量抽取，忽略 categories 和 count 参数。
+    排除全库标签等聚合分类。
+    """
+    data = _load_data()
+    if category_counts is not None:
+        # category_counts: {category: count}
+        out = []
+        for cat, cnt in category_counts.items():
+            if cat in _EXCLUDED_CATEGORIES:
+                continue
+            cnt = max(0, int(cnt))
+            if cnt <= 0:
+                continue
+            tags = data.get(cat) or []
+            if not isinstance(tags, list) or not tags:
+                continue
+            for t in random.sample(tags, min(cnt, len(tags))):
+                item = dict(t)
+                item["category"] = cat
+                out.append(item)
+        return out
+    # 向后兼容：使用 categories 和 count
+    if categories is None:
+        categories = []
+    count = max(1, int(count))
+    out = []
+    for cat in categories:
+        if cat in _EXCLUDED_CATEGORIES:
+            continue
+        tags = data.get(cat) or []
+        if not isinstance(tags, list) or not tags:
+            continue
+        for t in random.sample(tags, min(count, len(tags))):
+            item = dict(t)
+            item["category"] = cat
+            out.append(item)
+    return out
+
+
+def _gacha_across(count=1):
+    """跨不同分类随机抽取：先洗牌分类，随机取 count 个**不同**分类，每类各取 1 个标签。
+    用于『随机抽取』场景，保证每个分类最多 1 个，输出总数恰为 count（不重复）。
+    排除全库标签等聚合分类。"""
+    data = _load_data()
+    count = max(1, int(count))
+    cats = [c for c, v in data.items() if isinstance(v, list) and v and c not in _EXCLUDED_CATEGORIES]
+    if not cats:
+        return []
+    random.shuffle(cats)
+    cats = cats[: min(count, len(cats))]
+    out = []
+    for cat in cats:
+        tags = data.get(cat) or []
+        if not isinstance(tags, list) or not tags:
+            continue
+        item = dict(random.sample(tags, 1)[0])
+        item["category"] = cat
+        out.append(item)
+    return out
+
+
+# ----------------------------- 统一状态解析 -----------------------------
+def _parse_items(raw, key):
+    """解析前端序列化的 JSON，返回条目列表。
+    兼容：
+      - 新结构 {key: [{tag/raw_en, category, cn}]}
+      - 旧结构 {分类: [{tag, category}]}（按分类分组）
+    """
+    try:
+        obj = json.loads(raw) if isinstance(raw, str) else raw
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(obj, dict):
+        return []
+    if isinstance(obj.get(key), list):
+        return [it for it in obj[key] if isinstance(it, dict)]
+    # 兜底：旧的按分类分组结构
+    out = []
+    for cat, arr in obj.items():
+        if isinstance(arr, list):
+            for it in arr:
+                if isinstance(it, dict):
+                    item = dict(it)
+                    item.setdefault("category", cat)
+                    out.append(item)
+    return out
+
+
+def _item_text(it):
+    """取条目的输出文本：优先 raw_en，其次 tag。"""
+    if not isinstance(it, dict):
+        return str(it) if it else ""
+    return str(it.get("raw_en") or it.get("tag") or "").strip()
+
+
+# ----------------------------- 节点 -----------------------------
 class AnimaPromptNode:
-    """Anima提示词节点"""
-    
-    # 节点属性
     CATEGORY = "naiba-node"
     FUNCTION = "execute"
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("prompt",)
     OUTPUT_NODE = True
-    
-    # 数据文件路径
-    DATA_FILE = os.path.join(os.path.dirname(__file__), "anima_prompts.json")
-    
+    SEARCH_ALIASES = ["naiba", "anima prompt", "prompt node", "anima"]
+
     @classmethod
     def INPUT_TYPES(cls):
-        """定义输入类型"""
         return {
-            "required": {},
-            "hidden": {
-                "unique_id": "UNIQUE_ID",
-                "selection_data": ("STRING", {"default": "{}"}),
-                "gacha_data": ("STRING", {"default": "{}"}),
+            "required": {
+                # 由前端弹窗写入、JS 隐藏。放 required 而非 hidden，
+                # 否则 ComfyUI 的 hidden 只注入特殊类型（PROMPT/UNIQUE_ID 等），
+                # 普通 STRING 不会传进 execute，导致输出永远为空。
+                "selection_data": ("STRING", {"multiline": True, "default": "{}"}),
+                "gacha_data": ("STRING", {"multiline": True, "default": "{}"}),
+                "ui_state": ("STRING", {"multiline": True, "default": "{}"}),
+                "separator": ("STRING", {"default": ", ", "multiline": False}),
             },
         }
-    
-    def __init__(self):
-        """初始化节点"""
-        self._data = None
-        self._load_data()
-    
-    def _load_data(self):
-        """加载标签数据"""
-        try:
-            if os.path.exists(self.DATA_FILE):
-                with open(self.DATA_FILE, 'r', encoding='utf-8') as f:
-                    self._data = json.load(f)
-                print(f"[AnimaPromptNode] 已加载标签数据：{sum(len(tags) for tags in self._data.values())} 个标签")
-            else:
-                print(f"[AnimaPromptNode] 警告：找不到数据文件 {self.DATA_FILE}")
-                self._data = {}
-        except Exception as e:
-            print(f"[AnimaPromptNode] 加载数据失败: {e}")
-            self._data = {}
-    
-    def _get_categories(self) -> List[str]:
-        """获取所有分类"""
-        if not self._data:
-            return []
-        return list(self._data.keys())
-    
-    def _get_tags_by_category(self, category: str, query: str = "", page: int = 1, page_size: int = 20) -> Dict[str, Any]:
-        """获取指定分类的标签"""
-        if not self._data or category not in self._data:
-            return {"items": [], "total": 0, "page": page, "page_size": page_size}
-        
-        tags = self._data[category]
-        
-        # 搜索过滤
-        if query:
-            query_lower = query.lower()
-            filtered_tags = []
-            for tag in tags:
-                # 搜索英文标签和中文说明
-                if (query_lower in tag.get("raw_en", "").lower() or 
-                    query_lower in tag.get("cn_description", "").lower()):
-                    filtered_tags.append(tag)
-            tags = filtered_tags
-        
-        # 分页
-        total = len(tags)
-        start_idx = (page - 1) * page_size
-        end_idx = start_idx + page_size
-        page_tags = tags[start_idx:end_idx]
-        
-        return {
-            "items": page_tags,
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-            "total_pages": (total + page_size - 1) // page_size
-        }
-    
-    def _gacha(self, category: str, count: int = 1) -> List[Dict[str, Any]]:
-        """扭蛋：随机获取标签"""
-        if not self._data or category not in self._data:
-            return []
-        
-        tags = self._data[category]
-        if not tags:
-            return []
-        
-        # 随机选择标签
-        selected = random.sample(tags, min(count, len(tags)))
-        return selected
-    
-    def _format_tag(self, tag: Dict[str, Any]) -> str:
-        """格式化标签为提示词字符串"""
-        # 使用原始英文标签
-        return tag.get("raw_en", "")
-    
-    # 路由函数
-    def get_categories(self, _id: str, **kwargs) -> Dict[str, Any]:
-        """获取分类列表"""
-        categories = self._get_categories()
-        return {"categories": categories}
-    
-    def get_tags(self, _id: str, category: str, query: str = "", page: int = 1, **kwargs) -> Dict[str, Any]:
-        """获取标签列表"""
-        return self._get_tags_by_category(category, query, page)
-    
-    def gacha(self, _id: str, category: str, count: int = 1, **kwargs) -> Dict[str, Any]:
-        """扭蛋：随机获取标签"""
-        tags = self._gacha(category, count)
-        return {"tags": tags}
-    
-    # 主执行函数
-    def execute(self, selection_data, gacha_data, unique_id) -> Tuple[str]:
-        """主执行函数：生成提示词"""
-        # 直接使用输入参数
-        # selection_data 和 gacha_data 由前端通过widget传递
-        
-        # 解析选择数据
-        selected_tags = []
-        try:
-            data = json.loads(selection_data)
-            if "selected" in data:
-                selected_tags = data["selected"]
-        except:
-            pass
-        
-        # 解析扭蛋数据
-        gacha_tags = []
-        try:
-            data = json.loads(gacha_data)
-            if "tags" in data:
-                gacha_tags = data["tags"]
-        except:
-            pass
-        
-        # 合并标签
-        all_tags = []
-        
-        # 添加选择的标签
-        for tag_item in selected_tags:
-            if isinstance(tag_item, dict):
-                tag_str = self._format_tag(tag_item)
-                if tag_str:
-                    all_tags.append(tag_str)
-            elif isinstance(tag_item, str):
-                all_tags.append(tag_item)
-        
-        # 添加扭蛋标签
-        for tag_item in gacha_tags:
-            if isinstance(tag_item, dict):
-                tag_str = self._format_tag(tag_item)
-                if tag_str:
-                    all_tags.append(tag_str)
-            elif isinstance(tag_item, str):
-                all_tags.append(tag_item)
-        
-        # 去重
-        unique_tags = list(dict.fromkeys(all_tags))
-        
-        # 生成提示词
-        prompt_text = ", ".join(unique_tags)
-        
-        return (prompt_text,)
+
+    def execute(self, selection_data="{}", gacha_data="{}", ui_state="{}", separator=", "):
+        selected = _parse_items(selection_data, "selected")
+        gacha = _parse_items(gacha_data, "tags")
+
+        texts = []
+        for it in selected:
+            t = _item_text(it)
+            if t:
+                texts.append(t)
+        for it in gacha:
+            t = _item_text(it)
+            if t:
+                texts.append(t)
+
+        # 去重（保序）
+        seen = set()
+        unique = []
+        for t in texts:
+            if t not in seen:
+                seen.add(t)
+                unique.append(t)
+
+        sep = separator if isinstance(separator, str) else ", "
+        return (sep.join(unique),)
 
 
-# 路由注册
+# ----------------------------- 线程池 -----------------------------
+_EXECUTOR = None
+_EXECUTOR_LOCK = threading.Lock()
+
+
+def _get_executor():
+    global _EXECUTOR
+    if _EXECUTOR is None:
+        with _EXECUTOR_LOCK:
+            if _EXECUTOR is None:
+                _EXECUTOR = ThreadPoolExecutor(max_workers=2)
+    return _EXECUTOR
+
+
+async def _run_in_exec(fn, *args):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_get_executor(), fn, *args)
+
+
+# ----------------------------- 路由注册 -----------------------------
 def register_routes():
-    """注册API路由"""
-    if server is None or web is None:
+    if PromptServer is None or web is None:
         return
-    
-    PromptServer = server.PromptServer.instance
-    routes = PromptServer.routes
-    
+    routes = PromptServer.instance.routes
+
     @routes.get("/anima/prompt/categories")
-    async def get_categories(request):
-        """获取分类列表"""
-        try:
-            node = AnimaPromptNode()
-            result = node.get_categories("0")
-            return web.json_response(result)
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-    
+    async def anima_categories(request):
+        cats = await _run_in_exec(_get_categories)
+        return web.json_response({"categories": cats})
+
     @routes.get("/anima/prompt/tags")
-    async def get_tags(request):
-        """获取标签列表"""
+    async def anima_tags(request):
+        category = request.query.get("category", "")
+        query = request.query.get("query", "")
         try:
-            category = request.query.get("category", "")
-            query = request.query.get("query", "")
             page = int(request.query.get("page", "1"))
-            
-            node = AnimaPromptNode()
-            result = node.get_tags("0", category, query, page)
-            return web.json_response(result)
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-    
-    @routes.get("/anima/prompt/gacha")
-    async def gacha(request):
-        """扭蛋：随机获取标签"""
+        except Exception:
+            page = 1
         try:
-            category = request.query.get("category", "")
+            page_size = int(request.query.get("page_size", "20"))
+        except Exception:
+            page_size = 20
+        res = await _run_in_exec(_get_tags, category, query, page, page_size)
+        return web.json_response(res)
+
+    @routes.get("/anima/prompt/gacha")
+    async def anima_gacha(request):
+        # 优先检查 category_counts 参数（JSON 字符串）
+        category_counts_str = request.query.get("category_counts", "")
+        if category_counts_str:
+            try:
+                category_counts = json.loads(category_counts_str)
+                if not isinstance(category_counts, dict):
+                    category_counts = None
+            except Exception:
+                category_counts = None
+            if category_counts is not None:
+                tags = await _run_in_exec(_gacha_multi, None, 1, category_counts)
+                return web.json_response({"tags": tags})
+        # 向后兼容旧参数
+        categories = request.query.get("categories", "")
+        category = request.query.get("category", "")
+        try:
             count = int(request.query.get("count", "1"))
-            
-            node = AnimaPromptNode()
-            result = node.gacha("0", category, count)
-            return web.json_response(result)
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
+        except Exception:
+            count = 1
+        if categories:
+            cats = [c.strip() for c in categories.split(",") if c.strip()]
+            tags = await _run_in_exec(_gacha_multi, cats, count)
+        elif category:
+            tags = await _run_in_exec(_gacha, category, count)
+            # 补上 category 字段，供前端结果区显示
+            tags = [dict(t, category=category) for t in tags]
+        else:
+            tags = await _run_in_exec(_gacha_random, count)
+        return web.json_response({"tags": tags})
+
+    @routes.get("/anima/prompt/gacha_across")
+    async def anima_gacha_across(request):
+        try:
+            count = int(request.query.get("count", "1"))
+        except Exception:
+            count = 1
+        tags = await _run_in_exec(_gacha_across, count)
+        return web.json_response({"tags": tags})
+
+    @routes.get("/anima/prompt/reload")
+    async def anima_reload(request):
+        await _run_in_exec(_load_data, True)
+        return web.json_response({"ok": True, "categories": _get_categories()})
 
 
-# 初始化路由
 try:
     register_routes()
 except Exception as e:
     print(f"[anima_prompt_node] register_routes error: {e}")
 
 
-# 节点映射
+# ----------------------------- 注册 -----------------------------
 NODE_CLASS_MAPPINGS = {
-    "AnimaPromptNode": AnimaPromptNode
+    "AnimaPromptNode": AnimaPromptNode,
 }
-
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "AnimaPromptNode": "Anima Prompt Node"
+    "AnimaPromptNode": "Anima Prompt Node ⚓",
 }

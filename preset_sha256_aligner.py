@@ -195,7 +195,7 @@ class CivitaiSha256InfoReader:
     # 空值默认值
     EMPTY_IMAGE = None  # 延迟创建
     EMPTY_MODEL_INFO = "无数据"
-    EMPTY_TRIGGER = "无触发词"
+    EMPTY_TRIGGER = ""
     EMPTY_RATING = "无评分数据"
     EMPTY_TAGS = "无标签"
     EMPTY_URL = ""

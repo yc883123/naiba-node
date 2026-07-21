@@ -159,7 +159,7 @@ class CivitaiInfoReader:
     # 无数据时的默认值
     EMPTY_IMAGE = None  # 延迟创建
     EMPTY_MODEL_INFO = "无元数据"
-    EMPTY_TRIGGER = "无触发词"
+    EMPTY_TRIGGER = ""
     EMPTY_RATING = "无评分数据"
     EMPTY_TAGS = "无标签"
     EMPTY_URL = ""
@@ -319,9 +319,9 @@ class CivitaiInfoReader:
         else:
             trigger_str = str(trigger_words)
         
-        # 如果触发词为空，显示提示信息
+        # 如果触发词为空，返回空字符串
         if not trigger_str or trigger_str.strip() == "":
-            trigger_str = "无触发词"
+            trigger_str = ""
         
         # 评分信息
         rating = metadata.get("rating", 0)
@@ -569,7 +569,7 @@ class CivitaiInfoReader:
         model_info = "\n\n".join(all_model_info) if all_model_info else self.EMPTY_MODEL_INFO
         
         unique_triggers = list(dict.fromkeys(all_trigger_words))
-        trigger_str = ", ".join(unique_triggers) if unique_triggers else "无触发词"
+        trigger_str = ", ".join(unique_triggers) if unique_triggers else ""
         
         rating_info = "\n".join(all_rating_info) if all_rating_info else self.EMPTY_RATING
         

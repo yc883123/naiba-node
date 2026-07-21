@@ -2,37 +2,66 @@
   "全库标签": [
     {
       "en_tags": [
-        "1girl",
+        "1girl"
+      ],
+      "cn_description": "一女",
+      "raw_en": "1girl"
+    },
+    {
+      "en_tags": [
         "solo"
       ],
-      "cn_description": "一女, 单人",
-      "raw_en": "1girl, solo"
+      "cn_description": "单人",
+      "raw_en": "solo"
     },
     {
       "en_tags": [
-        "1girl",
-        "1boy",
+        "1boy"
+      ],
+      "cn_description": "一男",
+      "raw_en": "1boy"
+    },
+    {
+      "en_tags": [
         "hetero"
       ],
-      "cn_description": "一男一女, 异性",
-      "raw_en": "1girl, 1boy, hetero"
+      "cn_description": "异性",
+      "raw_en": "hetero"
     },
     {
       "en_tags": [
-        "2girls",
+        "2girls"
+      ],
+      "cn_description": "两女",
+      "raw_en": "2girls"
+    },
+    {
+      "en_tags": [
         "yuri"
       ],
-      "cn_description": "两女, 百合",
-      "raw_en": "2girls, yuri"
+      "cn_description": "百合",
+      "raw_en": "yuri"
     },
     {
       "en_tags": [
-        "otoko no ko",
-        "femboy",
+        "otoko no ko"
+      ],
+      "cn_description": "男娘",
+      "raw_en": "otoko no ko"
+    },
+    {
+      "en_tags": [
+        "femboy"
+      ],
+      "cn_description": "伪娘",
+      "raw_en": "femboy"
+    },
+    {
+      "en_tags": [
         "trap"
       ],
-      "cn_description": "男娘/伪娘",
-      "raw_en": "otoko no ko, femboy, trap"
+      "cn_description": "伪娘",
+      "raw_en": "trap"
     },
     {
       "en_tags": [
@@ -43,19 +72,31 @@
     },
     {
       "en_tags": [
-        "height difference",
-        "size difference"
+        "height difference"
       ],
-      "cn_description": "身高差/体型差",
-      "raw_en": "height difference, size difference"
+      "cn_description": "身高差",
+      "raw_en": "height difference"
     },
     {
       "en_tags": [
-        "slim",
+        "size difference"
+      ],
+      "cn_description": "体型差",
+      "raw_en": "size difference"
+    },
+    {
+      "en_tags": [
+        "slim"
+      ],
+      "cn_description": "苗条",
+      "raw_en": "slim"
+    },
+    {
+      "en_tags": [
         "slender"
       ],
-      "cn_description": "苗条/纤细",
-      "raw_en": "slim, slender"
+      "cn_description": "纤细",
+      "raw_en": "slender"
     },
     {
       "en_tags": [
@@ -66,11 +107,17 @@
     },
     {
       "en_tags": [
-        "curvy",
+        "curvy"
+      ],
+      "cn_description": "丰满有致",
+      "raw_en": "curvy"
+    },
+    {
+      "en_tags": [
         "voluptuous figure"
       ],
-      "cn_description": "丰满有致/凹凸有致",
-      "raw_en": "curvy, voluptuous figure"
+      "cn_description": "凹凸有致",
+      "raw_en": "voluptuous figure"
     },
     {
       "en_tags": [
@@ -81,11 +128,17 @@
     },
     {
       "en_tags": [
-        "flat breasts",
+        "flat breasts"
+      ],
+      "cn_description": "贫乳/平胸",
+      "raw_en": "flat breasts"
+    },
+    {
+      "en_tags": [
         "loli"
       ],
-      "cn_description": "贫乳/平胸/萝莉",
-      "raw_en": "flat breasts, loli"
+      "cn_description": "萝莉",
+      "raw_en": "loli"
     },
     {
       "en_tags": [
@@ -103,53 +156,101 @@
     },
     {
       "en_tags": [
-        "barefoot",
-        "soles",
+        "barefoot"
+      ],
+      "cn_description": "光脚",
+      "raw_en": "barefoot"
+    },
+    {
+      "en_tags": [
+        "soles"
+      ],
+      "cn_description": "脚底",
+      "raw_en": "soles"
+    },
+    {
+      "en_tags": [
         "toes"
       ],
-      "cn_description": "光脚/脚底/脚趾",
-      "raw_en": "barefoot, soles, toes"
+      "cn_description": "脚趾",
+      "raw_en": "toes"
     },
     {
       "en_tags": [
-        "cleavage",
-        "sideboob",
+        "cleavage"
+      ],
+      "cn_description": "乳沟",
+      "raw_en": "cleavage"
+    },
+    {
+      "en_tags": [
+        "sideboob"
+      ],
+      "cn_description": "侧乳",
+      "raw_en": "sideboob"
+    },
+    {
+      "en_tags": [
         "underboob"
       ],
-      "cn_description": "乳沟/侧乳/下乳",
-      "raw_en": "cleavage, sideboob, underboob"
+      "cn_description": "下乳",
+      "raw_en": "underboob"
     },
     {
       "en_tags": [
-        "inner thigh",
+        "inner thigh"
+      ],
+      "cn_description": "大腿内侧",
+      "raw_en": "inner thigh"
+    },
+    {
+      "en_tags": [
         "thigh gap"
       ],
-      "cn_description": "大腿内侧/大腿缝",
-      "raw_en": "inner thigh, thigh gap"
+      "cn_description": "大腿缝",
+      "raw_en": "thigh gap"
     },
     {
       "en_tags": [
-        "pussy",
+        "pussy"
+      ],
+      "cn_description": "小穴",
+      "raw_en": "pussy"
+    },
+    {
+      "en_tags": [
         "puffy pussy"
       ],
-      "cn_description": "小穴/肉缝",
-      "raw_en": "pussy, puffy pussy"
+      "cn_description": "肉缝",
+      "raw_en": "puffy pussy"
     },
     {
       "en_tags": [
-        "cleft of venus",
+        "cleft of venus"
+      ],
+      "cn_description": "维纳斯裂缝",
+      "raw_en": "cleft of venus"
+    },
+    {
+      "en_tags": [
         "clitoris"
       ],
-      "cn_description": "维纳斯裂缝/阴蒂",
-      "raw_en": "cleft of venus, clitoris"
+      "cn_description": "阴蒂",
+      "raw_en": "clitoris"
     },
     {
       "en_tags": [
-        "long hair",
+        "long hair"
+      ],
+      "cn_description": "长发",
+      "raw_en": "long hair"
+    },
+    {
+      "en_tags": [
         "short hair"
       ],
-      "cn_description": "长发/短发",
-      "raw_en": "long hair, short hair"
+      "cn_description": "短发",
+      "raw_en": "short hair"
     },
     {
       "en_tags": [
@@ -160,27 +261,45 @@
     },
     {
       "en_tags": [
-        "black hair",
+        "black hair"
+      ],
+      "cn_description": "黑发",
+      "raw_en": "black hair"
+    },
+    {
+      "en_tags": [
         "blonde hair"
       ],
-      "cn_description": "黑发/金发",
-      "raw_en": "black hair, blonde hair"
+      "cn_description": "金发",
+      "raw_en": "blonde hair"
     },
     {
       "en_tags": [
-        "twin tails",
+        "twin tails"
+      ],
+      "cn_description": "双马尾",
+      "raw_en": "twin tails"
+    },
+    {
+      "en_tags": [
         "ponytail"
       ],
-      "cn_description": "双马尾/单马尾",
-      "raw_en": "twin tails, ponytail"
+      "cn_description": "单马尾",
+      "raw_en": "ponytail"
     },
     {
       "en_tags": [
-        "messy hair",
+        "messy hair"
+      ],
+      "cn_description": "散乱的发丝",
+      "raw_en": "messy hair"
+    },
+    {
+      "en_tags": [
         "disheveled hair"
       ],
-      "cn_description": "散乱的发丝/凌乱发型",
-      "raw_en": "messy hair, disheveled hair"
+      "cn_description": "凌乱发型",
+      "raw_en": "disheveled hair"
     },
     {
       "en_tags": [
@@ -191,21 +310,45 @@
     },
     {
       "en_tags": [
-        "blue eyes",
-        "red eyes",
-        "golden eyes"
+        "blue eyes"
       ],
-      "cn_description": "蓝瞳/红瞳/金瞳",
-      "raw_en": "blue eyes, red eyes, golden eyes"
+      "cn_description": "蓝瞳",
+      "raw_en": "blue eyes"
     },
     {
       "en_tags": [
-        "spiral eyes",
-        "@\\_@",
+        "red eyes"
+      ],
+      "cn_description": "红瞳",
+      "raw_en": "red eyes"
+    },
+    {
+      "en_tags": [
+        "golden eyes"
+      ],
+      "cn_description": "金瞳",
+      "raw_en": "golden eyes"
+    },
+    {
+      "en_tags": [
+        "spiral eyes"
+      ],
+      "cn_description": "螺旋眼",
+      "raw_en": "spiral eyes"
+    },
+    {
+      "en_tags": [
+        "@\\_@"
+      ],
+      "cn_description": "晕厥眼",
+      "raw_en": "@\\_@"
+    },
+    {
+      "en_tags": [
         "empty eyes"
       ],
-      "cn_description": "螺旋眼/晕厥眼/失神空洞眼",
-      "raw_en": "spiral eyes, @\\_@, empty eyes"
+      "cn_description": "失神空洞眼",
+      "raw_en": "empty eyes"
     },
     {
       "en_tags": [
@@ -223,103 +366,199 @@
     },
     {
       "en_tags": [
-        "lace bra",
-        "panties",
+        "lace bra"
+      ],
+      "cn_description": "蕾丝文胸",
+      "raw_en": "lace bra"
+    },
+    {
+      "en_tags": [
+        "panties"
+      ],
+      "cn_description": "内裤",
+      "raw_en": "panties"
+    },
+    {
+      "en_tags": [
         "thong"
       ],
-      "cn_description": "蕾丝文胸/内裤/丁字裤",
-      "raw_en": "lace bra, panties, thong"
+      "cn_description": "丁字裤",
+      "raw_en": "thong"
     },
     {
       "en_tags": [
-        "lace lingerie",
-        "corset",
+        "lace lingerie"
+      ],
+      "cn_description": "蕾丝情趣内衣",
+      "raw_en": "lace lingerie"
+    },
+    {
+      "en_tags": [
+        "corset"
+      ],
+      "cn_description": "束腰",
+      "raw_en": "corset"
+    },
+    {
+      "en_tags": [
         "garter belt"
       ],
-      "cn_description": "蕾丝情趣内衣/束腰/吊带袜",
-      "raw_en": "lace lingerie, corset, garter belt"
+      "cn_description": "吊带袜",
+      "raw_en": "garter belt"
     },
     {
       "en_tags": [
-        "school uniform",
+        "school uniform"
+      ],
+      "cn_description": "校服",
+      "raw_en": "school uniform"
+    },
+    {
+      "en_tags": [
         "sailor uniform"
       ],
-      "cn_description": "校服/水手服",
-      "raw_en": "school uniform, sailor uniform"
+      "cn_description": "水手服",
+      "raw_en": "sailor uniform"
     },
     {
       "en_tags": [
-        "office lady",
+        "office lady"
+      ],
+      "cn_description": "OL装",
+      "raw_en": "office lady"
+    },
+    {
+      "en_tags": [
         "pencil skirt"
       ],
-      "cn_description": "OL装/一步裙",
-      "raw_en": "office lady, pencil skirt"
+      "cn_description": "一步裙",
+      "raw_en": "pencil skirt"
     },
     {
       "en_tags": [
-        "french maid",
+        "french maid"
+      ],
+      "cn_description": "法式女仆装",
+      "raw_en": "french maid"
+    },
+    {
+      "en_tags": [
         "maid headdress"
       ],
-      "cn_description": "法式女仆装/女仆发带",
-      "raw_en": "french maid, maid headdress"
+      "cn_description": "女仆发带",
+      "raw_en": "maid headdress"
     },
     {
       "en_tags": [
-        "bunny girl",
+        "bunny girl"
+      ],
+      "cn_description": "兔女郎装",
+      "raw_en": "bunny girl"
+    },
+    {
+      "en_tags": [
         "bunny ears"
       ],
-      "cn_description": "兔女郎装/兔耳",
-      "raw_en": "bunny girl, bunny ears"
+      "cn_description": "兔耳",
+      "raw_en": "bunny ears"
     },
     {
       "en_tags": [
-        "latex bodysuit",
-        "shiny",
+        "latex bodysuit"
+      ],
+      "cn_description": "高光紧身胶衣",
+      "raw_en": "latex bodysuit"
+    },
+    {
+      "en_tags": [
+        "shiny"
+      ],
+      "cn_description": "高光质感",
+      "raw_en": "shiny"
+    },
+    {
+      "en_tags": [
         "second skin"
       ],
-      "cn_description": "高光紧身胶衣/第二皮肤",
-      "raw_en": "latex bodysuit, shiny, second skin"
+      "cn_description": "第二皮肤",
+      "raw_en": "second skin"
     },
     {
       "en_tags": [
-        "kimono",
-        "miko outfit",
+        "kimono"
+      ],
+      "cn_description": "和服",
+      "raw_en": "kimono"
+    },
+    {
+      "en_tags": [
+        "miko outfit"
+      ],
+      "cn_description": "巫女服",
+      "raw_en": "miko outfit"
+    },
+    {
+      "en_tags": [
         "cheongsam"
       ],
-      "cn_description": "和服/巫女服/旗袍",
-      "raw_en": "kimono, miko outfit, cheongsam"
+      "cn_description": "旗袍",
+      "raw_en": "cheongsam"
     },
     {
       "en_tags": [
-        "black pantyhose",
+        "black pantyhose"
+      ],
+      "cn_description": "黑色连裤袜",
+      "raw_en": "black pantyhose"
+    },
+    {
+      "en_tags": [
         "black thighhighs"
       ],
-      "cn_description": "黑色连裤袜/黑过膝袜",
-      "raw_en": "black pantyhose, black thighhighs"
+      "cn_description": "黑过膝袜",
+      "raw_en": "black thighhighs"
     },
     {
       "en_tags": [
-        "high heels",
+        "high heels"
+      ],
+      "cn_description": "高跟鞋",
+      "raw_en": "high heels"
+    },
+    {
+      "en_tags": [
         "stiletto heels"
       ],
-      "cn_description": "高跟鞋/细高跟鞋",
-      "raw_en": "high heels, stiletto heels"
+      "cn_description": "细高跟鞋",
+      "raw_en": "stiletto heels"
     },
     {
       "en_tags": [
-        "off shoulder",
+        "off shoulder"
+      ],
+      "cn_description": "露肩",
+      "raw_en": "off shoulder"
+    },
+    {
+      "en_tags": [
         "strap slip"
       ],
-      "cn_description": "露肩/肩带滑落 (挑逗)",
-      "raw_en": "off shoulder, strap slip"
+      "cn_description": "肩带滑落",
+      "raw_en": "strap slip"
     },
     {
       "en_tags": [
-        "shirt lift",
+        "shirt lift"
+      ],
+      "cn_description": "撩起衬衫",
+      "raw_en": "shirt lift"
+    },
+    {
+      "en_tags": [
         "skirt lift"
       ],
-      "cn_description": "撩起衬衫/撩起裙子 (自己)",
-      "raw_en": "shirt lift, skirt lift"
+      "cn_description": "撩起裙子",
+      "raw_en": "skirt lift"
     },
     {
       "en_tags": [
@@ -337,11 +576,17 @@
     },
     {
       "en_tags": [
-        "torn clothes",
+        "torn clothes"
+      ],
+      "cn_description": "破损衣服",
+      "raw_en": "torn clothes"
+    },
+    {
+      "en_tags": [
         "ripped stockings"
       ],
-      "cn_description": "破损衣服/撕裂的丝袜",
-      "raw_en": "torn clothes, ripped stockings"
+      "cn_description": "撕裂的丝袜",
+      "raw_en": "ripped stockings"
     },
     {
       "en_tags": [
@@ -359,182 +604,325 @@
     },
     {
       "en_tags": [
-        "leaning forward",
+        "leaning forward"
+      ],
+      "cn_description": "身体前倾",
+      "raw_en": "leaning forward"
+    },
+    {
+      "en_tags": [
         "body leaning forward"
       ],
-      "cn_description": "身体前倾 (增强视觉张力)",
-      "raw_en": "leaning forward, body leaning forward"
+      "cn_description": "身体前倾",
+      "raw_en": "body leaning forward"
     },
     {
       "en_tags": [
-        "bent over",
+        "bent over"
+      ],
+      "cn_description": "弯腰撅屁股",
+      "raw_en": "bent over"
+    },
+    {
+      "en_tags": [
         "bending over"
       ],
-      "cn_description": "弯腰撅屁股 (性感姿态)",
-      "raw_en": "bent over, bending over"
+      "cn_description": "弯腰撅屁股",
+      "raw_en": "bending over"
     },
     {
       "en_tags": [
-        "presenting",
+        "presenting"
+      ],
+      "cn_description": "主动展示私处",
+      "raw_en": "presenting"
+    },
+    {
+      "en_tags": [
         "presenting crotch/ass"
       ],
-      "cn_description": "主动展示私处/臀部 (臣服)",
-      "raw_en": "presenting, presenting crotch/ass"
+      "cn_description": "臀部",
+      "raw_en": "presenting crotch/ass"
     },
     {
       "en_tags": [
-        "spread legs",
+        "spread legs"
+      ],
+      "cn_description": "开腿",
+      "raw_en": "spread legs"
+    },
+    {
+      "en_tags": [
         "m legs"
       ],
-      "cn_description": "开腿/M字开腿 (极度诱惑)",
-      "raw_en": "spread legs, m legs"
+      "cn_description": "M字开腿",
+      "raw_en": "m legs"
     },
     {
       "en_tags": [
-        "kneeling",
+        "kneeling"
+      ],
+      "cn_description": "下跪",
+      "raw_en": "kneeling"
+    },
+    {
+      "en_tags": [
         "on all fours"
       ],
-      "cn_description": "下跪/四肢爬行 (训服)",
-      "raw_en": "kneeling, on all fours"
+      "cn_description": "四肢爬行",
+      "raw_en": "on all fours"
     },
     {
       "en_tags": [
-        "fingering",
+        "fingering"
+      ],
+      "cn_description": "手指抠穴",
+      "raw_en": "fingering"
+    },
+    {
+      "en_tags": [
         "masturbation"
       ],
-      "cn_description": "手指抠穴/自慰",
-      "raw_en": "fingering, masturbation"
+      "cn_description": "自慰",
+      "raw_en": "masturbation"
     },
     {
       "en_tags": [
-        "vibrator",
+        "vibrator"
+      ],
+      "cn_description": "震动棒",
+      "raw_en": "vibrator"
+    },
+    {
+      "en_tags": [
         "transparent dildo"
       ],
-      "cn_description": "震动棒/透明假阳具 (玩具)",
-      "raw_en": "vibrator, transparent dildo"
+      "cn_description": "透明假阳具",
+      "raw_en": "transparent dildo"
     },
     {
       "en_tags": [
-        "talking on phone",
+        "talking on phone"
+      ],
+      "cn_description": "一边打电话一边交配",
+      "raw_en": "talking on phone"
+    },
+    {
+      "en_tags": [
         "sex"
       ],
-      "cn_description": "一边打电话一边交配 (NTR/暴露)",
-      "raw_en": "talking on phone, sex"
+      "cn_description": "一边打电话一边交配",
+      "raw_en": "sex"
     },
     {
       "en_tags": [
-        "blowjob",
-        "deepthroat",
+        "blowjob"
+      ],
+      "cn_description": "口交",
+      "raw_en": "blowjob"
+    },
+    {
+      "en_tags": [
+        "deepthroat"
+      ],
+      "cn_description": "深喉",
+      "raw_en": "deepthroat"
+    },
+    {
+      "en_tags": [
         "gagging"
       ],
-      "cn_description": "口交/深喉/窒息呕吐感",
-      "raw_en": "blowjob, deepthroat, gagging"
+      "cn_description": "窒息呕吐感",
+      "raw_en": "gagging"
     },
     {
       "en_tags": [
-        "footjob",
+        "footjob"
+      ],
+      "cn_description": "足交",
+      "raw_en": "footjob"
+    },
+    {
+      "en_tags": [
         "soles squeezing"
       ],
-      "cn_description": "足交/双足挤压几把",
-      "raw_en": "footjob, soles squeezing"
+      "cn_description": "双足挤压几把",
+      "raw_en": "soles squeezing"
     },
     {
       "en_tags": [
-        "paizuri",
+        "paizuri"
+      ],
+      "cn_description": "乳交",
+      "raw_en": "paizuri"
+    },
+    {
+      "en_tags": [
         "breasts squeeze together"
       ],
-      "cn_description": "乳交/大乳挤压摩擦",
-      "raw_en": "paizuri, breasts squeeze together"
+      "cn_description": "大乳挤压摩擦",
+      "raw_en": "breasts squeeze together"
     },
     {
       "en_tags": [
-        "chikan",
+        "chikan"
+      ],
+      "cn_description": "痴汉",
+      "raw_en": "chikan"
+    },
+    {
+      "en_tags": [
         "groping"
       ],
-      "cn_description": "can't move 痴汉/揉乳摸臀/电车无法动弹",
-      "raw_en": "chikan, groping,"
+      "cn_description": "揉乳摸臀",
+      "raw_en": "groping"
     },
     {
       "en_tags": [
-        "missionary",
+        "missionary"
+      ],
+      "cn_description": "传教士",
+      "raw_en": "missionary"
+    },
+    {
+      "en_tags": [
         "boy on top"
       ],
-      "cn_description": "传教士/男压女 (经典体位)",
-      "raw_en": "missionary, boy on top"
+      "cn_description": "男压女",
+      "raw_en": "boy on top"
     },
     {
       "en_tags": [
-        "standing sex",
+        "standing sex"
+      ],
+      "cn_description": "站立性爱",
+      "raw_en": "standing sex"
+    },
+    {
+      "en_tags": [
         "against wall"
       ],
-      "cn_description": "站立性爱/压墙后入",
-      "raw_en": "standing sex, against wall"
+      "cn_description": "压墙后入",
+      "raw_en": "against wall"
     },
     {
       "en_tags": [
-        "sitting on lap",
+        "sitting on lap"
+      ],
+      "cn_description": "坐位性爱",
+      "raw_en": "sitting on lap"
+    },
+    {
+      "en_tags": [
         "upright straddle"
       ],
-      "cn_description": "坐位性爱/跨坐在膝盖上",
-      "raw_en": "sitting on lap, upright straddle"
+      "cn_description": "跨坐在膝盖上",
+      "raw_en": "upright straddle"
     },
     {
       "en_tags": [
-        "sex from behind",
+        "sex from behind"
+      ],
+      "cn_description": "后入位",
+      "raw_en": "sex from behind"
+    },
+    {
+      "en_tags": [
         "doggystyle"
       ],
-      "cn_description": "后入位/狗刨式交配",
-      "raw_en": "sex from behind, doggystyle"
+      "cn_description": "狗刨式交配",
+      "raw_en": "doggystyle"
     },
     {
       "en_tags": [
-        "carrying",
+        "carrying"
+      ],
+      "cn_description": "火车便当",
+      "raw_en": "carrying"
+    },
+    {
+      "en_tags": [
         "suspended congress"
       ],
-      "cn_description": "火车便当/悬空抱起正面交配",
-      "raw_en": "carrying, suspended congress"
+      "cn_description": "悬空抱起正面交配",
+      "raw_en": "suspended congress"
     },
     {
       "en_tags": [
-        "mating press",
+        "mating press"
+      ],
+      "cn_description": "种付",
+      "raw_en": "mating press"
+    },
+    {
+      "en_tags": [
         "male fully covers female"
       ],
-      "cn_description": "种付/男方全身压住侵犯",
-      "raw_en": "mating press, male fully covers female"
+      "cn_description": "男方全身压住侵犯",
+      "raw_en": "male fully covers female"
     },
     {
       "en_tags": [
-        "cowgirl position",
+        "cowgirl position"
+      ],
+      "cn_description": "骑乘位",
+      "raw_en": "cowgirl position"
+    },
+    {
+      "en_tags": [
         "girl on top"
       ],
-      "cn_description": "骑乘位/女在上主导榨取",
-      "raw_en": "cowgirl position, girl on top"
+      "cn_description": "女在上主导榨取",
+      "raw_en": "girl on top"
     },
     {
       "en_tags": [
-        "sleeping",
-        "closed eyes",
+        "sleeping"
+      ],
+      "cn_description": "睡眠",
+      "raw_en": "sleeping"
+    },
+    {
+      "en_tags": [
+        "closed eyes"
+      ],
+      "cn_description": "闭眼",
+      "raw_en": "closed eyes"
+    },
+    {
+      "en_tags": [
         "zzz"
       ],
-      "cn_description": "睡眠/无意识 (睡奸体位)",
-      "raw_en": "sleeping, closed eyes, zzz"
+      "cn_description": "入睡符号",
+      "raw_en": "zzz"
     },
     {
       "en_tags": [
-        "hypnosis",
-        "spiral eyes",
+        "hypnosis"
+      ],
+      "cn_description": "催眠",
+      "raw_en": "hypnosis"
+    },
+    {
+      "en_tags": [
         "zombie pose"
       ],
-      "cn_description": "催眠/空眼/僵尸站姿 (催眠play)",
-      "raw_en": "hypnosis, spiral eyes, zombie pose"
+      "cn_description": "僵尸站姿",
+      "raw_en": "zombie pose"
     },
     {
       "en_tags": [
-        "facesitting",
+        "facesitting"
+      ],
+      "cn_description": "坐脸play",
+      "raw_en": "facesitting"
+    },
+    {
+      "en_tags": [
         "sitting on face"
       ],
-      "cn_description": "坐脸play (Femdom女帝)",
-      "raw_en": "facesitting, sitting on face"
+      "cn_description": "坐脸play",
+      "raw_en": "sitting on face"
     },
     {
       "en_tags": [
@@ -545,47 +933,101 @@
     },
     {
       "en_tags": [
-        "strangling",
-        "asphyxiation",
+        "strangling"
+      ],
+      "cn_description": "扼喉",
+      "raw_en": "strangling"
+    },
+    {
+      "en_tags": [
+        "asphyxiation"
+      ],
+      "cn_description": "窒息",
+      "raw_en": "asphyxiation"
+    },
+    {
+      "en_tags": [
         "rough sex"
       ],
-      "cn_description": "扼喉/窒息/粗暴猛烈性爱 (过激)",
-      "raw_en": "strangling, asphyxiation, rough sex"
+      "cn_description": "粗暴性爱",
+      "raw_en": "rough sex"
     },
     {
       "en_tags": [
-        "spitroast",
-        "2boys",
+        "spitroast"
+      ],
+      "cn_description": "前后夹击",
+      "raw_en": "spitroast"
+    },
+    {
+      "en_tags": [
+        "2boys"
+      ],
+      "cn_description": "2男",
+      "raw_en": "2boys"
+    },
+    {
+      "en_tags": [
         "group sex"
       ],
-      "cn_description": "前后夹击/2男前后同入 (多人)",
-      "raw_en": "spitroast, 2boys, group sex"
+      "cn_description": "多人群交",
+      "raw_en": "group sex"
     },
     {
       "en_tags": [
-        "triple penetration",
+        "triple penetration"
+      ],
+      "cn_description": "三穴同入",
+      "raw_en": "triple penetration"
+    },
+    {
+      "en_tags": [
         "3boys"
       ],
-      "cn_description": "三穴同入/3男轮奸 (极深RBQ)",
-      "raw_en": "triple penetration, 3boys"
+      "cn_description": "3男",
+      "raw_en": "3boys"
     },
     {
       "en_tags": [
-        "tribadism",
-        "scissoring",
+        "tribadism"
+      ],
+      "cn_description": "磨镜",
+      "raw_en": "tribadism"
+    },
+    {
+      "en_tags": [
+        "scissoring"
+      ],
+      "cn_description": "剪刀式",
+      "raw_en": "scissoring"
+    },
+    {
+      "en_tags": [
         "pussy to pussy"
       ],
-      "cn_description": "磨镜/百合私处纯磨擦 (百合)",
-      "raw_en": "tribadism, scissoring, pussy to pussy"
+      "cn_description": "私处对磨",
+      "raw_en": "pussy to pussy"
     },
     {
       "en_tags": [
-        "moaning",
-        "panting",
+        "moaning"
+      ],
+      "cn_description": "呻吟",
+      "raw_en": "moaning"
+    },
+    {
+      "en_tags": [
+        "panting"
+      ],
+      "cn_description": "喘息",
+      "raw_en": "panting"
+    },
+    {
+      "en_tags": [
         "heavy breathing"
       ],
-      "cn_description": "呻吟/喘息/粗重急促的呼吸",
-      "raw_en": "moaning, panting, heavy breathing"
+      "cn_description": "粗重呼吸",
+      "raw_en": "heavy breathing"
     },
     {
       "en_tags": [
@@ -596,113 +1038,227 @@
     },
     {
       "en_tags": [
-        "shy",
-        "embarrassed",
+        "shy"
+      ],
+      "cn_description": "害羞",
+      "raw_en": "shy"
+    },
+    {
+      "en_tags": [
+        "embarrassed"
+      ],
+      "cn_description": "羞耻",
+      "raw_en": "embarrassed"
+    },
+    {
+      "en_tags": [
         "ashamed"
       ],
-      "cn_description": "害羞/内疚羞耻/面部遮挡",
-      "raw_en": "shy, embarrassed, ashamed"
+      "cn_description": "内疚",
+      "raw_en": "ashamed"
     },
     {
       "en_tags": [
-        "ahegao",
-        "tongue out",
+        "ahegao"
+      ],
+      "cn_description": "阿黑颜",
+      "raw_en": "ahegao"
+    },
+    {
+      "en_tags": [
+        "tongue out"
+      ],
+      "cn_description": "吐舌头",
+      "raw_en": "tongue out"
+    },
+    {
+      "en_tags": [
         "drooling"
       ],
-      "cn_description": "阿黑颜/吐舌头/流口水 (失神)",
-      "raw_en": "ahegao, tongue out, drooling"
+      "cn_description": "流口水",
+      "raw_en": "drooling"
     },
     {
       "en_tags": [
-        "fucked silly",
+        "fucked silly"
+      ],
+      "cn_description": "彻底坏掉",
+      "raw_en": "fucked silly"
+    },
+    {
+      "en_tags": [
         "mind break"
       ],
-      "cn_description": "彻底坏掉/精神崩溃 (极限高潮)",
-      "raw_en": "fucked silly, mind break"
+      "cn_description": "精神崩溃",
+      "raw_en": "mind break"
     },
     {
       "en_tags": [
-        "orgasm",
-        "arched back",
+        "orgasm"
+      ],
+      "cn_description": "高潮",
+      "raw_en": "orgasm"
+    },
+    {
+      "en_tags": [
+        "arched back"
+      ],
+      "cn_description": "反弓腰",
+      "raw_en": "arched back"
+    },
+    {
+      "en_tags": [
         "toes curling"
       ],
-      "cn_description": "高潮反应/反弓腰/脚趾抓地",
-      "raw_en": "orgasm, arched back, toes curling"
+      "cn_description": "脚趾蜷缩",
+      "raw_en": "toes curling"
     },
     {
       "en_tags": [
-        "squirting",
+        "squirting"
+      ],
+      "cn_description": "潮喷",
+      "raw_en": "squirting"
+    },
+    {
+      "en_tags": [
         "female ejaculation"
       ],
-      "cn_description": "潮喷/爱液喷射 (高潮狂涌)",
-      "raw_en": "squirting, female ejaculation"
+      "cn_description": "爱液喷射",
+      "raw_en": "female ejaculation"
     },
     {
       "en_tags": [
-        "pussy juice",
+        "pussy juice"
+      ],
+      "cn_description": "爱液",
+      "raw_en": "pussy juice"
+    },
+    {
+      "en_tags": [
         "pussy juice pool"
       ],
-      "cn_description": "爱液/小穴水汪汪流出",
-      "raw_en": "pussy juice, pussy juice pool"
+      "cn_description": "小穴水汪汪流出",
+      "raw_en": "pussy juice pool"
     },
     {
       "en_tags": [
-        "precum",
-        "cum inside",
+        "precum"
+      ],
+      "cn_description": "前列腺液",
+      "raw_en": "precum"
+    },
+    {
+      "en_tags": [
+        "cum inside"
+      ],
+      "cn_description": "体内射精",
+      "raw_en": "cum inside"
+    },
+    {
+      "en_tags": [
         "creampie"
       ],
-      "cn_description": "前列腺液/体内射精/内射灌满",
-      "raw_en": "precum, cum inside, creampie"
+      "cn_description": "内射灌满",
+      "raw_en": "creampie"
     },
     {
       "en_tags": [
-        "cum overflow",
-        "cum drip",
+        "cum overflow"
+      ],
+      "cn_description": "精液漫出",
+      "raw_en": "cum overflow"
+    },
+    {
+      "en_tags": [
+        "cum drip"
+      ],
+      "cn_description": "精液滴落",
+      "raw_en": "cum drip"
+    },
+    {
+      "en_tags": [
         "cum string"
       ],
-      "cn_description": "精液漫出/精液滴落/浓稠拉丝",
-      "raw_en": "cum overflow, cum drip, cum string"
+      "cn_description": "浓稠拉丝",
+      "raw_en": "cum string"
     },
     {
       "en_tags": [
-        "used condom",
+        "used condom"
+      ],
+      "cn_description": "已用避孕套",
+      "raw_en": "used condom"
+    },
+    {
+      "en_tags": [
         "many used condoms"
       ],
-      "cn_description": "已用避孕套/满地避孕套 (事后)",
-      "raw_en": "used condom, many used condoms"
+      "cn_description": "满地避孕套",
+      "raw_en": "many used condoms"
     },
     {
       "en_tags": [
-        "rope marks",
-        "red marks",
+        "rope marks"
+      ],
+      "cn_description": "绳痕",
+      "raw_en": "rope marks"
+    },
+    {
+      "en_tags": [
+        "red marks"
+      ],
+      "cn_description": "红印",
+      "raw_en": "red marks"
+    },
+    {
+      "en_tags": [
         "skindentation"
       ],
-      "cn_description": "勒痕/红印/绳缚痕迹 (真实细节)",
-      "raw_en": "rope marks, red marks, skindentation"
+      "cn_description": "勒痕",
+      "raw_en": "skindentation"
     },
     {
       "en_tags": [
-        "hickey",
+        "hickey"
+      ],
+      "cn_description": "吻痕",
+      "raw_en": "hickey"
+    },
+    {
+      "en_tags": [
         "bite marks"
       ],
-      "cn_description": "吻痕/咬痕",
-      "raw_en": "hickey, bite marks"
+      "cn_description": "咬痕",
+      "raw_en": "bite marks"
     },
     {
       "en_tags": [
-        "slap mark",
+        "slap mark"
+      ],
+      "cn_description": "击打掌印",
+      "raw_en": "slap mark"
+    },
+    {
+      "en_tags": [
         "red ass"
       ],
-      "cn_description": "击打掌印/拍红的屁股 (打屁股)",
-      "raw_en": "slap mark, red ass"
+      "cn_description": "拍红的屁股",
+      "raw_en": "red ass"
     },
     {
       "en_tags": [
-        "body writing",
+        "body writing"
+      ],
+      "cn_description": "身体写字",
+      "raw_en": "body writing"
+    },
+    {
+      "en_tags": [
         "tally marks"
       ],
-      "cn_description": "身体写字/计数正字 (调教)",
-      "raw_en": "body writing, tally marks"
+      "cn_description": "计数正字",
+      "raw_en": "tally marks"
     },
     {
       "en_tags": [
@@ -713,11 +1269,17 @@
     },
     {
       "en_tags": [
-        "upper body",
+        "upper body"
+      ],
+      "cn_description": "半身照",
+      "raw_en": "upper body"
+    },
+    {
+      "en_tags": [
         "bust shot"
       ],
-      "cn_description": "半身照/胸像 (诱惑)",
-      "raw_en": "upper body, bust shot"
+      "cn_description": "胸像",
+      "raw_en": "bust shot"
     },
     {
       "en_tags": [
@@ -728,11 +1290,17 @@
     },
     {
       "en_tags": [
-        "full body",
+        "full body"
+      ],
+      "cn_description": "全身照",
+      "raw_en": "full body"
+    },
+    {
+      "en_tags": [
         "full shot"
       ],
-      "cn_description": "全身照 (展示服装与体位)",
-      "raw_en": "full body, full shot"
+      "cn_description": "全身照",
+      "raw_en": "full shot"
     },
     {
       "en_tags": [
@@ -743,27 +1311,45 @@
     },
     {
       "en_tags": [
-        "from front",
+        "from front"
+      ],
+      "cn_description": "正面视角",
+      "raw_en": "from front"
+    },
+    {
+      "en_tags": [
         "front view"
       ],
       "cn_description": "正面视角",
-      "raw_en": "from front, front view"
+      "raw_en": "front view"
     },
     {
       "en_tags": [
-        "from side",
+        "from side"
+      ],
+      "cn_description": "侧面视角",
+      "raw_en": "from side"
+    },
+    {
+      "en_tags": [
         "profile"
       ],
-      "cn_description": "侧面视角 (体现插入深度)",
-      "raw_en": "from side, profile"
+      "cn_description": "侧面视角",
+      "raw_en": "profile"
     },
     {
       "en_tags": [
-        "from behind",
+        "from behind"
+      ],
+      "cn_description": "背面视角",
+      "raw_en": "from behind"
+    },
+    {
+      "en_tags": [
         "back view"
       ],
-      "cn_description": "背面视角 (臀部/后入特化)",
-      "raw_en": "from behind, back view"
+      "cn_description": "背面视角",
+      "raw_en": "back view"
     },
     {
       "en_tags": [
@@ -774,28 +1360,52 @@
     },
     {
       "en_tags": [
-        "from below",
+        "from below"
+      ],
+      "cn_description": "仰视角度",
+      "raw_en": "from below"
+    },
+    {
+      "en_tags": [
         "low angle"
       ],
-      "cn_description": "仰视角度 (骑乘/坐脸)",
-      "raw_en": "from below, low angle"
+      "cn_description": "仰视角度",
+      "raw_en": "low angle"
     },
     {
       "en_tags": [
-        "pov",
-        "pov hands",
+        "pov"
+      ],
+      "cn_description": "第一人称视角",
+      "raw_en": "pov"
+    },
+    {
+      "en_tags": [
+        "pov hands"
+      ],
+      "cn_description": "双手入镜",
+      "raw_en": "pov hands"
+    },
+    {
+      "en_tags": [
         "pov crotch"
       ],
-      "cn_description": "男方视角/双手入镜/第一人称胯部",
-      "raw_en": "pov, pov hands, pov crotch"
+      "cn_description": "第一人称胯部",
+      "raw_en": "pov crotch"
     },
     {
       "en_tags": [
-        "female pov",
+        "female pov"
+      ],
+      "cn_description": "女方视角",
+      "raw_en": "female pov"
+    },
+    {
+      "en_tags": [
         "head out of frame"
       ],
-      "cn_description": "女方视角 (看不到头，匿名的色气)",
-      "raw_en": "female pov, head out of frame"
+      "cn_description": "女方视角",
+      "raw_en": "head out of frame"
     },
     {
       "en_tags": [
@@ -813,183 +1423,367 @@
     },
     {
       "en_tags": [
-        "before and after",
+        "before and after"
+      ],
+      "cn_description": "事前vs事后对比",
+      "raw_en": "before and after"
+    },
+    {
+      "en_tags": [
         "2koma"
       ],
-      "cn_description": "事前vs事后对比/两格漫画差分",
-      "raw_en": "before and after, 2koma"
+      "cn_description": "两格漫画差分",
+      "raw_en": "2koma"
     },
     {
       "en_tags": [
-        "bedroom",
-        "on bed",
+        "bedroom"
+      ],
+      "cn_description": "卧室",
+      "raw_en": "bedroom"
+    },
+    {
+      "en_tags": [
+        "on bed"
+      ],
+      "cn_description": "床上",
+      "raw_en": "on bed"
+    },
+    {
+      "en_tags": [
         "bed sheet"
       ],
-      "cn_description": "卧室/床上/床单 (安全私密)",
-      "raw_en": "bedroom, on bed, bed sheet"
+      "cn_description": "床单",
+      "raw_en": "bed sheet"
     },
     {
       "en_tags": [
-        "bathroom",
-        "shower",
-        "bathtub",
+        "bathroom"
+      ],
+      "cn_description": "浴室",
+      "raw_en": "bathroom"
+    },
+    {
+      "en_tags": [
+        "shower"
+      ],
+      "cn_description": "花洒",
+      "raw_en": "shower"
+    },
+    {
+      "en_tags": [
+        "bathtub"
+      ],
+      "cn_description": "浴缸",
+      "raw_en": "bathtub"
+    },
+    {
+      "en_tags": [
         "steam"
       ],
-      "cn_description": "浴室/花洒下/浴缸/蒸汽 (湿滑)",
-      "raw_en": "bathroom, shower, bathtub, steam"
+      "cn_description": "蒸汽",
+      "raw_en": "steam"
     },
     {
       "en_tags": [
-        "love hotel",
+        "love hotel"
+      ],
+      "cn_description": "情趣酒店",
+      "raw_en": "love hotel"
+    },
+    {
+      "en_tags": [
         "hotel room"
       ],
-      "cn_description": "情趣酒店/宾馆大床 (出轨/事后)",
-      "raw_en": "love hotel, hotel room"
+      "cn_description": "宾馆大床",
+      "raw_en": "hotel room"
     },
     {
       "en_tags": [
-        "dungeon",
-        "stone wall",
+        "dungeon"
+      ],
+      "cn_description": "地牢",
+      "raw_en": "dungeon"
+    },
+    {
+      "en_tags": [
+        "stone wall"
+      ],
+      "cn_description": "石墙",
+      "raw_en": "stone wall"
+    },
+    {
+      "en_tags": [
         "chains"
       ],
-      "cn_description": "地牢/石墙/镣铐铁链 (束缚调教)",
-      "raw_en": "dungeon, stone wall, chains"
+      "cn_description": "镣铐铁链",
+      "raw_en": "chains"
     },
     {
       "en_tags": [
-        "couch",
+        "couch"
+      ],
+      "cn_description": "客厅沙发",
+      "raw_en": "couch"
+    },
+    {
+      "en_tags": [
         "sofa"
       ],
-      "cn_description": "客厅沙发 (半私密匆忙激情)",
-      "raw_en": "couch, sofa"
+      "cn_description": "客厅沙发",
+      "raw_en": "sofa"
     },
     {
       "en_tags": [
-        "kitchen",
+        "kitchen"
+      ],
+      "cn_description": "厨房",
+      "raw_en": "kitchen"
+    },
+    {
+      "en_tags": [
         "counter"
       ],
-      "cn_description": "厨房/灶台 (日常裸体围裙)",
-      "raw_en": "kitchen, counter"
+      "cn_description": "灶台",
+      "raw_en": "counter"
     },
     {
       "en_tags": [
-        "office",
-        "desk",
+        "office"
+      ],
+      "cn_description": "办公室",
+      "raw_en": "office"
+    },
+    {
+      "en_tags": [
+        "desk"
+      ],
+      "cn_description": "办公桌",
+      "raw_en": "desk"
+    },
+    {
+      "en_tags": [
         "office chair"
       ],
-      "cn_description": "办公室/办公桌底/转椅 (加班胁迫)",
-      "raw_en": "office, desk, office chair"
+      "cn_description": "转椅",
+      "raw_en": "office chair"
     },
     {
       "en_tags": [
-        "train",
-        "crowded train",
+        "train"
+      ],
+      "cn_description": "电车",
+      "raw_en": "train"
+    },
+    {
+      "en_tags": [
+        "crowded train"
+      ],
+      "cn_description": "挤满的电车",
+      "raw_en": "crowded train"
+    },
+    {
+      "en_tags": [
         "handrail"
       ],
-      "cn_description": "电车/挤爆的电车/拉手 (痴汉)",
-      "raw_en": "train, crowded train, handrail"
+      "cn_description": "拉手",
+      "raw_en": "handrail"
     },
     {
       "en_tags": [
-        "classroom",
+        "classroom"
+      ],
+      "cn_description": "教室",
+      "raw_en": "classroom"
+    },
+    {
+      "en_tags": [
         "school desk"
       ],
-      "cn_description": "教室/学生课桌 (校园禁忌)",
-      "raw_en": "classroom, school desk"
+      "cn_description": "学生课桌",
+      "raw_en": "school desk"
     },
     {
       "en_tags": [
-        "fitting room",
-        "curtain",
+        "fitting room"
+      ],
+      "cn_description": "试衣间",
+      "raw_en": "fitting room"
+    },
+    {
+      "en_tags": [
+        "curtain"
+      ],
+      "cn_description": "布帘",
+      "raw_en": "curtain"
+    },
+    {
+      "en_tags": [
         "mirror"
       ],
-      "cn_description": "商场试衣间/布帘/试衣镜",
-      "raw_en": "fitting room, curtain, mirror"
+      "cn_description": "镜子",
+      "raw_en": "mirror"
     },
     {
       "en_tags": [
-        "park",
-        "park bench",
+        "park"
+      ],
+      "cn_description": "公园",
+      "raw_en": "park"
+    },
+    {
+      "en_tags": [
+        "park bench"
+      ],
+      "cn_description": "公园长椅",
+      "raw_en": "park bench"
+    },
+    {
+      "en_tags": [
         "outdoors"
       ],
-      "cn_description": "公园长椅/户外 (大露特露)",
-      "raw_en": "park, park bench, outdoors"
+      "cn_description": "户外",
+      "raw_en": "outdoors"
     },
     {
       "en_tags": [
-        "onsen",
-        "steam",
+        "onsen"
+      ],
+      "cn_description": "温泉",
+      "raw_en": "onsen"
+    },
+    {
+      "en_tags": [
         "wooden bath"
       ],
-      "cn_description": "温泉/桑拿热汽/木桶浴",
-      "raw_en": "onsen, steam, wooden bath"
+      "cn_description": "木桶浴",
+      "raw_en": "wooden bath"
     },
     {
       "en_tags": [
-        "against window",
-        "glass",
+        "against window"
+      ],
+      "cn_description": "贴窗",
+      "raw_en": "against window"
+    },
+    {
+      "en_tags": [
+        "glass"
+      ],
+      "cn_description": "玻璃",
+      "raw_en": "glass"
+    },
+    {
+      "en_tags": [
         "city view"
       ],
-      "cn_description": "在窗边贴着玻璃/城市夜景 (窗外偷窥)",
-      "raw_en": "against window, glass, city view"
+      "cn_description": "城市夜景",
+      "raw_en": "city view"
     },
     {
       "en_tags": [
-        "rain",
-        "snow",
-        "fog",
-        "steam"
+        "rain"
       ],
-      "cn_description": "下雨/下雪/大雾/物理蒸汽 (可用环境)",
-      "raw_en": "rain, snow, fog, steam"
+      "cn_description": "下雨",
+      "raw_en": "rain"
     },
     {
       "en_tags": [
-        "dark room",
+        "snow"
+      ],
+      "cn_description": "下雪",
+      "raw_en": "snow"
+    },
+    {
+      "en_tags": [
+        "fog"
+      ],
+      "cn_description": "大雾",
+      "raw_en": "fog"
+    },
+    {
+      "en_tags": [
+        "dark room"
+      ],
+      "cn_description": "小黑屋",
+      "raw_en": "dark room"
+    },
+    {
+      "en_tags": [
         "dim lighting"
       ],
-      "cn_description": "小黑屋/昏暗环境 (夜里幽密)",
-      "raw_en": "dark room, dim lighting"
+      "cn_description": "昏暗环境",
+      "raw_en": "dim lighting"
     },
     {
       "en_tags": [
-        "used condom on floor",
+        "used condom on floor"
+      ],
+      "cn_description": "满地的衣物",
+      "raw_en": "used condom on floor"
+    },
+    {
+      "en_tags": [
         "scattered clothes"
       ],
-      "cn_description": "满地的衣物/扔在床底的避孕套",
-      "raw_en": "used condom on floor, scattered clothes"
+      "cn_description": "扔在床底的避孕套",
+      "raw_en": "scattered clothes"
     },
     {
       "en_tags": [
-        "ink splash",
+        "ink splash"
+      ],
+      "cn_description": "写意水墨泼墨",
+      "raw_en": "ink splash"
+    },
+    {
+      "en_tags": [
         "watercolor texture"
       ],
-      "cn_description": "写意水墨泼墨/水彩质感 (古风极高档)",
-      "raw_en": "ink splash, watercolor texture"
+      "cn_description": "水彩质感",
+      "raw_en": "watercolor texture"
     },
     {
       "en_tags": [
-        "sketch",
+        "sketch"
+      ],
+      "cn_description": "素描风",
+      "raw_en": "sketch"
+    },
+    {
+      "en_tags": [
         "lineart"
       ],
-      "cn_description": "素描风/线性草稿",
-      "raw_en": "sketch, lineart"
+      "cn_description": "线性草稿",
+      "raw_en": "lineart"
     },
     {
       "en_tags": [
-        "film grain",
+        "film grain"
+      ],
+      "cn_description": "老电影胶片颗粒感",
+      "raw_en": "film grain"
+    },
+    {
+      "en_tags": [
         "vintage film grain"
       ],
-      "cn_description": "老电影胶片颗粒感 (偷拍记录真实感)",
-      "raw_en": "film grain, vintage film grain"
+      "cn_description": "老电影胶片颗粒感",
+      "raw_en": "vintage film grain"
     },
     {
       "en_tags": [
-        "motion lines",
+        "motion lines"
+      ],
+      "cn_description": "运动线",
+      "raw_en": "motion lines"
+    },
+    {
+      "en_tags": [
         "speed lines"
       ],
-      "cn_description": "漫画式运动抽插线/速度线 (激烈活塞)",
-      "raw_en": "motion lines, speed lines"
+      "cn_description": "速度线",
+      "raw_en": "speed lines"
     },
     {
       "en_tags": [
@@ -1000,96 +1794,173 @@
     },
     {
       "en_tags": [
-        "depth of field",
-        "shallow depth of field",
+        "depth of field"
+      ],
+      "cn_description": "景深",
+      "raw_en": "depth of field"
+    },
+    {
+      "en_tags": [
+        "shallow depth of field"
+      ],
+      "cn_description": "浅景深虚化",
+      "raw_en": "shallow depth of field"
+    },
+    {
+      "en_tags": [
         "bokeh"
       ],
-      "cn_description": "景深虚化背景/光斑 (浪漫特写)",
-      "raw_en": "depth of field, shallow depth of field, bokeh"
+      "cn_description": "光斑",
+      "raw_en": "bokeh"
     },
     {
       "en_tags": [
-        "silhouette",
+        "silhouette"
+      ],
+      "cn_description": "背光剪影",
+      "raw_en": "silhouette"
+    },
+    {
+      "en_tags": [
         "backlit silhouette"
       ],
-      "cn_description": "背光剪影 (磨砂玻璃/神秘遮挡)",
-      "raw_en": "silhouette, backlit silhouette"
+      "cn_description": "背光剪影",
+      "raw_en": "backlit silhouette"
     },
     {
       "en_tags": [
-        "lens flare",
+        "lens flare"
+      ],
+      "cn_description": "镜头逆光光晕",
+      "raw_en": "lens flare"
+    },
+    {
+      "en_tags": [
         "bloom"
       ],
-      "cn_description": "镜头逆光光晕/强光高亮溢出",
-      "raw_en": "lens flare, bloom"
+      "cn_description": "强光高亮溢出",
+      "raw_en": "bloom"
     },
     {
       "en_tags": [
-        "digital glitch effects",
+        "digital glitch effects"
+      ],
+      "cn_description": "数字故障艺术",
+      "raw_en": "digital glitch effects"
+    },
+    {
+      "en_tags": [
         "VHS distortion"
       ],
-      "cn_description": "数字故障艺术/CRT录像带噪点 (偷拍催眠)",
-      "raw_en": "digital glitch effects, VHS distortion"
+      "cn_description": "VHS录像带噪点",
+      "raw_en": "VHS distortion"
     },
     {
       "en_tags": [
-        "cinematic",
+        "cinematic"
+      ],
+      "cn_description": "电影级构图",
+      "raw_en": "cinematic"
+    },
+    {
+      "en_tags": [
         "dramatic tension"
       ],
-      "cn_description": "电影级构图/戏剧性张力 (氛围高档)",
-      "raw_en": "cinematic, dramatic tension"
+      "cn_description": "戏剧性张力",
+      "raw_en": "dramatic tension"
     },
     {
       "en_tags": [
-        "ethereal",
+        "ethereal"
+      ],
+      "cn_description": "空灵",
+      "raw_en": "ethereal"
+    },
+    {
+      "en_tags": [
         "dreamlike"
       ],
-      "cn_description": "空灵/像梦境一般 (失神高潮)",
-      "raw_en": "ethereal, dreamlike"
+      "cn_description": "像梦境一般",
+      "raw_en": "dreamlike"
     },
     {
       "en_tags": [
-        "dark atmosphere",
+        "dark atmosphere"
+      ],
+      "cn_description": "暗黑压抑",
+      "raw_en": "dark atmosphere"
+    },
+    {
+      "en_tags": [
         "suspenseful"
       ],
-      "cn_description": "暗黑压抑/悬疑紧张 (胁迫过激)",
-      "raw_en": "dark atmosphere, suspenseful"
+      "cn_description": "悬疑紧张",
+      "raw_en": "suspenseful"
     }
   ],
   "人数体型/私处": [
     {
       "en_tags": [
-        "1girl",
+        "1girl"
+      ],
+      "cn_description": "一女",
+      "raw_en": "1girl"
+    },
+    {
+      "en_tags": [
         "solo"
       ],
-      "cn_description": "一女, 单人",
-      "raw_en": "1girl, solo"
+      "cn_description": "单人",
+      "raw_en": "solo"
     },
     {
       "en_tags": [
-        "1girl",
-        "1boy",
+        "1boy"
+      ],
+      "cn_description": "一男",
+      "raw_en": "1boy"
+    },
+    {
+      "en_tags": [
         "hetero"
       ],
-      "cn_description": "一男一女, 异性",
-      "raw_en": "1girl, 1boy, hetero"
+      "cn_description": "异性",
+      "raw_en": "hetero"
     },
     {
       "en_tags": [
-        "2girls",
+        "2girls"
+      ],
+      "cn_description": "两女",
+      "raw_en": "2girls"
+    },
+    {
+      "en_tags": [
         "yuri"
       ],
-      "cn_description": "两女, 百合",
-      "raw_en": "2girls, yuri"
+      "cn_description": "百合",
+      "raw_en": "yuri"
     },
     {
       "en_tags": [
-        "otoko no ko",
-        "femboy",
+        "otoko no ko"
+      ],
+      "cn_description": "男娘",
+      "raw_en": "otoko no ko"
+    },
+    {
+      "en_tags": [
+        "femboy"
+      ],
+      "cn_description": "伪娘",
+      "raw_en": "femboy"
+    },
+    {
+      "en_tags": [
         "trap"
       ],
-      "cn_description": "男娘/伪娘",
-      "raw_en": "otoko no ko, femboy, trap"
+      "cn_description": "伪娘",
+      "raw_en": "trap"
     },
     {
       "en_tags": [
@@ -1100,19 +1971,31 @@
     },
     {
       "en_tags": [
-        "height difference",
-        "size difference"
+        "height difference"
       ],
-      "cn_description": "身高差/体型差",
-      "raw_en": "height difference, size difference"
+      "cn_description": "身高差",
+      "raw_en": "height difference"
     },
     {
       "en_tags": [
-        "slim",
+        "size difference"
+      ],
+      "cn_description": "体型差",
+      "raw_en": "size difference"
+    },
+    {
+      "en_tags": [
+        "slim"
+      ],
+      "cn_description": "苗条",
+      "raw_en": "slim"
+    },
+    {
+      "en_tags": [
         "slender"
       ],
-      "cn_description": "苗条/纤细",
-      "raw_en": "slim, slender"
+      "cn_description": "纤细",
+      "raw_en": "slender"
     },
     {
       "en_tags": [
@@ -1123,11 +2006,17 @@
     },
     {
       "en_tags": [
-        "curvy",
+        "curvy"
+      ],
+      "cn_description": "丰满有致",
+      "raw_en": "curvy"
+    },
+    {
+      "en_tags": [
         "voluptuous figure"
       ],
-      "cn_description": "丰满有致/凹凸有致",
-      "raw_en": "curvy, voluptuous figure"
+      "cn_description": "凹凸有致",
+      "raw_en": "voluptuous figure"
     },
     {
       "en_tags": [
@@ -1138,11 +2027,17 @@
     },
     {
       "en_tags": [
-        "flat breasts",
+        "flat breasts"
+      ],
+      "cn_description": "贫乳/平胸",
+      "raw_en": "flat breasts"
+    },
+    {
+      "en_tags": [
         "loli"
       ],
-      "cn_description": "贫乳/平胸/萝莉",
-      "raw_en": "flat breasts, loli"
+      "cn_description": "萝莉",
+      "raw_en": "loli"
     },
     {
       "en_tags": [
@@ -1160,63 +2055,117 @@
     },
     {
       "en_tags": [
-        "barefoot",
-        "soles",
+        "barefoot"
+      ],
+      "cn_description": "光脚",
+      "raw_en": "barefoot"
+    },
+    {
+      "en_tags": [
+        "soles"
+      ],
+      "cn_description": "脚底",
+      "raw_en": "soles"
+    },
+    {
+      "en_tags": [
         "toes"
       ],
-      "cn_description": "光脚/脚底/脚趾",
-      "raw_en": "barefoot, soles, toes"
+      "cn_description": "脚趾",
+      "raw_en": "toes"
     },
     {
       "en_tags": [
-        "cleavage",
-        "sideboob",
+        "cleavage"
+      ],
+      "cn_description": "乳沟",
+      "raw_en": "cleavage"
+    },
+    {
+      "en_tags": [
+        "sideboob"
+      ],
+      "cn_description": "侧乳",
+      "raw_en": "sideboob"
+    },
+    {
+      "en_tags": [
         "underboob"
       ],
-      "cn_description": "乳沟/侧乳/下乳",
-      "raw_en": "cleavage, sideboob, underboob"
+      "cn_description": "下乳",
+      "raw_en": "underboob"
     },
     {
       "en_tags": [
-        "inner thigh",
+        "inner thigh"
+      ],
+      "cn_description": "大腿内侧",
+      "raw_en": "inner thigh"
+    },
+    {
+      "en_tags": [
         "thigh gap"
       ],
-      "cn_description": "大腿内侧/大腿缝",
-      "raw_en": "inner thigh, thigh gap"
+      "cn_description": "大腿缝",
+      "raw_en": "thigh gap"
     },
     {
       "en_tags": [
-        "pussy",
+        "pussy"
+      ],
+      "cn_description": "小穴",
+      "raw_en": "pussy"
+    },
+    {
+      "en_tags": [
         "puffy pussy"
       ],
-      "cn_description": "小穴/肉缝",
-      "raw_en": "pussy, puffy pussy"
+      "cn_description": "肉缝",
+      "raw_en": "puffy pussy"
     },
     {
       "en_tags": [
-        "cleft of venus",
+        "cleft of venus"
+      ],
+      "cn_description": "维纳斯裂缝",
+      "raw_en": "cleft of venus"
+    },
+    {
+      "en_tags": [
         "clitoris"
       ],
-      "cn_description": "维纳斯裂缝/阴蒂",
-      "raw_en": "cleft of venus, clitoris"
+      "cn_description": "阴蒂",
+      "raw_en": "clitoris"
     },
     {
       "en_tags": [
-        "pussy juice",
+        "pussy juice"
+      ],
+      "cn_description": "爱液",
+      "raw_en": "pussy juice"
+    },
+    {
+      "en_tags": [
         "pussy juice pool"
       ],
-      "cn_description": "爱液/小穴水汪汪流出",
-      "raw_en": "pussy juice, pussy juice pool"
+      "cn_description": "小穴水汪汪流出",
+      "raw_en": "pussy juice pool"
     }
   ],
   "头发/眼睛/面部": [
     {
       "en_tags": [
-        "long hair",
+        "long hair"
+      ],
+      "cn_description": "长发",
+      "raw_en": "long hair"
+    },
+    {
+      "en_tags": [
         "short hair"
       ],
-      "cn_description": "长发/短发",
-      "raw_en": "long hair, short hair"
+      "cn_description": "短发",
+      "raw_en": "short hair"
     },
     {
       "en_tags": [
@@ -1227,27 +2176,45 @@
     },
     {
       "en_tags": [
-        "black hair",
+        "black hair"
+      ],
+      "cn_description": "黑发",
+      "raw_en": "black hair"
+    },
+    {
+      "en_tags": [
         "blonde hair"
       ],
-      "cn_description": "黑发/金发",
-      "raw_en": "black hair, blonde hair"
+      "cn_description": "金发",
+      "raw_en": "blonde hair"
     },
     {
       "en_tags": [
-        "twin tails",
+        "twin tails"
+      ],
+      "cn_description": "双马尾",
+      "raw_en": "twin tails"
+    },
+    {
+      "en_tags": [
         "ponytail"
       ],
-      "cn_description": "双马尾/单马尾",
-      "raw_en": "twin tails, ponytail"
+      "cn_description": "单马尾",
+      "raw_en": "ponytail"
     },
     {
       "en_tags": [
-        "messy hair",
+        "messy hair"
+      ],
+      "cn_description": "散乱的发丝",
+      "raw_en": "messy hair"
+    },
+    {
+      "en_tags": [
         "disheveled hair"
       ],
-      "cn_description": "散乱的发丝/凌乱发型",
-      "raw_en": "messy hair, disheveled hair"
+      "cn_description": "凌乱发型",
+      "raw_en": "disheveled hair"
     },
     {
       "en_tags": [
@@ -1258,21 +2225,45 @@
     },
     {
       "en_tags": [
-        "blue eyes",
-        "red eyes",
-        "golden eyes"
+        "blue eyes"
       ],
-      "cn_description": "蓝瞳/红瞳/金瞳",
-      "raw_en": "blue eyes, red eyes, golden eyes"
+      "cn_description": "蓝瞳",
+      "raw_en": "blue eyes"
     },
     {
       "en_tags": [
-        "spiral eyes",
-        "@\\_@",
+        "red eyes"
+      ],
+      "cn_description": "红瞳",
+      "raw_en": "red eyes"
+    },
+    {
+      "en_tags": [
+        "golden eyes"
+      ],
+      "cn_description": "金瞳",
+      "raw_en": "golden eyes"
+    },
+    {
+      "en_tags": [
+        "spiral eyes"
+      ],
+      "cn_description": "螺旋眼",
+      "raw_en": "spiral eyes"
+    },
+    {
+      "en_tags": [
+        "@\\_@"
+      ],
+      "cn_description": "晕厥眼",
+      "raw_en": "@\\_@"
+    },
+    {
+      "en_tags": [
         "empty eyes"
       ],
-      "cn_description": "螺旋眼/晕厥眼/失神空洞眼",
-      "raw_en": "spiral eyes, @\\_@, empty eyes"
+      "cn_description": "失神空洞眼",
+      "raw_en": "empty eyes"
     },
     {
       "en_tags": [
@@ -1292,103 +2283,199 @@
   "服装/材质/改造": [
     {
       "en_tags": [
-        "lace bra",
-        "panties",
+        "lace bra"
+      ],
+      "cn_description": "蕾丝文胸",
+      "raw_en": "lace bra"
+    },
+    {
+      "en_tags": [
+        "panties"
+      ],
+      "cn_description": "内裤",
+      "raw_en": "panties"
+    },
+    {
+      "en_tags": [
         "thong"
       ],
-      "cn_description": "蕾丝文胸/内裤/丁字裤",
-      "raw_en": "lace bra, panties, thong"
+      "cn_description": "丁字裤",
+      "raw_en": "thong"
     },
     {
       "en_tags": [
-        "lace lingerie",
-        "corset",
+        "lace lingerie"
+      ],
+      "cn_description": "蕾丝情趣内衣",
+      "raw_en": "lace lingerie"
+    },
+    {
+      "en_tags": [
+        "corset"
+      ],
+      "cn_description": "束腰",
+      "raw_en": "corset"
+    },
+    {
+      "en_tags": [
         "garter belt"
       ],
-      "cn_description": "蕾丝情趣内衣/束腰/吊带袜",
-      "raw_en": "lace lingerie, corset, garter belt"
+      "cn_description": "吊带袜",
+      "raw_en": "garter belt"
     },
     {
       "en_tags": [
-        "school uniform",
+        "school uniform"
+      ],
+      "cn_description": "校服",
+      "raw_en": "school uniform"
+    },
+    {
+      "en_tags": [
         "sailor uniform"
       ],
-      "cn_description": "校服/水手服",
-      "raw_en": "school uniform, sailor uniform"
+      "cn_description": "水手服",
+      "raw_en": "sailor uniform"
     },
     {
       "en_tags": [
-        "office lady",
+        "office lady"
+      ],
+      "cn_description": "OL装",
+      "raw_en": "office lady"
+    },
+    {
+      "en_tags": [
         "pencil skirt"
       ],
-      "cn_description": "OL装/一步裙",
-      "raw_en": "office lady, pencil skirt"
+      "cn_description": "一步裙",
+      "raw_en": "pencil skirt"
     },
     {
       "en_tags": [
-        "french maid",
+        "french maid"
+      ],
+      "cn_description": "法式女仆装",
+      "raw_en": "french maid"
+    },
+    {
+      "en_tags": [
         "maid headdress"
       ],
-      "cn_description": "法式女仆装/女仆发带",
-      "raw_en": "french maid, maid headdress"
+      "cn_description": "女仆发带",
+      "raw_en": "maid headdress"
     },
     {
       "en_tags": [
-        "bunny girl",
+        "bunny girl"
+      ],
+      "cn_description": "兔女郎装",
+      "raw_en": "bunny girl"
+    },
+    {
+      "en_tags": [
         "bunny ears"
       ],
-      "cn_description": "兔女郎装/兔耳",
-      "raw_en": "bunny girl, bunny ears"
+      "cn_description": "兔耳",
+      "raw_en": "bunny ears"
     },
     {
       "en_tags": [
-        "latex bodysuit",
-        "shiny",
+        "latex bodysuit"
+      ],
+      "cn_description": "高光紧身胶衣",
+      "raw_en": "latex bodysuit"
+    },
+    {
+      "en_tags": [
+        "shiny"
+      ],
+      "cn_description": "高光质感",
+      "raw_en": "shiny"
+    },
+    {
+      "en_tags": [
         "second skin"
       ],
-      "cn_description": "高光紧身胶衣/第二皮肤",
-      "raw_en": "latex bodysuit, shiny, second skin"
+      "cn_description": "第二皮肤",
+      "raw_en": "second skin"
     },
     {
       "en_tags": [
-        "kimono",
-        "miko outfit",
+        "kimono"
+      ],
+      "cn_description": "和服",
+      "raw_en": "kimono"
+    },
+    {
+      "en_tags": [
+        "miko outfit"
+      ],
+      "cn_description": "巫女服",
+      "raw_en": "miko outfit"
+    },
+    {
+      "en_tags": [
         "cheongsam"
       ],
-      "cn_description": "和服/巫女服/旗袍",
-      "raw_en": "kimono, miko outfit, cheongsam"
+      "cn_description": "旗袍",
+      "raw_en": "cheongsam"
     },
     {
       "en_tags": [
-        "black pantyhose",
+        "black pantyhose"
+      ],
+      "cn_description": "黑色连裤袜",
+      "raw_en": "black pantyhose"
+    },
+    {
+      "en_tags": [
         "black thighhighs"
       ],
-      "cn_description": "黑色连裤袜/黑过膝袜",
-      "raw_en": "black pantyhose, black thighhighs"
+      "cn_description": "黑过膝袜",
+      "raw_en": "black thighhighs"
     },
     {
       "en_tags": [
-        "high heels",
+        "high heels"
+      ],
+      "cn_description": "高跟鞋",
+      "raw_en": "high heels"
+    },
+    {
+      "en_tags": [
         "stiletto heels"
       ],
-      "cn_description": "高跟鞋/细高跟鞋",
-      "raw_en": "high heels, stiletto heels"
+      "cn_description": "细高跟鞋",
+      "raw_en": "stiletto heels"
     },
     {
       "en_tags": [
-        "off shoulder",
+        "off shoulder"
+      ],
+      "cn_description": "露肩",
+      "raw_en": "off shoulder"
+    },
+    {
+      "en_tags": [
         "strap slip"
       ],
-      "cn_description": "露肩/肩带滑落 (挑逗)",
-      "raw_en": "off shoulder, strap slip"
+      "cn_description": "肩带滑落",
+      "raw_en": "strap slip"
     },
     {
       "en_tags": [
-        "shirt lift",
+        "shirt lift"
+      ],
+      "cn_description": "撩起衬衫",
+      "raw_en": "shirt lift"
+    },
+    {
+      "en_tags": [
         "skirt lift"
       ],
-      "cn_description": "撩起衬衫/撩起裙子 (自己)",
-      "raw_en": "shirt lift, skirt lift"
+      "cn_description": "撩起裙子",
+      "raw_en": "skirt lift"
     },
     {
       "en_tags": [
@@ -1406,11 +2493,17 @@
     },
     {
       "en_tags": [
-        "torn clothes",
+        "torn clothes"
+      ],
+      "cn_description": "破损衣服",
+      "raw_en": "torn clothes"
+    },
+    {
+      "en_tags": [
         "ripped stockings"
       ],
-      "cn_description": "破损衣服/撕裂的丝袜",
-      "raw_en": "torn clothes, ripped stockings"
+      "cn_description": "撕裂的丝袜",
+      "raw_en": "ripped stockings"
     },
     {
       "en_tags": [
@@ -1435,192 +2528,348 @@
     },
     {
       "en_tags": [
-        "kitchen",
+        "kitchen"
+      ],
+      "cn_description": "厨房",
+      "raw_en": "kitchen"
+    },
+    {
+      "en_tags": [
         "counter"
       ],
-      "cn_description": "厨房/灶台 (日常裸体围裙)",
-      "raw_en": "kitchen, counter"
+      "cn_description": "灶台",
+      "raw_en": "counter"
     }
   ],
   "姿态动作/前戏正戏": [
     {
       "en_tags": [
-        "leaning forward",
+        "leaning forward"
+      ],
+      "cn_description": "身体前倾",
+      "raw_en": "leaning forward"
+    },
+    {
+      "en_tags": [
         "body leaning forward"
       ],
-      "cn_description": "身体前倾 (增强视觉张力)",
-      "raw_en": "leaning forward, body leaning forward"
+      "cn_description": "身体前倾",
+      "raw_en": "body leaning forward"
     },
     {
       "en_tags": [
-        "bent over",
+        "bent over"
+      ],
+      "cn_description": "弯腰撅屁股",
+      "raw_en": "bent over"
+    },
+    {
+      "en_tags": [
         "bending over"
       ],
-      "cn_description": "弯腰撅屁股 (性感姿态)",
-      "raw_en": "bent over, bending over"
+      "cn_description": "弯腰撅屁股",
+      "raw_en": "bending over"
     },
     {
       "en_tags": [
-        "presenting",
+        "presenting"
+      ],
+      "cn_description": "主动展示私处",
+      "raw_en": "presenting"
+    },
+    {
+      "en_tags": [
         "presenting crotch/ass"
       ],
-      "cn_description": "主动展示私处/臀部 (臣服)",
-      "raw_en": "presenting, presenting crotch/ass"
+      "cn_description": "臀部",
+      "raw_en": "presenting crotch/ass"
     },
     {
       "en_tags": [
-        "spread legs",
+        "spread legs"
+      ],
+      "cn_description": "开腿",
+      "raw_en": "spread legs"
+    },
+    {
+      "en_tags": [
         "m legs"
       ],
-      "cn_description": "开腿/M字开腿 (极度诱惑)",
-      "raw_en": "spread legs, m legs"
+      "cn_description": "M字开腿",
+      "raw_en": "m legs"
     },
     {
       "en_tags": [
-        "kneeling",
+        "kneeling"
+      ],
+      "cn_description": "下跪",
+      "raw_en": "kneeling"
+    },
+    {
+      "en_tags": [
         "on all fours"
       ],
-      "cn_description": "下跪/四肢爬行 (训服)",
-      "raw_en": "kneeling, on all fours"
+      "cn_description": "四肢爬行",
+      "raw_en": "on all fours"
     },
     {
       "en_tags": [
-        "fingering",
+        "fingering"
+      ],
+      "cn_description": "手指抠穴",
+      "raw_en": "fingering"
+    },
+    {
+      "en_tags": [
         "masturbation"
       ],
-      "cn_description": "手指抠穴/自慰",
-      "raw_en": "fingering, masturbation"
+      "cn_description": "自慰",
+      "raw_en": "masturbation"
     },
     {
       "en_tags": [
-        "vibrator",
+        "vibrator"
+      ],
+      "cn_description": "震动棒",
+      "raw_en": "vibrator"
+    },
+    {
+      "en_tags": [
         "transparent dildo"
       ],
-      "cn_description": "震动棒/透明假阳具 (玩具)",
-      "raw_en": "vibrator, transparent dildo"
+      "cn_description": "透明假阳具",
+      "raw_en": "transparent dildo"
     },
     {
       "en_tags": [
-        "talking on phone",
+        "talking on phone"
+      ],
+      "cn_description": "一边打电话一边交配",
+      "raw_en": "talking on phone"
+    },
+    {
+      "en_tags": [
         "sex"
       ],
-      "cn_description": "一边打电话一边交配 (NTR/暴露)",
-      "raw_en": "talking on phone, sex"
+      "cn_description": "一边打电话一边交配",
+      "raw_en": "sex"
     },
     {
       "en_tags": [
-        "blowjob",
-        "deepthroat",
+        "blowjob"
+      ],
+      "cn_description": "口交",
+      "raw_en": "blowjob"
+    },
+    {
+      "en_tags": [
+        "deepthroat"
+      ],
+      "cn_description": "深喉",
+      "raw_en": "deepthroat"
+    },
+    {
+      "en_tags": [
         "gagging"
       ],
-      "cn_description": "口交/深喉/窒息呕吐感",
-      "raw_en": "blowjob, deepthroat, gagging"
+      "cn_description": "窒息呕吐感",
+      "raw_en": "gagging"
     },
     {
       "en_tags": [
-        "footjob",
+        "footjob"
+      ],
+      "cn_description": "足交",
+      "raw_en": "footjob"
+    },
+    {
+      "en_tags": [
         "soles squeezing"
       ],
-      "cn_description": "足交/双足挤压几把",
-      "raw_en": "footjob, soles squeezing"
+      "cn_description": "双足挤压几把",
+      "raw_en": "soles squeezing"
     },
     {
       "en_tags": [
-        "paizuri",
+        "paizuri"
+      ],
+      "cn_description": "乳交",
+      "raw_en": "paizuri"
+    },
+    {
+      "en_tags": [
         "breasts squeeze together"
       ],
-      "cn_description": "乳交/大乳挤压摩擦",
-      "raw_en": "paizuri, breasts squeeze together"
+      "cn_description": "大乳挤压摩擦",
+      "raw_en": "breasts squeeze together"
     },
     {
       "en_tags": [
-        "chikan",
+        "chikan"
+      ],
+      "cn_description": "痴汉",
+      "raw_en": "chikan"
+    },
+    {
+      "en_tags": [
         "groping"
       ],
-      "cn_description": "can't move 痴汉/揉乳摸臀/电车无法动弹",
-      "raw_en": "chikan, groping,"
+      "cn_description": "揉乳摸臀",
+      "raw_en": "groping"
     },
     {
       "en_tags": [
-        "missionary",
+        "missionary"
+      ],
+      "cn_description": "传教士",
+      "raw_en": "missionary"
+    },
+    {
+      "en_tags": [
         "boy on top"
       ],
-      "cn_description": "传教士/男压女 (经典体位)",
-      "raw_en": "missionary, boy on top"
+      "cn_description": "男压女",
+      "raw_en": "boy on top"
     },
     {
       "en_tags": [
-        "standing sex",
+        "standing sex"
+      ],
+      "cn_description": "站立性爱",
+      "raw_en": "standing sex"
+    },
+    {
+      "en_tags": [
         "against wall"
       ],
-      "cn_description": "站立性爱/压墙后入",
-      "raw_en": "standing sex, against wall"
+      "cn_description": "压墙后入",
+      "raw_en": "against wall"
     },
     {
       "en_tags": [
-        "sitting on lap",
+        "sitting on lap"
+      ],
+      "cn_description": "坐位性爱",
+      "raw_en": "sitting on lap"
+    },
+    {
+      "en_tags": [
         "upright straddle"
       ],
-      "cn_description": "坐位性爱/跨坐在膝盖上",
-      "raw_en": "sitting on lap, upright straddle"
+      "cn_description": "跨坐在膝盖上",
+      "raw_en": "upright straddle"
     },
     {
       "en_tags": [
-        "sex from behind",
+        "sex from behind"
+      ],
+      "cn_description": "后入位",
+      "raw_en": "sex from behind"
+    },
+    {
+      "en_tags": [
         "doggystyle"
       ],
-      "cn_description": "后入位/狗刨式交配",
-      "raw_en": "sex from behind, doggystyle"
+      "cn_description": "狗刨式交配",
+      "raw_en": "doggystyle"
     },
     {
       "en_tags": [
-        "carrying",
+        "carrying"
+      ],
+      "cn_description": "火车便当",
+      "raw_en": "carrying"
+    },
+    {
+      "en_tags": [
         "suspended congress"
       ],
-      "cn_description": "火车便当/悬空抱起正面交配",
-      "raw_en": "carrying, suspended congress"
+      "cn_description": "悬空抱起正面交配",
+      "raw_en": "suspended congress"
     },
     {
       "en_tags": [
-        "mating press",
+        "mating press"
+      ],
+      "cn_description": "种付",
+      "raw_en": "mating press"
+    },
+    {
+      "en_tags": [
         "male fully covers female"
       ],
-      "cn_description": "种付/男方全身压住侵犯",
-      "raw_en": "mating press, male fully covers female"
+      "cn_description": "男方全身压住侵犯",
+      "raw_en": "male fully covers female"
     },
     {
       "en_tags": [
-        "cowgirl position",
+        "cowgirl position"
+      ],
+      "cn_description": "骑乘位",
+      "raw_en": "cowgirl position"
+    },
+    {
+      "en_tags": [
         "girl on top"
       ],
-      "cn_description": "骑乘位/女在上主导榨取",
-      "raw_en": "cowgirl position, girl on top"
+      "cn_description": "女在上主导榨取",
+      "raw_en": "girl on top"
     },
     {
       "en_tags": [
-        "sleeping",
-        "closed eyes",
+        "sleeping"
+      ],
+      "cn_description": "睡眠",
+      "raw_en": "sleeping"
+    },
+    {
+      "en_tags": [
+        "closed eyes"
+      ],
+      "cn_description": "闭眼",
+      "raw_en": "closed eyes"
+    },
+    {
+      "en_tags": [
         "zzz"
       ],
-      "cn_description": "睡眠/无意识 (睡奸体位)",
-      "raw_en": "sleeping, closed eyes, zzz"
+      "cn_description": "入睡符号",
+      "raw_en": "zzz"
     },
     {
       "en_tags": [
-        "hypnosis",
-        "spiral eyes",
+        "hypnosis"
+      ],
+      "cn_description": "催眠",
+      "raw_en": "hypnosis"
+    },
+    {
+      "en_tags": [
+        "spiral eyes"
+      ],
+      "cn_description": "螺旋眼",
+      "raw_en": "spiral eyes"
+    },
+    {
+      "en_tags": [
         "zombie pose"
       ],
-      "cn_description": "催眠/空眼/僵尸站姿 (催眠play)",
-      "raw_en": "hypnosis, spiral eyes, zombie pose"
+      "cn_description": "僵尸站姿",
+      "raw_en": "zombie pose"
     },
     {
       "en_tags": [
-        "facesitting",
+        "facesitting"
+      ],
+      "cn_description": "坐脸play",
+      "raw_en": "facesitting"
+    },
+    {
+      "en_tags": [
         "sitting on face"
       ],
-      "cn_description": "坐脸play (Femdom女帝)",
-      "raw_en": "facesitting, sitting on face"
+      "cn_description": "坐脸play",
+      "raw_en": "sitting on face"
     },
     {
       "en_tags": [
@@ -1631,38 +2880,80 @@
     },
     {
       "en_tags": [
-        "strangling",
-        "asphyxiation",
+        "strangling"
+      ],
+      "cn_description": "扼喉",
+      "raw_en": "strangling"
+    },
+    {
+      "en_tags": [
+        "asphyxiation"
+      ],
+      "cn_description": "窒息",
+      "raw_en": "asphyxiation"
+    },
+    {
+      "en_tags": [
         "rough sex"
       ],
-      "cn_description": "扼喉/窒息/粗暴猛烈性爱 (过激)",
-      "raw_en": "strangling, asphyxiation, rough sex"
+      "cn_description": "粗暴性爱",
+      "raw_en": "rough sex"
     },
     {
       "en_tags": [
-        "spitroast",
-        "2boys",
+        "spitroast"
+      ],
+      "cn_description": "前后夹击",
+      "raw_en": "spitroast"
+    },
+    {
+      "en_tags": [
+        "2boys"
+      ],
+      "cn_description": "2男",
+      "raw_en": "2boys"
+    },
+    {
+      "en_tags": [
         "group sex"
       ],
-      "cn_description": "前后夹击/2男前后同入 (多人)",
-      "raw_en": "spitroast, 2boys, group sex"
+      "cn_description": "多人群交",
+      "raw_en": "group sex"
     },
     {
       "en_tags": [
-        "triple penetration",
+        "triple penetration"
+      ],
+      "cn_description": "三穴同入",
+      "raw_en": "triple penetration"
+    },
+    {
+      "en_tags": [
         "3boys"
       ],
-      "cn_description": "三穴同入/3男轮奸 (极深RBQ)",
-      "raw_en": "triple penetration, 3boys"
+      "cn_description": "3男",
+      "raw_en": "3boys"
     },
     {
       "en_tags": [
-        "tribadism",
-        "scissoring",
+        "tribadism"
+      ],
+      "cn_description": "磨镜",
+      "raw_en": "tribadism"
+    },
+    {
+      "en_tags": [
+        "scissoring"
+      ],
+      "cn_description": "剪刀式",
+      "raw_en": "scissoring"
+    },
+    {
+      "en_tags": [
         "pussy to pussy"
       ],
-      "cn_description": "磨镜/百合私处纯磨擦 (百合)",
-      "raw_en": "tribadism, scissoring, pussy to pussy"
+      "cn_description": "私处对磨",
+      "raw_en": "pussy to pussy"
     },
     {
       "en_tags": [
@@ -1673,31 +2964,61 @@
     },
     {
       "en_tags": [
-        "train",
-        "crowded train",
-        "handrail"
+        "train"
       ],
-      "cn_description": "电车/挤爆的电车/拉手 (痴汉)",
-      "raw_en": "train, crowded train, handrail"
+      "cn_description": "电车",
+      "raw_en": "train"
     },
     {
       "en_tags": [
-        "digital glitch effects",
+        "crowded train"
+      ],
+      "cn_description": "挤满的电车",
+      "raw_en": "crowded train"
+    },
+    {
+      "en_tags": [
+        "handrail"
+      ],
+      "cn_description": "拉手",
+      "raw_en": "handrail"
+    },
+    {
+      "en_tags": [
+        "digital glitch effects"
+      ],
+      "cn_description": "数字故障艺术",
+      "raw_en": "digital glitch effects"
+    },
+    {
+      "en_tags": [
         "VHS distortion"
       ],
-      "cn_description": "数字故障艺术/CRT录像带噪点 (偷拍催眠)",
-      "raw_en": "digital glitch effects, VHS distortion"
+      "cn_description": "VHS录像带噪点",
+      "raw_en": "VHS distortion"
     }
   ],
   "表情/身体反应/体液": [
     {
       "en_tags": [
-        "moaning",
-        "panting",
+        "moaning"
+      ],
+      "cn_description": "呻吟",
+      "raw_en": "moaning"
+    },
+    {
+      "en_tags": [
+        "panting"
+      ],
+      "cn_description": "喘息",
+      "raw_en": "panting"
+    },
+    {
+      "en_tags": [
         "heavy breathing"
       ],
-      "cn_description": "呻吟/喘息/粗重急促的呼吸",
-      "raw_en": "moaning, panting, heavy breathing"
+      "cn_description": "粗重呼吸",
+      "raw_en": "heavy breathing"
     },
     {
       "en_tags": [
@@ -1708,138 +3029,276 @@
     },
     {
       "en_tags": [
-        "shy",
-        "embarrassed",
+        "shy"
+      ],
+      "cn_description": "害羞",
+      "raw_en": "shy"
+    },
+    {
+      "en_tags": [
+        "embarrassed"
+      ],
+      "cn_description": "羞耻",
+      "raw_en": "embarrassed"
+    },
+    {
+      "en_tags": [
         "ashamed"
       ],
-      "cn_description": "害羞/内疚羞耻/面部遮挡",
-      "raw_en": "shy, embarrassed, ashamed"
+      "cn_description": "内疚",
+      "raw_en": "ashamed"
     },
     {
       "en_tags": [
-        "ahegao",
-        "tongue out",
+        "ahegao"
+      ],
+      "cn_description": "阿黑颜",
+      "raw_en": "ahegao"
+    },
+    {
+      "en_tags": [
+        "tongue out"
+      ],
+      "cn_description": "吐舌头",
+      "raw_en": "tongue out"
+    },
+    {
+      "en_tags": [
         "drooling"
       ],
-      "cn_description": "阿黑颜/吐舌头/流口水 (失神)",
-      "raw_en": "ahegao, tongue out, drooling"
+      "cn_description": "流口水",
+      "raw_en": "drooling"
     },
     {
       "en_tags": [
-        "fucked silly",
+        "fucked silly"
+      ],
+      "cn_description": "彻底坏掉",
+      "raw_en": "fucked silly"
+    },
+    {
+      "en_tags": [
         "mind break"
       ],
-      "cn_description": "彻底坏掉/精神崩溃 (极限高潮)",
-      "raw_en": "fucked silly, mind break"
+      "cn_description": "精神崩溃",
+      "raw_en": "mind break"
     },
     {
       "en_tags": [
-        "orgasm",
-        "arched back",
+        "orgasm"
+      ],
+      "cn_description": "高潮",
+      "raw_en": "orgasm"
+    },
+    {
+      "en_tags": [
+        "arched back"
+      ],
+      "cn_description": "反弓腰",
+      "raw_en": "arched back"
+    },
+    {
+      "en_tags": [
         "toes curling"
       ],
-      "cn_description": "高潮反应/反弓腰/脚趾抓地",
-      "raw_en": "orgasm, arched back, toes curling"
+      "cn_description": "脚趾蜷缩",
+      "raw_en": "toes curling"
     },
     {
       "en_tags": [
-        "squirting",
+        "squirting"
+      ],
+      "cn_description": "潮喷",
+      "raw_en": "squirting"
+    },
+    {
+      "en_tags": [
         "female ejaculation"
       ],
-      "cn_description": "潮喷/爱液喷射 (高潮狂涌)",
-      "raw_en": "squirting, female ejaculation"
+      "cn_description": "爱液喷射",
+      "raw_en": "female ejaculation"
     },
     {
       "en_tags": [
-        "precum",
-        "cum inside",
+        "precum"
+      ],
+      "cn_description": "前列腺液",
+      "raw_en": "precum"
+    },
+    {
+      "en_tags": [
+        "cum inside"
+      ],
+      "cn_description": "体内射精",
+      "raw_en": "cum inside"
+    },
+    {
+      "en_tags": [
         "creampie"
       ],
-      "cn_description": "前列腺液/体内射精/内射灌满",
-      "raw_en": "precum, cum inside, creampie"
+      "cn_description": "内射灌满",
+      "raw_en": "creampie"
     },
     {
       "en_tags": [
-        "cum overflow",
-        "cum drip",
+        "cum overflow"
+      ],
+      "cn_description": "精液漫出",
+      "raw_en": "cum overflow"
+    },
+    {
+      "en_tags": [
+        "cum drip"
+      ],
+      "cn_description": "精液滴落",
+      "raw_en": "cum drip"
+    },
+    {
+      "en_tags": [
         "cum string"
       ],
-      "cn_description": "精液漫出/精液滴落/浓稠拉丝",
-      "raw_en": "cum overflow, cum drip, cum string"
+      "cn_description": "浓稠拉丝",
+      "raw_en": "cum string"
     },
     {
       "en_tags": [
-        "used condom",
+        "used condom"
+      ],
+      "cn_description": "已用避孕套",
+      "raw_en": "used condom"
+    },
+    {
+      "en_tags": [
         "many used condoms"
       ],
-      "cn_description": "已用避孕套/满地避孕套 (事后)",
-      "raw_en": "used condom, many used condoms"
+      "cn_description": "满地避孕套",
+      "raw_en": "many used condoms"
     },
     {
       "en_tags": [
-        "rope marks",
-        "red marks",
+        "rope marks"
+      ],
+      "cn_description": "绳痕",
+      "raw_en": "rope marks"
+    },
+    {
+      "en_tags": [
+        "red marks"
+      ],
+      "cn_description": "红印",
+      "raw_en": "red marks"
+    },
+    {
+      "en_tags": [
         "skindentation"
       ],
-      "cn_description": "勒痕/红印/绳缚痕迹 (真实细节)",
-      "raw_en": "rope marks, red marks, skindentation"
+      "cn_description": "勒痕",
+      "raw_en": "skindentation"
     },
     {
       "en_tags": [
-        "hickey",
+        "hickey"
+      ],
+      "cn_description": "吻痕",
+      "raw_en": "hickey"
+    },
+    {
+      "en_tags": [
         "bite marks"
       ],
-      "cn_description": "吻痕/咬痕",
-      "raw_en": "hickey, bite marks"
+      "cn_description": "咬痕",
+      "raw_en": "bite marks"
     },
     {
       "en_tags": [
-        "slap mark",
+        "slap mark"
+      ],
+      "cn_description": "击打掌印",
+      "raw_en": "slap mark"
+    },
+    {
+      "en_tags": [
         "red ass"
       ],
-      "cn_description": "击打掌印/拍红的屁股 (打屁股)",
-      "raw_en": "slap mark, red ass"
+      "cn_description": "拍红的屁股",
+      "raw_en": "red ass"
     },
     {
       "en_tags": [
-        "body writing",
+        "body writing"
+      ],
+      "cn_description": "身体写字",
+      "raw_en": "body writing"
+    },
+    {
+      "en_tags": [
         "tally marks"
       ],
-      "cn_description": "身体写字/计数正字 (调教)",
-      "raw_en": "body writing, tally marks"
+      "cn_description": "计数正字",
+      "raw_en": "tally marks"
     },
     {
       "en_tags": [
-        "before and after",
+        "before and after"
+      ],
+      "cn_description": "事前vs事后对比",
+      "raw_en": "before and after"
+    },
+    {
+      "en_tags": [
         "2koma"
       ],
-      "cn_description": "事前vs事后对比/两格漫画差分",
-      "raw_en": "before and after, 2koma"
+      "cn_description": "两格漫画差分",
+      "raw_en": "2koma"
     },
     {
       "en_tags": [
-        "love hotel",
+        "love hotel"
+      ],
+      "cn_description": "情趣酒店",
+      "raw_en": "love hotel"
+    },
+    {
+      "en_tags": [
         "hotel room"
       ],
-      "cn_description": "情趣酒店/宾馆大床 (出轨/事后)",
-      "raw_en": "love hotel, hotel room"
+      "cn_description": "宾馆大床",
+      "raw_en": "hotel room"
     },
     {
       "en_tags": [
-        "dungeon",
-        "stone wall",
+        "dungeon"
+      ],
+      "cn_description": "地牢",
+      "raw_en": "dungeon"
+    },
+    {
+      "en_tags": [
+        "stone wall"
+      ],
+      "cn_description": "石墙",
+      "raw_en": "stone wall"
+    },
+    {
+      "en_tags": [
         "chains"
       ],
-      "cn_description": "地牢/石墙/镣铐铁链 (束缚调教)",
-      "raw_en": "dungeon, stone wall, chains"
+      "cn_description": "镣铐铁链",
+      "raw_en": "chains"
     },
     {
       "en_tags": [
-        "ethereal",
+        "ethereal"
+      ],
+      "cn_description": "空灵",
+      "raw_en": "ethereal"
+    },
+    {
+      "en_tags": [
         "dreamlike"
       ],
-      "cn_description": "空灵/像梦境一般 (失神高潮)",
-      "raw_en": "ethereal, dreamlike"
+      "cn_description": "像梦境一般",
+      "raw_en": "dreamlike"
     }
   ],
   "景别/视角/POV": [
@@ -1852,11 +3311,17 @@
     },
     {
       "en_tags": [
-        "upper body",
+        "upper body"
+      ],
+      "cn_description": "半身照",
+      "raw_en": "upper body"
+    },
+    {
+      "en_tags": [
         "bust shot"
       ],
-      "cn_description": "半身照/胸像 (诱惑)",
-      "raw_en": "upper body, bust shot"
+      "cn_description": "胸像",
+      "raw_en": "bust shot"
     },
     {
       "en_tags": [
@@ -1867,11 +3332,17 @@
     },
     {
       "en_tags": [
-        "full body",
+        "full body"
+      ],
+      "cn_description": "全身照",
+      "raw_en": "full body"
+    },
+    {
+      "en_tags": [
         "full shot"
       ],
-      "cn_description": "全身照 (展示服装与体位)",
-      "raw_en": "full body, full shot"
+      "cn_description": "全身照",
+      "raw_en": "full shot"
     },
     {
       "en_tags": [
@@ -1882,52 +3353,94 @@
     },
     {
       "en_tags": [
-        "from front",
+        "from front"
+      ],
+      "cn_description": "正面视角",
+      "raw_en": "from front"
+    },
+    {
+      "en_tags": [
         "front view"
       ],
       "cn_description": "正面视角",
-      "raw_en": "from front, front view"
+      "raw_en": "front view"
     },
     {
       "en_tags": [
-        "from side",
+        "from side"
+      ],
+      "cn_description": "侧面视角",
+      "raw_en": "from side"
+    },
+    {
+      "en_tags": [
         "profile"
       ],
-      "cn_description": "侧面视角 (体现插入深度)",
-      "raw_en": "from side, profile"
+      "cn_description": "侧面视角",
+      "raw_en": "profile"
     },
     {
       "en_tags": [
-        "from behind",
+        "from behind"
+      ],
+      "cn_description": "背面视角",
+      "raw_en": "from behind"
+    },
+    {
+      "en_tags": [
         "back view"
       ],
-      "cn_description": "背面视角 (臀部/后入特化)",
-      "raw_en": "from behind, back view"
+      "cn_description": "背面视角",
+      "raw_en": "back view"
     },
     {
       "en_tags": [
-        "from below",
+        "from below"
+      ],
+      "cn_description": "仰视角度",
+      "raw_en": "from below"
+    },
+    {
+      "en_tags": [
         "low angle"
       ],
-      "cn_description": "仰视角度 (骑乘/坐脸)",
-      "raw_en": "from below, low angle"
+      "cn_description": "仰视角度",
+      "raw_en": "low angle"
     },
     {
       "en_tags": [
-        "pov",
-        "pov hands",
+        "pov"
+      ],
+      "cn_description": "第一人称视角",
+      "raw_en": "pov"
+    },
+    {
+      "en_tags": [
+        "pov hands"
+      ],
+      "cn_description": "双手入镜",
+      "raw_en": "pov hands"
+    },
+    {
+      "en_tags": [
         "pov crotch"
       ],
-      "cn_description": "男方视角/双手入镜/第一人称胯部",
-      "raw_en": "pov, pov hands, pov crotch"
+      "cn_description": "第一人称胯部",
+      "raw_en": "pov crotch"
     },
     {
       "en_tags": [
-        "female pov",
+        "female pov"
+      ],
+      "cn_description": "女方视角",
+      "raw_en": "female pov"
+    },
+    {
+      "en_tags": [
         "head out of frame"
       ],
-      "cn_description": "女方视角 (看不到头，匿名的色气)",
-      "raw_en": "female pov, head out of frame"
+      "cn_description": "女方视角",
+      "raw_en": "head out of frame"
     },
     {
       "en_tags": [
@@ -1940,143 +3453,285 @@
   "场景/细节道具": [
     {
       "en_tags": [
-        "bedroom",
-        "on bed",
+        "bedroom"
+      ],
+      "cn_description": "卧室",
+      "raw_en": "bedroom"
+    },
+    {
+      "en_tags": [
+        "on bed"
+      ],
+      "cn_description": "床上",
+      "raw_en": "on bed"
+    },
+    {
+      "en_tags": [
         "bed sheet"
       ],
-      "cn_description": "卧室/床上/床单 (安全私密)",
-      "raw_en": "bedroom, on bed, bed sheet"
+      "cn_description": "床单",
+      "raw_en": "bed sheet"
     },
     {
       "en_tags": [
-        "bathroom",
-        "shower",
-        "bathtub",
+        "bathroom"
+      ],
+      "cn_description": "浴室",
+      "raw_en": "bathroom"
+    },
+    {
+      "en_tags": [
+        "shower"
+      ],
+      "cn_description": "花洒",
+      "raw_en": "shower"
+    },
+    {
+      "en_tags": [
+        "bathtub"
+      ],
+      "cn_description": "浴缸",
+      "raw_en": "bathtub"
+    },
+    {
+      "en_tags": [
         "steam"
       ],
-      "cn_description": "浴室/花洒下/浴缸/蒸汽 (湿滑)",
-      "raw_en": "bathroom, shower, bathtub, steam"
+      "cn_description": "蒸汽",
+      "raw_en": "steam"
     },
     {
       "en_tags": [
-        "couch",
+        "couch"
+      ],
+      "cn_description": "客厅沙发",
+      "raw_en": "couch"
+    },
+    {
+      "en_tags": [
         "sofa"
       ],
-      "cn_description": "客厅沙发 (半私密匆忙激情)",
-      "raw_en": "couch, sofa"
+      "cn_description": "客厅沙发",
+      "raw_en": "sofa"
     },
     {
       "en_tags": [
-        "office",
-        "desk",
+        "office"
+      ],
+      "cn_description": "办公室",
+      "raw_en": "office"
+    },
+    {
+      "en_tags": [
+        "desk"
+      ],
+      "cn_description": "办公桌",
+      "raw_en": "desk"
+    },
+    {
+      "en_tags": [
         "office chair"
       ],
-      "cn_description": "办公室/办公桌底/转椅 (加班胁迫)",
-      "raw_en": "office, desk, office chair"
+      "cn_description": "转椅",
+      "raw_en": "office chair"
     },
     {
       "en_tags": [
-        "classroom",
+        "classroom"
+      ],
+      "cn_description": "教室",
+      "raw_en": "classroom"
+    },
+    {
+      "en_tags": [
         "school desk"
       ],
-      "cn_description": "教室/学生课桌 (校园禁忌)",
-      "raw_en": "classroom, school desk"
+      "cn_description": "学生课桌",
+      "raw_en": "school desk"
     },
     {
       "en_tags": [
-        "fitting room",
-        "curtain",
+        "fitting room"
+      ],
+      "cn_description": "试衣间",
+      "raw_en": "fitting room"
+    },
+    {
+      "en_tags": [
+        "curtain"
+      ],
+      "cn_description": "布帘",
+      "raw_en": "curtain"
+    },
+    {
+      "en_tags": [
         "mirror"
       ],
-      "cn_description": "商场试衣间/布帘/试衣镜",
-      "raw_en": "fitting room, curtain, mirror"
+      "cn_description": "镜子",
+      "raw_en": "mirror"
     },
     {
       "en_tags": [
-        "park",
-        "park bench",
+        "park"
+      ],
+      "cn_description": "公园",
+      "raw_en": "park"
+    },
+    {
+      "en_tags": [
+        "park bench"
+      ],
+      "cn_description": "公园长椅",
+      "raw_en": "park bench"
+    },
+    {
+      "en_tags": [
         "outdoors"
       ],
-      "cn_description": "公园长椅/户外 (大露特露)",
-      "raw_en": "park, park bench, outdoors"
+      "cn_description": "户外",
+      "raw_en": "outdoors"
     },
     {
       "en_tags": [
-        "onsen",
-        "steam",
+        "onsen"
+      ],
+      "cn_description": "温泉",
+      "raw_en": "onsen"
+    },
+    {
+      "en_tags": [
         "wooden bath"
       ],
-      "cn_description": "温泉/桑拿热汽/木桶浴",
-      "raw_en": "onsen, steam, wooden bath"
+      "cn_description": "木桶浴",
+      "raw_en": "wooden bath"
     },
     {
       "en_tags": [
-        "against window",
-        "glass",
+        "against window"
+      ],
+      "cn_description": "贴窗",
+      "raw_en": "against window"
+    },
+    {
+      "en_tags": [
+        "glass"
+      ],
+      "cn_description": "玻璃",
+      "raw_en": "glass"
+    },
+    {
+      "en_tags": [
         "city view"
       ],
-      "cn_description": "在窗边贴着玻璃/城市夜景 (窗外偷窥)",
-      "raw_en": "against window, glass, city view"
+      "cn_description": "城市夜景",
+      "raw_en": "city view"
     },
     {
       "en_tags": [
-        "rain",
-        "snow",
-        "fog",
-        "steam"
+        "rain"
       ],
-      "cn_description": "下雨/下雪/大雾/物理蒸汽 (可用环境)",
-      "raw_en": "rain, snow, fog, steam"
+      "cn_description": "下雨",
+      "raw_en": "rain"
     },
     {
       "en_tags": [
-        "dark room",
+        "snow"
+      ],
+      "cn_description": "下雪",
+      "raw_en": "snow"
+    },
+    {
+      "en_tags": [
+        "fog"
+      ],
+      "cn_description": "大雾",
+      "raw_en": "fog"
+    },
+    {
+      "en_tags": [
+        "dark room"
+      ],
+      "cn_description": "小黑屋",
+      "raw_en": "dark room"
+    },
+    {
+      "en_tags": [
         "dim lighting"
       ],
-      "cn_description": "小黑屋/昏暗环境 (夜里幽密)",
-      "raw_en": "dark room, dim lighting"
+      "cn_description": "昏暗环境",
+      "raw_en": "dim lighting"
     },
     {
       "en_tags": [
-        "used condom on floor",
+        "used condom on floor"
+      ],
+      "cn_description": "满地的衣物",
+      "raw_en": "used condom on floor"
+    },
+    {
+      "en_tags": [
         "scattered clothes"
       ],
-      "cn_description": "满地的衣物/扔在床底的避孕套",
-      "raw_en": "used condom on floor, scattered clothes"
+      "cn_description": "扔在床底的避孕套",
+      "raw_en": "scattered clothes"
     }
   ],
   "质感/运动/特效": [
     {
       "en_tags": [
-        "ink splash",
+        "ink splash"
+      ],
+      "cn_description": "写意水墨泼墨",
+      "raw_en": "ink splash"
+    },
+    {
+      "en_tags": [
         "watercolor texture"
       ],
-      "cn_description": "写意水墨泼墨/水彩质感 (古风极高档)",
-      "raw_en": "ink splash, watercolor texture"
+      "cn_description": "水彩质感",
+      "raw_en": "watercolor texture"
     },
     {
       "en_tags": [
-        "sketch",
+        "sketch"
+      ],
+      "cn_description": "素描风",
+      "raw_en": "sketch"
+    },
+    {
+      "en_tags": [
         "lineart"
       ],
-      "cn_description": "素描风/线性草稿",
-      "raw_en": "sketch, lineart"
+      "cn_description": "线性草稿",
+      "raw_en": "lineart"
     },
     {
       "en_tags": [
-        "film grain",
+        "film grain"
+      ],
+      "cn_description": "老电影胶片颗粒感",
+      "raw_en": "film grain"
+    },
+    {
+      "en_tags": [
         "vintage film grain"
       ],
-      "cn_description": "老电影胶片颗粒感 (偷拍记录真实感)",
-      "raw_en": "film grain, vintage film grain"
+      "cn_description": "老电影胶片颗粒感",
+      "raw_en": "vintage film grain"
     },
     {
       "en_tags": [
-        "motion lines",
+        "motion lines"
+      ],
+      "cn_description": "运动线",
+      "raw_en": "motion lines"
+    },
+    {
+      "en_tags": [
         "speed lines"
       ],
-      "cn_description": "漫画式运动抽插线/速度线 (激烈活塞)",
-      "raw_en": "motion lines, speed lines"
+      "cn_description": "速度线",
+      "raw_en": "speed lines"
     },
     {
       "en_tags": [
@@ -2087,44 +3742,80 @@
     },
     {
       "en_tags": [
-        "depth of field",
-        "shallow depth of field",
+        "depth of field"
+      ],
+      "cn_description": "景深",
+      "raw_en": "depth of field"
+    },
+    {
+      "en_tags": [
+        "shallow depth of field"
+      ],
+      "cn_description": "浅景深虚化",
+      "raw_en": "shallow depth of field"
+    },
+    {
+      "en_tags": [
         "bokeh"
       ],
-      "cn_description": "景深虚化背景/光斑 (浪漫特写)",
-      "raw_en": "depth of field, shallow depth of field, bokeh"
+      "cn_description": "光斑",
+      "raw_en": "bokeh"
     },
     {
       "en_tags": [
-        "silhouette",
+        "silhouette"
+      ],
+      "cn_description": "背光剪影",
+      "raw_en": "silhouette"
+    },
+    {
+      "en_tags": [
         "backlit silhouette"
       ],
-      "cn_description": "背光剪影 (磨砂玻璃/神秘遮挡)",
-      "raw_en": "silhouette, backlit silhouette"
+      "cn_description": "背光剪影",
+      "raw_en": "backlit silhouette"
     },
     {
       "en_tags": [
-        "lens flare",
+        "lens flare"
+      ],
+      "cn_description": "镜头逆光光晕",
+      "raw_en": "lens flare"
+    },
+    {
+      "en_tags": [
         "bloom"
       ],
-      "cn_description": "镜头逆光光晕/强光高亮溢出",
-      "raw_en": "lens flare, bloom"
+      "cn_description": "强光高亮溢出",
+      "raw_en": "bloom"
     },
     {
       "en_tags": [
-        "cinematic",
+        "cinematic"
+      ],
+      "cn_description": "电影级构图",
+      "raw_en": "cinematic"
+    },
+    {
+      "en_tags": [
         "dramatic tension"
       ],
-      "cn_description": "电影级构图/戏剧性张力 (氛围高档)",
-      "raw_en": "cinematic, dramatic tension"
+      "cn_description": "戏剧性张力",
+      "raw_en": "dramatic tension"
     },
     {
       "en_tags": [
-        "dark atmosphere",
+        "dark atmosphere"
+      ],
+      "cn_description": "暗黑压抑",
+      "raw_en": "dark atmosphere"
+    },
+    {
+      "en_tags": [
         "suspenseful"
       ],
-      "cn_description": "暗黑压抑/悬疑紧张 (胁迫过激)",
-      "raw_en": "dark atmosphere, suspenseful"
+      "cn_description": "悬疑紧张",
+      "raw_en": "suspenseful"
     }
   ]
 }
