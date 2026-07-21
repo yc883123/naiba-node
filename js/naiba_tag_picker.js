@@ -1063,9 +1063,18 @@ app.registerExtension({
             container.appendChild(clearBtn);
             container.appendChild(openBtn);
 
+            const measureContainerHeight = () => {
+                const h = Math.ceil(container.scrollHeight || 0);
+                // 未布局（scrollHeight 仍为 0）时用保守保底，其余一律按真实内容高度，
+                // 不再使用硬编码 200 下限，避免矮节点被撑成约 2 倍高。
+                return h > 0 ? h : 120;
+            };
             const domWidget = node.addDOMWidget("tag_picker_container", "TAG_PICKER_CONTAINER", container, {
                 getValue() { return ""; },
                 setValue() {},
+                getMinHeight() {
+                    return measureContainerHeight();
+                },
             });
 
             // 修复：ComfyUI 会给 DOM 面板注入 h-full，父容器初始高度 0 时面板塌缩，
@@ -1080,6 +1089,31 @@ app.registerExtension({
 
             node.minWidth = 240;
             node.minHeight = 180;
+
+            container.style.overflow = "hidden";
+            domWidget.computeSize = (w) => [w, measureContainerHeight()];
+
+            // 初次 computeSize 测量时节点 DOM 尚未布局，宽度未定会导致 scrollHeight 误测成约 2 倍。
+            // 这里在容器真正布局、宽度稳定后调用 node.setSize 把节点高度收敛到真实内容高度。
+            const applyContainerHeight = () => {
+                if (typeof node.computeSize !== "function") return;
+                const cs = node.computeSize();
+                if (!cs || !cs[1]) return;
+                if (Math.abs((node.size?.[1] || 0) - cs[1]) > 4) {
+                    node.setSize?.([node.size[0], cs[1]]);
+                }
+                node.setDirtyCanvas?.(true, true);
+                node.graph?.setDirtyCanvas(true, true);
+            };
+
+            let _resizeRaf = null;
+            if (typeof ResizeObserver !== "undefined") {
+                new ResizeObserver(() => {
+                    if (_resizeRaf) cancelAnimationFrame(_resizeRaf);
+                    _resizeRaf = requestAnimationFrame(applyContainerHeight);
+                }).observe(container);
+            }
+            requestAnimationFrame(applyContainerHeight);
         };
     },
 });

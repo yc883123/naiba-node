@@ -851,9 +851,18 @@ app.registerExtension({
             container.appendChild(openBtn);
             container.appendChild(clearBtn);
 
+            const measureContainerHeight = () => {
+                const h = Math.ceil(container.scrollHeight || 0);
+                // 未布局（scrollHeight 仍为 0）时用保守保底，其余一律按真实内容高度，
+                // 不再使用硬编码 200 下限，避免矮节点被撑成约 2 倍高。
+                return h > 0 ? h : 120;
+            };
             const domWidget = node.addDOMWidget("anima_container", "ANIMA_CONTAINER", container, {
                 getValue() { return ""; },
                 setValue() {},
+                getMinHeight() {
+                    return measureContainerHeight();
+                },
             });
             const panelEl = domWidget.element || container;
             [panelEl, container].forEach((elx) => {
@@ -865,6 +874,31 @@ app.registerExtension({
 
             node.minWidth = 260;
             node.minHeight = 180;
+
+            container.style.overflow = "hidden";
+            domWidget.computeSize = (w) => [w, measureContainerHeight()];
+
+            // 初次 computeSize 测量时节点 DOM 尚未布局，宽度未定会导致 scrollHeight 误测成约 2 倍。
+            // 这里在容器真正布局、宽度稳定后调用 node.setSize 把节点高度收敛到真实内容高度。
+            const applyContainerHeight = () => {
+                if (typeof node.computeSize !== "function") return;
+                const cs = node.computeSize();
+                if (!cs || !cs[1]) return;
+                if (Math.abs((node.size?.[1] || 0) - cs[1]) > 4) {
+                    node.setSize?.([node.size[0], cs[1]]);
+                }
+                node.setDirtyCanvas?.(true, true);
+                node.graph?.setDirtyCanvas(true, true);
+            };
+
+            let _resizeRaf = null;
+            if (typeof ResizeObserver !== "undefined") {
+                new ResizeObserver(() => {
+                    if (_resizeRaf) cancelAnimationFrame(_resizeRaf);
+                    _resizeRaf = requestAnimationFrame(applyContainerHeight);
+                }).observe(container);
+            }
+            requestAnimationFrame(applyContainerHeight);
         };
     },
 });
