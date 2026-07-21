@@ -104,7 +104,14 @@ function setWidget(node, name, value) {
 
 function previewSize() { return parseInt(getWidget(nodeRef, "preview_size", 220), 10) || 220; }
 function cacheOn() { return getWidget(nodeRef, "cache_enabled", true) ? 1 : 0; }
-function cacheMax() { return parseInt(getWidget(nodeRef, "cache_max_items", 300), 10) || 300; }
+function cacheMax() { return parseInt(getWidget(nodeRef, "cache_max_mb", 500), 10) || 500; }
+
+// ========== 页面关闭时停止预加载 ==========
+window.addEventListener('beforeunload', () => {
+    try {
+        fetch('/naiba/tag/preload?action=stop', { keepalive: true });
+    } catch (e) { /* ignore */ }
+});
 
 // ========== 版本化持久化 ==========
 function serializeList(arr) { return JSON.stringify({ version: 1, items: arr }); }
@@ -230,7 +237,7 @@ async function doSearch(cat) {
     const category = TAB_CAT[cat];
     const q = ts.query;
     // 画师页支持「仅单画师」：用 name_matches 收紧；这里直接走 search
-    const path = `/naiba/tag/search?q=${encodeURIComponent(q)}&cat=${encodeURIComponent(category)}&limit=${encodeURIComponent(getWidget(nodeRef, "max_images", 9))}&page=${ts.page}`;
+    const path = `/naiba/tag/search?q=${encodeURIComponent(q)}&cat=${encodeURIComponent(category)}&limit=${encodeURIComponent(getWidget(nodeRef, "max_images", 9))}&page=${ts.page}&cache=${cacheOn()}&max=${cacheMax()}`;
     try {
         const data = await apiGetJson(path);
         if (seq !== ts.seq) return; // 过期请求，丢弃
@@ -532,8 +539,8 @@ function buildSettingsPanel() {
     mainScroll.innerHTML = "";
     const wrap = el("div", { class: "tp-gacha", style: "padding:16px 18px;max-width:560px;" });
 
-    wrap.appendChild(el("div", { class: "tp-gacha-sub" }, "预览图缓存"));
-    wrap.appendChild(el("div", { class: "tp-gacha-hint" }, "开启后预览图写入节点目录 preview_cache/，重启后保留；关闭则仅本次会话内存缓存。"));
+    wrap.appendChild(el("div", { class: "tp-gacha-sub" }, "本地缓存"));
+    wrap.appendChild(el("div", { class: "tp-gacha-hint" }, "开启后预览图和标签搜索结果写入 preview_cache/ 目录，重启后保留；关闭则仅本次会话内存缓存。"));
 
     const cacheRow = el("div", { class: "tp-gacha-row" });
     const cacheChk = el("input", { type: "checkbox" });
@@ -543,19 +550,56 @@ function buildSettingsPanel() {
     wrap.appendChild(cacheRow);
 
     const maxRow = el("div", { class: "tp-gacha-row" });
-    const maxNum = el("input", { class: "tp-mini-num", type: "number", min: "10", max: "5000", step: "10", value: String(getWidget(nodeRef, "cache_max_items", 300)) });
-    maxNum.addEventListener("change", () => { const v = Math.max(10, Math.min(5000, parseInt(maxNum.value, 10) || 300)); maxNum.value = String(v); setWidget(nodeRef, "cache_max_items", v); flashStatus("缓存文件数上限：" + v); });
-    maxRow.append(el("div", { class: "tp-gacha-rowlabel" }, "文件数"), maxNum);
+    const maxNum = el("input", { class: "tp-mini-num", type: "number", min: "100", max: "20000", step: "100", value: String(getWidget(nodeRef, "cache_max_mb", 500)) });
+    maxNum.addEventListener("change", () => { const v = Math.max(100, Math.min(20000, parseInt(maxNum.value, 10) || 500)); maxNum.value = String(v); setWidget(nodeRef, "cache_max_mb", v); flashStatus("缓存大小上限：" + v + " MB"); refreshCacheStatus(); });
+    maxRow.append(el("div", { class: "tp-gacha-rowlabel" }, "大小(MB)"), maxNum);
     wrap.appendChild(maxRow);
 
-    wrap.appendChild(el("div", { class: "tp-gacha-sub", style: "margin-top:18px;" }, "外部随机"));
-    const syncRow = el("div", { class: "tp-gacha-row" });
-    const syncChk = el("input", { type: "checkbox" });
-    syncChk.checked = !!getWidget(nodeRef, "sync_external_random", false);
-    syncChk.addEventListener("change", () => { setWidget(nodeRef, "sync_external_random", syncChk.checked); flashStatus("外部随机同步：" + (syncChk.checked ? "开" : "关")); });
-    syncRow.append(el("div", { class: "tp-gacha-rowlabel" }, "随机同步弹窗"), syncChk);
-    wrap.appendChild(syncRow);
-    wrap.appendChild(el("div", { class: "tp-gacha-hint" }, "开启：节点上「随机生成」=完全随机并同步到弹窗；关闭：按原方式随机且不主动同步弹窗。"));
+    // 缓存状态显示
+    const cacheStatusRow = el("div", { class: "tp-gacha-row", style: "min-height:auto;padding:6px 0;" });
+    const cacheStatusText = el("div", { style: `font-size:11px;color:${COLORS.muted};flex:1;` }, "加载中...");
+    cacheStatusRow.append(el("div", { class: "tp-gacha-rowlabel" }, "当前用量"), cacheStatusText);
+    wrap.appendChild(cacheStatusRow);
+
+    // 清理缓存按钮
+    const clearRow = el("div", { class: "tp-gacha-row", style: "min-height:auto;padding:6px 0;" });
+    const clearBtn = el("button", {
+        class: "tp-btn",
+        style: `font-size:11px;padding:4px 12px;background:${COLORS.warn};color:#fff;border:1px solid ${COLORS.warn};border-radius:5px;cursor:pointer;`,
+        onclick: async () => {
+            clearBtn.textContent = "清理中...";
+            clearBtn.disabled = true;
+            try {
+                const data = await apiGetJson(`/naiba/tag/cache_clear?cache=${cacheOn()}&max=${cacheMax()}`);
+                flashStatus(data.message || "已清理");
+                refreshCacheStatus();
+            } catch (e) {
+                flashStatus("清理失败");
+            }
+            clearBtn.textContent = "清理缓存";
+            clearBtn.disabled = false;
+        }
+    }, "清理缓存");
+    clearRow.append(el("div", { class: "tp-gacha-rowlabel" }, ""), clearBtn);
+    wrap.appendChild(clearRow);
+
+    // 刷新缓存状态
+    async function refreshCacheStatus() {
+        try {
+            const data = await apiGetJson(`/naiba/tag/cache_status?cache=${cacheOn()}&max=${cacheMax()}`);
+            if (data.enabled) {
+                cacheStatusText.textContent = `${data.cached_mb} / ${data.max_mb} MB (${data.usage_pct}%, ${data.count} 文件)`;
+                cacheStatusText.style.color = data.usage_pct > 90 ? COLORS.warn : COLORS.muted;
+            } else {
+                cacheStatusText.textContent = "未启用";
+                cacheStatusText.style.color = COLORS.muted;
+            }
+        } catch (e) {
+            cacheStatusText.textContent = "获取失败";
+            cacheStatusText.style.color = COLORS.warn;
+        }
+    }
+    refreshCacheStatus();
 
     mainScroll.appendChild(wrap);
     updatePager();
@@ -688,17 +732,15 @@ function clearGacha() {
     refreshGachaPreview();
 }
 
-// ========== 外部随机 ==========
+// ========== 外部随机（双向同步） ==========
     async function runExternalRandom(node) {
-        const sync = !!getWidget(node, "sync_external_random", false);
         const total = (node && node._randomTotal) ? node._randomTotal : 9;
         const tags = await fetchGachaByTotal(total);
-    gachaState.resultTags = tags.slice();
-    serializeGacha();
-    setWidget(node, "gacha_mode", true);
-    const modalOpen = !!currentModal;
-    if (sync || modalOpen) { renderResult(); refreshGachaCurrent(); refreshGachaPreview(); }
-}
+        gachaState.resultTags = tags.slice();
+        serializeGacha();
+        setWidget(node, "gacha_mode", true);
+        if (currentModal) { renderResult(); refreshGachaCurrent(); refreshGachaPreview(); }
+    }
 
 // ========== 恢复 ==========
 function restoreFromNode(node) {
@@ -716,9 +758,76 @@ function createTagPickerModal(node) {
     const modal = el("div", { class: "tp-modal" });
 
     // 标题栏
+    // D 站状态灯
+    const statusLight = el("div", { class: "tp-status-light", title: "D站: 检测中..." });
+    statusLight.style.cssText = `
+        width: 10px; height: 10px; border-radius: 50%;
+        background: ${COLORS.muted}; transition: background 0.3s, box-shadow 0.3s;
+        cursor: default; flex-shrink: 0;
+    `;
+    let danbooruOnline = null; // null=未知, true=在线, false=离线
+    function updateStatusLight(online) {
+        danbooruOnline = online;
+        if (online === true) {
+            statusLight.style.background = COLORS.success;
+            statusLight.style.boxShadow = `0 0 6px ${COLORS.success}`;
+            statusLight.title = "D站: 已连接";
+        } else if (online === false) {
+            statusLight.style.background = COLORS.error;
+            statusLight.style.boxShadow = `0 0 6px ${COLORS.error}`;
+            statusLight.title = "D站: 未连接";
+        } else {
+            statusLight.style.background = COLORS.muted;
+            statusLight.style.boxShadow = "none";
+            statusLight.title = "D站: 检测中...";
+        }
+    }
+    // 轮询 D 站状态
+    async function checkDanbooruStatus() {
+        try {
+            const data = await apiGetJson("/naiba/tag/status");
+            updateStatusLight(data.online === true);
+        } catch (e) {
+            updateStatusLight(false);
+        }
+    }
+    // 打开弹窗时首次探测，之后每 15s 轮询
+    checkDanbooruStatus();
+    const statusInterval = setInterval(checkDanbooruStatus, 15000);
+
+    // 预加载状态
+    const preloadStatusEl = el("div", { style: `font-size:11px;color:${COLORS.muted};white-space:nowrap;` }, "");
+    let preloadInterval = null;
+    async function checkPreloadStatus() {
+        try {
+            const data = await apiGetJson(`/naiba/tag/preload?action=status&cache=${cacheOn()}&max=${cacheMax()}`);
+            if (data.running) {
+                preloadStatusEl.textContent = `缓存预加载: ${data.progress}/${data.total} (${data.cached_mb}/${data.max_mb}MB)`;
+                preloadStatusEl.style.color = COLORS.accent;
+            } else if (data.message) {
+                preloadStatusEl.textContent = data.message;
+                preloadStatusEl.style.color = COLORS.muted;
+                if (preloadInterval) { clearInterval(preloadInterval); preloadInterval = null; }
+            }
+        } catch (e) { /* ignore */ }
+    }
+    // 自动启动预加载
+    async function startPreload() {
+        try {
+            await apiGetJson(`/naiba/tag/preload?action=start&cache=${cacheOn()}&max=${cacheMax()}`);
+            checkPreloadStatus();
+            preloadInterval = setInterval(checkPreloadStatus, 2000);
+        } catch (e) { /* ignore */ }
+    }
+    startPreload();
+
     const header = el("div", { class: "tp-header" },
         el("div", { class: "tp-title" }, "🎯 Naiba Tag Picker"),
-        el("div", { class: "tp-close", onclick: () => closeModal() }, "✕"),
+        el("div", { class: "tp-header-right", style: "display:flex;align-items:center;gap:12px;" },
+            preloadStatusEl,
+            statusLight,
+            el("div", { class: "tp-close", onclick: () => { clearInterval(statusInterval); if (preloadInterval) clearInterval(preloadInterval); closeModal(); } }, "✕"),
+        ),
     );
 
     // 标签页
@@ -783,10 +892,31 @@ function createTagPickerModal(node) {
     // 初始化
     restoreFromNode(node);
     updateTabStyle();
+
+    // 设置双向同步回调：节点「随机生成」按钮自动同步到弹窗
+    node._tpSetGacha = (tags) => {
+        gachaState.resultTags = tags.slice();
+        serializeGacha();
+        if (resultPanel) renderResult();
+        refreshGachaCurrent();
+        refreshGachaPreview();
+    };
+    node._tpClearSelection = () => {
+        gachaState = { randomMode: false, resultTags: [], banList: [], resultImages: {} };
+        state.selection = {};
+        serializeGacha();
+        serializeAll();
+        if (resultPanel) renderResult();
+        renderMain();
+        refreshGachaCurrent();
+        refreshGachaPreview();
+    };
+
     // 记住上次所在分页：再次打开时停留在关闭前的 tab（首次或无效时兜底 artist）
     switchTab(TABS.includes(state.currentTab) ? state.currentTab : "artist");
 }
 function closeModal() {
+    if (nodeRef) { nodeRef._tpSetGacha = null; nodeRef._tpClearSelection = null; }
     if (currentModal) { currentModal.remove(); currentModal = null; }
     mainScroll = null; pagerBar = null; resultPanel = null; tabEls = {}; gachaPanelEl = null; toolbarEl = null; searchInputEl = null;
     // 弹窗关闭后刷新节点上的已选摘要预览框（应用/取消关闭都会触发，读到的是最新控件值）
@@ -799,6 +929,8 @@ function injectStyle() {
 .tp-overlay{position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:10000;display:flex;align-items:center;justify-content:center;}
 .tp-modal{width:94vw;max-width:1280px;height:90vh;background:${COLORS.modalBg};border-radius:10px;border:1px solid ${COLORS.border};display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 48px rgba(0,0,0,.55);}
 .tp-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:${COLORS.headerBg};border-bottom:1px solid ${COLORS.border};}
+.tp-status-light{animation:tp-status-breathe 1.6s ease-in-out infinite;}
+@keyframes tp-status-breathe{0%,100%{opacity:1}50%{opacity:.55}}
 .tp-title{color:${COLORS.text};font-size:16px;font-weight:600;}
 .tp-close{color:${COLORS.textDim};cursor:pointer;font-size:16px;padding:4px 8px;border-radius:4px;transition:.15s;}
 .tp-close:hover{color:${COLORS.text};background:rgba(255,255,255,.1);}
@@ -906,7 +1038,7 @@ app.registerExtension({
 
             // 隐藏由前端代理的控件；gacha_mode 为自动托管（随机生成=开，清除=关），不显示在节点上
             const hiddenWidgets = ["selection_data", "gacha_data", "gacha_mode",
-                "cache_enabled", "cache_max_items", "sync_external_random",
+                "cache_enabled", "cache_max_mb",
                 "blacklist_data", "favorites_data"];
             hiddenWidgets.forEach((name) => {
                 const w = node.widgets?.find((x) => x.name === name);

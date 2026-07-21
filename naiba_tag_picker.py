@@ -130,10 +130,12 @@ _IMAGE_CACHE = ImageCache(max_size=100, ttl=3600)
 
 # ----------------------------- L2 磁盘缓存 -----------------------------
 # 与扭蛋逻辑完全解耦；插件全局目录，多节点实例共享；按 URL sha1 命名。
+MAX_CACHE_HARD_MB = 51200  # 硬性最大限制 50GB，防止用户设置过大
+
 class DiskCache:
-    def __init__(self, base_dir, max_items=300, enabled=True):
+    def __init__(self, base_dir, max_size_mb=500, enabled=True):
         self.dir = base_dir
-        self.max_items = max(10, min(int(max_items), 5000))
+        self.max_bytes = min(int(max_size_mb), MAX_CACHE_HARD_MB) * 1024 * 1024
         self.enabled = bool(enabled)
         self.lock = threading.Lock()
         if self.enabled:
@@ -142,14 +144,14 @@ class DiskCache:
             except Exception:
                 self.enabled = False  # 目录不可写则降级，绝不中断主流程
 
-    def _path(self, key):
+    def _path(self, key, ext=".img"):
         h = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
-        return os.path.join(self.dir, h + ".img")
+        return os.path.join(self.dir, h + ext)
 
     def get(self, key):
         if not self.enabled:
             return None
-        p = self._path(key)
+        p = self._path(key, ".img")
         if not os.path.exists(p):
             return None
         try:
@@ -166,7 +168,7 @@ class DiskCache:
     def set(self, key, data):
         if not self.enabled or not data:
             return
-        p = self._path(key)
+        p = self._path(key, ".img")
         tmp = p + ".tmp"
         try:
             with open(tmp, "wb") as f:
@@ -180,25 +182,74 @@ class DiskCache:
             return
         self._prune()
 
+    def get_json(self, key):
+        if not self.enabled:
+            return None
+        p = self._path(key, ".json")
+        if not os.path.exists(p):
+            return None
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                obj = json.load(f)
+            # 命中更新 atime，实现真正 LRU
+            os.utime(p, None)
+            return obj
+        except Exception:
+            return None
+
+    def set_json(self, key, obj):
+        if not self.enabled or obj is None:
+            return
+        p = self._path(key, ".json")
+        tmp = p + ".tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(obj, f, ensure_ascii=False)
+            os.replace(tmp, p)  # 原子重命名
+        except Exception:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+            return
+        self._prune()
+
+    def size_mb(self):
+        """返回当前缓存目录总大小(MB)"""
+        if not self.enabled or not os.path.exists(self.dir):
+            return 0.0
+        total = 0
+        try:
+            for fn in os.listdir(self.dir):
+                if fn.endswith(".img") or fn.endswith(".json"):
+                    total += os.path.getsize(os.path.join(self.dir, fn))
+        except Exception:
+            pass
+        return total / (1024 * 1024)
+
     def _prune(self):
         with self.lock:
             try:
                 entries = []
+                total_bytes = 0
                 for fn in os.listdir(self.dir):
-                    if not fn.endswith(".img"):
+                    if not (fn.endswith(".img") or fn.endswith(".json")):
                         continue
                     fp = os.path.join(self.dir, fn)
                     try:
                         st = os.stat(fp)
-                        entries.append((st.st_atime, fp))
+                        entries.append((st.st_atime, fp, st.st_size))
+                        total_bytes += st.st_size
                     except Exception:
                         pass
-                if len(entries) > self.max_items:
-                    entries.sort()
-                    excess = len(entries) - self.max_items
-                    for _, fp in entries[:excess]:
+                if total_bytes > self.max_bytes:
+                    entries.sort()  # 按 atime 升序，最久未访问的在前
+                    for _, fp, sz in entries:
+                        if total_bytes <= self.max_bytes:
+                            break
                         try:
                             os.remove(fp)
+                            total_bytes -= sz
                         except Exception:
                             pass
             except Exception:
@@ -207,16 +258,16 @@ class DiskCache:
 # 全局磁盘缓存单例；由 execute() / 预览路由按需 configure
 _DISK_CACHE = None
 
-def configure_disk_cache(enabled, max_items):
+def configure_disk_cache(enabled, max_size_mb):
     global _DISK_CACHE
     enabled = bool(enabled)
-    max_items = max(10, min(int(max_items), 5000))
+    max_size_mb = max(100, min(int(max_size_mb), 20000, MAX_CACHE_HARD_MB))
     if _DISK_CACHE is None:
         cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "preview_cache")
-        _DISK_CACHE = DiskCache(cache_dir, max_items, enabled)
+        _DISK_CACHE = DiskCache(cache_dir, max_size_mb, enabled)
     else:
         _DISK_CACHE.enabled = enabled
-        _DISK_CACHE.max_items = max_items
+        _DISK_CACHE.max_bytes = max_size_mb * 1024 * 1024
 
 def fetch_image_bytes(url):
     """L1(内存) -> L2(磁盘) -> 网络 三级查找。"""
@@ -244,6 +295,10 @@ def search_tags(query, category="", limit=100, page=1):
       - Danbooru 标签字段名为 name（非 tag），且匿名禁用 random 排序 -> 走 search[order]=count。
       - category 请求用数字 ID（1/3/4），更稳；返回时再映射回显示名字符串。
     """
+    # 构建缓存 key（直接使用传入的 category 字符串，保持一致性）
+    cache_key = f"{category}|{query}|{page}|{limit}"
+    
+    # 先尝试网络请求
     cat_id = CATEGORY_ID.get(category, 0)
     params = {
         "limit": limit,
@@ -261,14 +316,35 @@ def search_tags(query, category="", limit=100, page=1):
         params["search[category]"] = cat_id
     url = BASE + "/tags.json?" + urllib.parse.urlencode(params)
     raw = _fetch_url(url)
+    
+    # 网络失败时尝试离线缓存回退
     if not raw:
+        if _DISK_CACHE is not None:
+            cached = _DISK_CACHE.get_json(cache_key)
+            if cached is not None:
+                cached["cached"] = True  # 标记为缓存数据
+                return cached
         return {"items": [], "total": 0}
+    
     try:
         arr = json.loads(raw.decode("utf-8"))
     except Exception:
+        # 解析失败也尝试缓存回退
+        if _DISK_CACHE is not None:
+            cached = _DISK_CACHE.get_json(cache_key)
+            if cached is not None:
+                cached["cached"] = True
+                return cached
         return {"items": [], "total": 0}
+    
     if not isinstance(arr, list):
+        if _DISK_CACHE is not None:
+            cached = _DISK_CACHE.get_json(cache_key)
+            if cached is not None:
+                cached["cached"] = True
+                return cached
         return {"items": [], "total": 0}
+    
     items = []
     for it in arr:
         tag = it.get("name") or it.get("tag")
@@ -284,7 +360,13 @@ def search_tags(query, category="", limit=100, page=1):
             "preview_url": "",
             "source_url": f"{BASE}/posts?tags={urllib.parse.quote(tag)}",
         })
-    return {"items": items, "total": len(items)}
+    result = {"items": items, "total": len(items)}
+    
+    # 网络成功时写入缓存
+    if _DISK_CACHE is not None:
+        _DISK_CACHE.set_json(cache_key, result)
+    
+    return result
 
 # ----------------------------- 扭蛋取样（先过滤后采样，无重试死循环） -----------------------------
 def get_random_tags_from_category(category, n, blacklist=None):
@@ -415,8 +497,7 @@ class NaibaTagPicker:
                 # ComfyUI 的 hidden 只会填充 PROMPT/EXTRA_PNGINFO/UNIQUE_ID 等特殊类型，
                 # 放 hidden 会导致这些参数不被传入 execute（报“缺少必需参数”）。
                 "cache_enabled": ("BOOLEAN", {"default": True}),
-                "cache_max_items": ("INT", {"default": 300, "min": 10, "max": 5000, "step": 10}),
-                "sync_external_random": ("BOOLEAN", {"default": False}),
+                "cache_max_mb": ("INT", {"default": 500, "min": 100, "max": 20000, "step": 100}),
                 "blacklist_data": ("STRING", {"multiline": True, "default": "{}"}),
                 "favorites_data": ("STRING", {"multiline": True, "default": "{}"}),
             },
@@ -433,11 +514,11 @@ class NaibaTagPicker:
     CATEGORY = "naiba-node"
 
     def execute(self, selection_data, max_images, preview_size, artist_at, gacha_mode, gacha_data,
-                cache_enabled=True, cache_max_items=300, sync_external_random=False,
+                cache_enabled=True, cache_max_mb=500,
                 blacklist_data="{}", favorites_data="{}",
                 prompt=None, extra_pnginfo=None):
         # 配置磁盘缓存（仅当开启且目录可写时生效；否则降级内存）
-        configure_disk_cache(cache_enabled, cache_max_items)
+        configure_disk_cache(cache_enabled, cache_max_mb)
 
         # 已选标签：兼容 v2（selected 列表）与原版（artist/character/ip 分组）两种结构
         try:
@@ -587,6 +668,7 @@ def register_routes():
         # 故此处收到的 cat 是 "artist"/"character"/"copyright"/"tag"，键必须用 "copyright" 而非 "ip"，
         # 否则 IP 页会被兜底成 "tag"，导致 IP 页与标签页内容一模一样。
         category = {"artist": "artist", "character": "character", "copyright": "copyright", "tag": "tag"}.get(cat, "tag")
+        _consume_cache_params(request)
         res = await _run_in_exec(search_tags, q, category, limit, page)
         return web.json_response(res)
 
@@ -645,6 +727,79 @@ def register_routes():
         tags = await _run_in_exec(get_completely_random_tags, total, blacklist)
         return web.json_response({"tags": tags})
 
+    @PromptServer.instance.routes.get("/naiba/tag/status")
+    async def tag_status(request):
+        """D 站连接状态探测路由"""
+        try:
+            # 使用短超时探测 Danbooru 可达性
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+                async with session.get(BASE + "/tags.json?limit=1", ssl=False) as resp:
+                    if resp.status == 200:
+                        return web.json_response({"online": True})
+                    else:
+                        return web.json_response({"online": False})
+        except Exception:
+            return web.json_response({"online": False})
+
+    @PromptServer.instance.routes.get("/naiba/tag/preload")
+    async def tag_preload(request):
+        """后台预加载路由：启动/停止预加载任务"""
+        global _PRELOAD_TASK
+        action = request.query.get("action", "status")
+        _consume_cache_params(request)
+        if action == "start":
+            if _PRELOAD_TASK is None or _PRELOAD_TASK.done():
+                _PRELOAD_STATUS["running"] = True
+                _PRELOAD_TASK = asyncio.get_event_loop().run_in_executor(None, _preload_worker)
+                return web.json_response({"started": True, **_PRELOAD_STATUS})
+            else:
+                return web.json_response({"started": False, "message": "已在运行", **_PRELOAD_STATUS})
+        elif action == "stop":
+            _PRELOAD_STATUS["running"] = False
+            return web.json_response({"stopped": True, **_PRELOAD_STATUS})
+        else:
+            return web.json_response(_PRELOAD_STATUS)
+
+    @PromptServer.instance.routes.get("/naiba/tag/cache_status")
+    async def tag_cache_status(request):
+        """获取缓存状态：当前大小、上限、文件数"""
+        _consume_cache_params(request)
+        if _DISK_CACHE is None:
+            return web.json_response({"enabled": False, "cached_mb": 0, "max_mb": 0, "count": 0})
+        cached_mb = _DISK_CACHE.size_mb()
+        max_mb = _DISK_CACHE.max_bytes / (1024 * 1024)
+        # 统计缓存文件数
+        count = 0
+        try:
+            if _DISK_CACHE.enabled and os.path.exists(_DISK_CACHE.dir):
+                count = len([f for f in os.listdir(_DISK_CACHE.dir) if f.endswith(".img") or f.endswith(".json")])
+        except Exception:
+            pass
+        return web.json_response({
+            "enabled": True,
+            "cached_mb": round(cached_mb, 1),
+            "max_mb": round(max_mb, 0),
+            "count": count,
+            "usage_pct": round(cached_mb / max_mb * 100, 1) if max_mb > 0 else 0,
+        })
+
+    @PromptServer.instance.routes.get("/naiba/tag/cache_clear")
+    async def tag_cache_clear(request):
+        """清理缓存：删除所有缓存文件"""
+        _consume_cache_params(request)
+        if _DISK_CACHE is None:
+            return web.json_response({"cleared": True, "message": "缓存未启用"})
+        try:
+            import shutil
+            cache_dir = _DISK_CACHE.dir
+            if os.path.exists(cache_dir):
+                shutil.rmtree(cache_dir)
+                os.makedirs(cache_dir, exist_ok=True)
+            _DISK_CACHE._index = {}
+            return web.json_response({"cleared": True, "message": "缓存已清理"})
+        except Exception as e:
+            return web.json_response({"cleared": False, "message": f"清理失败: {e}"})
+
     @PromptServer.instance.routes.get("/naiba/tag/hello")
     async def tag_hello(request):
         return web.json_response({"ok": True})
@@ -652,10 +807,92 @@ def register_routes():
 def _consume_cache_params(request):
     cache_on = request.query.get("cache", "1") not in ("0", "false", "False", "0")
     try:
-        max_items = int(request.query.get("max", "300"))
+        max_size_mb = int(request.query.get("max", "500"))
     except Exception:
-        max_items = 300
-    configure_disk_cache(cache_on, max_items)
+        max_size_mb = 500
+    configure_disk_cache(cache_on, max_size_mb)
+
+# ----------------------------- 后台预加载 -----------------------------
+_PRELOAD_TASK = None  # asyncio.Task or None
+_PRELOAD_STATUS = {"running": False, "progress": 0, "total": 0, "cached_mb": 0, "max_mb": 0, "message": ""}
+
+def _check_cache_budget():
+    """检查缓存是否还有空间"""
+    if _DISK_CACHE is None:
+        return 0, 0, False
+    cached = _DISK_CACHE.size_mb()
+    max_mb = _DISK_CACHE.max_bytes / (1024 * 1024)
+    return cached, max_mb, cached < max_mb * 0.95  # 95% 时停止
+
+def _preload_worker():
+    """后台预加载：按分类逐页拉取标签 + 预览图，持续循环直到缓存接近上限"""
+    global _PRELOAD_STATUS
+    cats = ["artist", "character", "copyright", "tag"]
+    max_pages_per_cat = 200  # 每个分类最大页数（防止无限循环）
+    preview_per_page = 10   # 每页缓存前 N 个标签的预览图
+    _PRELOAD_STATUS = {"running": True, "progress": 0, "total": 0,
+                       "cached_mb": 0, "max_mb": 0, "message": "开始预加载..."}
+    try:
+        cycle = 0
+        while True:
+            cycle += 1
+            for cat in cats:
+                for page in range(1, max_pages_per_cat + 1):
+                    # 检查是否应该停止
+                    if not _PRELOAD_STATUS["running"]:
+                        _PRELOAD_STATUS["message"] = "已停止"
+                        return
+                    # 检查缓存预算
+                    cached, max_mb, has_budget = _check_cache_budget()
+                    _PRELOAD_STATUS["cached_mb"] = round(cached, 1)
+                    _PRELOAD_STATUS["max_mb"] = round(max_mb, 1)
+                    _PRELOAD_STATUS["total"] = round(max_mb, 0)  # 总量用 MB 表示
+                    _PRELOAD_STATUS["progress"] = round(cached, 0)  # 进度用当前 MB 表示
+                    if not has_budget:
+                        _PRELOAD_STATUS["message"] = f"缓存已满 ({cached:.1f}/{max_mb:.1f} MB)"
+                        _PRELOAD_STATUS["running"] = False
+                        return
+                    # 拉取一页标签（JSON 自动写入缓存）
+                    _PRELOAD_STATUS["message"] = f"[轮{cycle}] {cat} 第{page}页... ({cached:.1f}/{max_mb:.1f} MB)"
+                    res = search_tags("", cat, page=page, limit=50)
+                    items = res.get("items") or []
+                    # 主动缓存该页前 N 个标签的预览图
+                    for it in items[:preview_per_page]:
+                        if not _PRELOAD_STATUS["running"]:
+                            _PRELOAD_STATUS["message"] = "已停止"
+                            return
+                        # 再次检查预算
+                        cached2, _, has_budget2 = _check_cache_budget()
+                        if not has_budget2:
+                            _PRELOAD_STATUS["cached_mb"] = round(cached2, 1)
+                            _PRELOAD_STATUS["message"] = f"缓存已满 ({cached2:.1f}/{max_mb:.1f} MB)"
+                            _PRELOAD_STATUS["running"] = False
+                            return
+                        tag = it.get("tag")
+                        if not tag:
+                            continue
+                        _PRELOAD_STATUS["message"] = f"[轮{cycle}] 缓存预览: {tag} ({cached2:.1f}/{max_mb:.1f} MB)"
+                        try:
+                            build_preview_proxy(tag)
+                        except Exception:
+                            pass
+                        time.sleep(0.15)  # 预览图请求间短延迟
+                    _PRELOAD_STATUS["progress"] = round(cached2 if 'cached2' in dir() else cached, 0)
+                    # 标签搜索请求间延迟
+                    time.sleep(0.3)
+            # 一轮结束后检查是否还有预算，有的话继续循环
+            cached, max_mb, has_budget = _check_cache_budget()
+            _PRELOAD_STATUS["cached_mb"] = round(cached, 1)
+            _PRELOAD_STATUS["max_mb"] = round(max_mb, 1)
+            if not has_budget:
+                _PRELOAD_STATUS["message"] = f"缓存已满 ({cached:.1f}/{max_mb:.1f} MB)"
+                _PRELOAD_STATUS["running"] = False
+                return
+            _PRELOAD_STATUS["message"] = f"第{cycle}轮完成，继续下一轮... ({cached:.1f}/{max_mb:.1f} MB)"
+            time.sleep(1)
+    except Exception as e:
+        _PRELOAD_STATUS["message"] = f"预加载出错: {e}"
+        _PRELOAD_STATUS["running"] = False
 
 def _gacha_partial_job(a, c, i, blacklist):
     cats = [("artist", a), ("character", c), ("copyright", i)]
