@@ -1,6 +1,6 @@
 # Naiba Test Custom Nodes for ComfyUI
 
-自定义ComfyUI节点集合，包含WAN模型优化、Multi LoRA Loader、Multi LoRA Loader (only model)、Visual LoRA Loader、Lora Testing Converter、Save Text File、Lora Data Preview、Civitai Info Reader、Custom Data Reader和Power LoRA Config Reader功能。
+自定义ComfyUI节点集合，包含WAN模型优化、Multi LoRA Loader、Multi LoRA Loader (only model)、Visual LoRA Loader、List LoRA Loader、Lora Testing Converter、Save Text File、Lora Data Preview、Civitai Info Reader、Custom Data Reader和Power LoRA Config Reader功能。
 
 ## 节点列表
 
@@ -493,6 +493,33 @@
 
 ---
 
+### 13. List LoRA Loader (列表LoRA加载器)
+
+**节点名称**: `ListLoRALoader`  
+**显示名称**: List LoRA Loader  
+**分类**: `naiba-node`
+
+#### 功能说明
+读取 Visual LoRA Loader 输出的 `preset_json`（JSON 字符串），依次加载所有启用的 LoRA。三个纯连接端口（无文本框），`lora_list` 直接连接 `visual_lora_loader` 的 `preset_json` 输出。输出的 `LORA_NAMES` 可直接连接 `Civitai Info Reader` / `Custom Data Reader` 的 `lora_names` 输入。
+
+#### 输入参数
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| model | MODEL | 输入的扩散模型 |
+| clip | CLIP | 输入的CLIP模型 |
+| lora_list | STRING (forceInput) | LoRA组合列表（连接 visual lora loader 的 preset_json 输出） |
+
+#### 输出
+
+| 输出 | 类型 | 说明 |
+|------|------|------|
+| MODEL | MODEL | 加载LoRA后的模型 |
+| CLIP | CLIP | 加载LoRA后的CLIP模型 |
+| LORA_NAMES | STRING | 启用的LoRA名字JSON数组，供 Civitai Info Reader / Custom Data Reader 使用 |
+
+---
+
 ## 安装方法
 
 1. 将 `naiba-test` 文件夹复制到 `ComfyUI/custom_nodes/` 目录
@@ -590,6 +617,12 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 > **注意**: Multi LoRA Loader (only model) 节点导入含 `strength_clip` 的预设时会自动忽略 clip 字段。两个节点的预设可以互相导入。
 
 ## 更新日志
+
+### v2.10.0
+- 新增 **List LoRA Loader** 节点
+  - 读取 Visual LoRA Loader 输出的 `preset_json`（JSON 字符串），依次加载所有启用的 LoRA
+  - 三个纯连接端口（无文本框）：`MODEL`、`CLIP`、`lora_list`（`forceInput=True`，直接连 `preset_json`）
+  - 输出 `MODEL`、`CLIP` 和 `LORA_NAMES`（JSON 数组字符串），可直接连接 `Civitai Info Reader` / `Custom Data Reader` 的 `lora_names` 输入
 
 ### v2.9.2
 - Civitai 同步视频/GIF 预览支持
