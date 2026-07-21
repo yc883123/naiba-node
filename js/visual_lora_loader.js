@@ -1492,7 +1492,6 @@ app.registerExtension({
 
                     const name = document.createElement("div");
                     name.textContent = (lora.name || "").split('/').pop().split('\\').pop();
-                    name.title = lora.name || "";
                     name.style.cssText = `
                         flex:1;min-width:0;color:${isEnabled ? COLORS.text : COLORS.disabled};
                         font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
