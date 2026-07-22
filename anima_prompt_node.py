@@ -217,6 +217,12 @@ class AnimaPromptNode:
     RETURN_NAMES = ("prompt",)
     OUTPUT_NODE = True
     SEARCH_ALIASES = ["naiba", "anima prompt", "prompt node", "anima"]
+    DESCRIPTION = (
+        "Anima Prompt Node —— 基于本地 anima_prompts.json 的交互式英文提示词节点。"
+        "点击节点打开弹窗，可按分类浏览标签、关键词搜索；支持单分类抽取、跨分类抽取、全库随机抽（扭蛋）。"
+        "选中或抽取的标签（raw_en）会自动拼接为英文 prompt，由 prompt 端口输出。"
+        "数据来源：本地 anima_prompts.json，结构为 {分类: [{en_tags, cn_description, raw_en}, ...]}。"
+    )
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -228,11 +234,11 @@ class AnimaPromptNode:
                 "selection_data": ("STRING", {"multiline": True, "default": "{}"}),
                 "gacha_data": ("STRING", {"multiline": True, "default": "{}"}),
                 "ui_state": ("STRING", {"multiline": True, "default": "{}"}),
-                "separator": ("STRING", {"default": ", ", "multiline": False}),
+                "separator": ("STRING", {"default": "，", "multiline": False, "label": "分隔符", "tooltip": "多个标签拼接成 prompt 时使用的分隔字符，默认中文逗号「，」，避免留空导致词语连在一起"}),
             },
         }
 
-    def execute(self, selection_data="{}", gacha_data="{}", ui_state="{}", separator=", "):
+    def execute(self, selection_data="{}", gacha_data="{}", ui_state="{}", separator="，"):
         selected = _parse_items(selection_data, "selected")
         gacha = _parse_items(gacha_data, "tags")
 
@@ -254,7 +260,7 @@ class AnimaPromptNode:
                 seen.add(t)
                 unique.append(t)
 
-        sep = separator if isinstance(separator, str) else ", "
+        sep = separator if (isinstance(separator, str) and separator != "") else "，"
         return (sep.join(unique),)
 
 
