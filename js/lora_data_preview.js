@@ -16,7 +16,10 @@ const COLORS = {
     danger: "#ff6b6b",
     dangerHover: "#ff8b8b",
     success: "#2ed573",
+    successBg: "#2ed57320",
     warning: "#ffa502",
+    warningBg: "#ffa50220",
+    error: "#ff4757",
     favorite: "#ff9f43",      // 收藏按钮颜色（橙色）
     favoriteActive: "#ff6b6b", // 已收藏颜色（红色）
     text: "#e0e0e0",
@@ -25,6 +28,8 @@ const COLORS = {
     inputBg: "#0a0f1e",
     cardBg: "#16213e",
     cardBorder: "#2a3a5c",
+    sidebarBg: "#0d1117",
+    listItemBg: "#1c2333",
     favoriteBorder: "#ff9f43", // 收藏卡片边框颜色
 };
 
@@ -134,6 +139,34 @@ function createLoraDataPreviewModal(node, loraList) {
         startBatchSync();
     });
 
+    // 离线仅计算 SHA256 缓存按钮（不查询 C 站）
+    const cacheSha256Btn = document.createElement("button");
+    cacheSha256Btn.textContent = "离线缓存SHA256";
+    cacheSha256Btn.title = "纯本地扫描所有 LoRA 并计算 sha256 写入全局缓存，完全不调用 Civitai。网络不佳时先收齐本地 sha256。";
+    cacheSha256Btn.style.cssText = `
+        padding:6px 12px;background:${COLORS.accent2 || COLORS.accent};
+        color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;
+    `;
+    cacheSha256Btn.addEventListener("mouseenter", () => {
+        cacheSha256Btn.style.background = COLORS.accentHover || COLORS.accent;
+    });
+    cacheSha256Btn.addEventListener("mouseleave", () => {
+        cacheSha256Btn.style.background = COLORS.accent2 || COLORS.accent;
+    });
+    cacheSha256Btn.addEventListener("click", () => {
+        startCacheSha256Only();
+    });
+
+    // SHA256 缓存状态徽章（按钮旁的常驻指示）
+    const cacheSha256Badge = document.createElement("span");
+    cacheSha256Badge.textContent = "SHA256 —";
+    cacheSha256Badge.title = "本地 LoRA 的 sha256 全局缓存覆盖状态（由离线缓存/批量同步写入）。绿=全部已缓存，黄=部分缺失，灰=未缓存。";
+    cacheSha256Badge.style.cssText = `
+        padding:2px 9px;border-radius:10px;font-size:11px;line-height:1.6;
+        background:transparent;color:${COLORS.textDim};
+        border:1px solid ${COLORS.border};white-space:nowrap;
+    `;
+
     // 关闭按钮
     const closeBtn = document.createElement("div");
     closeBtn.textContent = "\u2715";
@@ -153,7 +186,12 @@ function createLoraDataPreviewModal(node, loraList) {
 
     header.appendChild(title);
     headerRight.appendChild(batchSyncBtn);
+    headerRight.appendChild(cacheSha256Btn);
+    headerRight.appendChild(cacheSha256Badge);
     header.appendChild(headerRight);
+
+    // 打开弹窗即拉取一次 sha256 缓存状态，刷新按钮旁徽章
+    refreshSha256CacheHint();
     header.appendChild(closeBtn);
     modal.appendChild(header);
 
@@ -165,7 +203,7 @@ function createLoraDataPreviewModal(node, loraList) {
     `;
 
     // 视图切换标签
-    let currentCategory = "all"; // "all", "selected", 或 "favorite"
+    let currentCategory = "all"; // "all", "selected", "favorite", 或 "civitai-check"
     const tabGroup = document.createElement("div");
     tabGroup.style.cssText = `display:flex;gap:2px;background:${COLORS.inputBg};border-radius:4px;padding:2px;`;
 
@@ -190,6 +228,13 @@ function createLoraDataPreviewModal(node, loraList) {
         background:transparent;color:${COLORS.textDim};
     `;
 
+    const tabCivitaiCheck = document.createElement("div");
+    tabCivitaiCheck.textContent = "Civitai校验";
+    tabCivitaiCheck.style.cssText = `
+        padding:4px 12px;border-radius:3px;cursor:pointer;font-size:12px;
+        background:transparent;color:${COLORS.textDim};
+    `;
+
     const updateTabStyle = () => {
         // 重置所有标签样式
         tabAll.style.background = "transparent";
@@ -198,6 +243,8 @@ function createLoraDataPreviewModal(node, loraList) {
         tabSelected.style.color = COLORS.textDim;
         tabFavorite.style.background = "transparent";
         tabFavorite.style.color = COLORS.textDim;
+        tabCivitaiCheck.style.background = "transparent";
+        tabCivitaiCheck.style.color = COLORS.textDim;
         
         // 设置当前活动标签样式
         if (currentCategory === "all") {
@@ -209,6 +256,9 @@ function createLoraDataPreviewModal(node, loraList) {
         } else if (currentCategory === "favorite") {
             tabFavorite.style.background = COLORS.favorite;
             tabFavorite.style.color = "white";
+        } else if (currentCategory === "civitai-check") {
+            tabCivitaiCheck.style.background = COLORS.warning;
+            tabCivitaiCheck.style.color = "white";
         }
     };
 
@@ -228,6 +278,8 @@ function createLoraDataPreviewModal(node, loraList) {
             statusDisplay.textContent = searchTerm 
                 ? `收藏: ${favCount} 个结果` 
                 : `收藏: ${favCount} 个LoRA`;
+        } else if (currentCategory === "civitai-check") {
+            statusDisplay.textContent = "Civitai校验模式";
         } else {
             statusDisplay.textContent = searchTerm 
                 ? `搜索: ${baseLoras.length} 个结果` 
@@ -256,9 +308,17 @@ function createLoraDataPreviewModal(node, loraList) {
         renderLoraList();
     });
 
+    tabCivitaiCheck.addEventListener("click", () => {
+        currentCategory = "civitai-check";
+        updateTabStyle();
+        updateStatusDisplay();
+        renderLoraList();
+    });
+
     tabGroup.appendChild(tabAll);
     tabGroup.appendChild(tabSelected);
     tabGroup.appendChild(tabFavorite);
+    tabGroup.appendChild(tabCivitaiCheck);
 
     // 搜索框
     const searchInput = document.createElement("input");
@@ -364,6 +424,48 @@ function createLoraDataPreviewModal(node, loraList) {
     syncStatus.style.cssText = `color:${COLORS.textDim};font-size:12px;`;
     syncStatus.textContent = "就绪";
 
+    // SHA256 全局缓存状态提示（批量同步/离线缓存后显示）
+    const sha256CacheHint = document.createElement("span");
+    sha256CacheHint.style.cssText = `color:${COLORS.success};font-size:12px;margin-left:8px;display:none;`;
+    sha256CacheHint.title = "本地 LoRA 的 sha256 全局缓存状态，供上传预设做本地匹配";
+
+    async function refreshSha256CacheHint() {
+        try {
+            const ctrl = new AbortController();
+            const tid = setTimeout(() => ctrl.abort(), 8000);
+            const resp = await fetch('/naiba/lora/sha256-cache', { signal: ctrl.signal });
+            clearTimeout(tid);
+            const data = await resp.json();
+            if (data && data.success) {
+                if (data.all_cached && data.cached_count > 0) {
+                    sha256CacheHint.textContent = `✓ 所有 LoRA 已有 sha256 缓存（共 ${data.cached_count} 个）`;
+                    sha256CacheHint.style.color = COLORS.success;
+                } else {
+                    sha256CacheHint.textContent = `⚠ 已缓存 ${data.cached_count}/${data.total_loras} 个 sha256（缺失 ${data.missing_count} 个）`;
+                    sha256CacheHint.style.color = '#d29922';
+                }
+                sha256CacheHint.style.display = 'inline';
+
+                // 按钮旁徽章：绿=全部，黄=部分，灰=未缓存
+                if (data.cached_count === 0) {
+                    cacheSha256Badge.textContent = "SHA256 未缓存";
+                    cacheSha256Badge.style.background = "transparent";
+                    cacheSha256Badge.style.color = COLORS.textDim;
+                } else if (data.all_cached) {
+                    cacheSha256Badge.textContent = `SHA256 ✓ ${data.cached_count}/${data.total_loras}`;
+                    cacheSha256Badge.style.background = COLORS.successBg;
+                    cacheSha256Badge.style.color = COLORS.success;
+                } else {
+                    cacheSha256Badge.textContent = `SHA256 ${data.cached_count}/${data.total_loras}`;
+                    cacheSha256Badge.style.background = COLORS.warningBg;
+                    cacheSha256Badge.style.color = COLORS.warning;
+                }
+            }
+        } catch (e) {
+            // 接口不可用时静默
+        }
+    }
+
     const buttonGroup = document.createElement("div");
     buttonGroup.style.cssText = "display:flex;gap:8px;";
 
@@ -457,6 +559,7 @@ function createLoraDataPreviewModal(node, loraList) {
     buttonGroup.appendChild(closeFooterBtn);
 
     statusBar.appendChild(syncStatus);
+    statusBar.appendChild(sha256CacheHint);
     statusBar.appendChild(buttonGroup);
     modal.appendChild(statusBar);
 
@@ -474,6 +577,11 @@ function createLoraDataPreviewModal(node, loraList) {
     let currentView = "grid";      // "grid" 或 "list"
     let currentFolder = "/";       // 当前文件夹
     let folderStructure = buildFolderStructure(loraList);
+    
+    // Civitai校验相关变量
+    let checkVerifyResultsContent = null;
+    let checkMissingContent = null;
+    let checkMissingSection = null;
 
     // 从节点widget中恢复已选中的LoRA，确保重新打开弹窗时"已选择"标签能正确显示
     const existingDataWidget = node.widgets?.find((w) => w.name === "lora_data");
@@ -706,6 +814,10 @@ function createLoraDataPreviewModal(node, loraList) {
             displayLoras = Array.from(selectedLoras.keys());
         } else if (currentCategory === "favorite") {
             displayLoras = Array.from(favoriteLoras.keys());
+        } else if (currentCategory === "civitai-check") {
+            // Civitai校验模式：显示基于lora_data的校验视图
+            renderCivitaiCheckView();
+            return;
         } else {
             displayLoras = getLorasInFolder(currentFolder);
         }
@@ -715,16 +827,33 @@ function createLoraDataPreviewModal(node, loraList) {
 
         if (displayLoras.length === 0) {
             const emptyMsg = document.createElement("div");
+            emptyMsg.style.cssText = `
+                color:${COLORS.textDim};text-align:center;padding:40px;font-size:14px;
+                display:flex;flex-direction:column;align-items:center;gap:14px;
+            `;
             if (currentCategory === "selected") {
-                emptyMsg.textContent = "尚未选择任何LoRA";
+                const tip = document.createElement("div");
+                tip.textContent = "尚未选择任何LoRA";
+                emptyMsg.appendChild(tip);
+                const goBtn = document.createElement("button");
+                goBtn.textContent = "去「全部」选择";
+                goBtn.style.cssText = `
+                    padding:8px 16px;background:${COLORS.accent};color:white;
+                    border:none;border-radius:4px;cursor:pointer;font-size:12px;
+                `;
+                goBtn.addEventListener("click", () => {
+                    currentCategory = "all";
+                    currentFolder = currentFolder || "all";
+                    updateTabStyle();
+                    updateStatusDisplay();
+                    renderLoraList();
+                });
+                emptyMsg.appendChild(goBtn);
             } else if (currentCategory === "favorite") {
                 emptyMsg.textContent = "尚未收藏任何LoRA";
             } else {
                 emptyMsg.textContent = searchTerm ? "没有匹配的LoRA文件" : "没有找到LoRA文件";
             }
-            emptyMsg.style.cssText = `
-                color:${COLORS.textDim};text-align:center;padding:40px;font-size:14px;
-            `;
             mainContent.appendChild(emptyMsg);
             return;
         }
@@ -1020,6 +1149,1105 @@ function createLoraDataPreviewModal(node, loraList) {
         mainContent.appendChild(grid);
     }
 
+    // ========== Civitai校验视图 ==========
+    function renderCivitaiCheckView() {
+        mainContent.innerHTML = "";
+        mainContent.appendChild(progressBarContainer);
+        
+        // 创建校验视图容器
+        const checkContainer = document.createElement("div");
+        checkContainer.style.cssText = `
+            display:flex;flex-direction:column;height:100%;
+        `;
+        
+        // 创建顶部区域：上传JSON + 校验按钮
+        const topSection = document.createElement("div");
+        topSection.style.cssText = `
+            display:flex;flex-direction:column;gap:8px;padding:8px;
+            border-bottom:1px solid ${COLORS.border};
+        `;
+
+        // 执行门提示条（常驻）：要求先建立 sha256 全局缓存
+        const gateBanner = document.createElement("div");
+        gateBanner.textContent = "⚠ 请确定所有 LoRA 都已有 sha256 缓存，否则不要执行（请先执行批量同步 / 离线缓存SHA256）";
+        gateBanner.style.cssText = `
+            padding:6px 10px;border-radius:5px;font-size:11px;line-height:1.4;
+            background:rgba(210,153,34,0.15);border:1px solid #d29922;color:#d29922;
+        `;
+        topSection.appendChild(gateBanner);
+        
+        // 上传JSON区域
+        const uploadRow = document.createElement("div");
+        uploadRow.style.cssText = `
+            display:flex;gap:8px;align-items:center;
+        `;
+        
+        const uploadTitle = document.createElement("div");
+        uploadTitle.textContent = "上传预设JSON校验";
+        uploadTitle.style.cssText = `
+            color:${COLORS.text};font-size:14px;font-weight:500;
+        `;
+        
+        const uploadBtn = document.createElement("button");
+        uploadBtn.textContent = "选择JSON文件";
+        uploadBtn.style.cssText = `
+            padding:8px 16px;background:${COLORS.accent};
+            color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;
+        `;
+        
+        const uploadFileName = document.createElement("span");
+        uploadFileName.textContent = "未选择文件";
+        uploadFileName.style.cssText = `
+            color:${COLORS.textDim};font-size:12px;
+        `;
+        
+        // 隐藏的文件输入
+        const fileInput = document.createElement("input");
+        fileInput.type = "file";
+        fileInput.accept = ".json";
+        fileInput.style.display = "none";
+        
+        uploadRow.appendChild(uploadTitle);
+        uploadRow.appendChild(uploadBtn);
+        uploadRow.appendChild(uploadFileName);
+        uploadRow.appendChild(fileInput);
+        
+        // 校验按钮
+        const verifyRow = document.createElement("div");
+        verifyRow.style.cssText = `
+            display:flex;gap:8px;align-items:center;
+        `;
+        
+        const verifyBtn = document.createElement("button");
+        verifyBtn.textContent = "开始校验（本地+Civitai）";
+        verifyBtn.style.cssText = `
+            padding:8px 16px;background:${COLORS.warning};
+            color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;
+        `;
+        
+        const verifyStatus = document.createElement("span");
+        verifyStatus.textContent = "先上传JSON文件，再点击校验";
+        verifyStatus.style.cssText = `
+            color:${COLORS.textDim};font-size:12px;
+        `;
+        
+        // 调试按钮：列出本地所有LoRA
+        const debugBtn = document.createElement("button");
+        debugBtn.textContent = "调试:列出本地LoRA";
+        debugBtn.style.cssText = `
+            padding:8px 12px;background:${COLORS.inputBg};
+            color:${COLORS.textDim};border:1px solid ${COLORS.border};
+            border-radius:4px;cursor:pointer;font-size:11px;
+        `;
+        
+        verifyRow.appendChild(verifyBtn);
+        verifyRow.appendChild(verifyStatus);
+        verifyRow.appendChild(debugBtn);
+
+        // 校验进度条（默认隐藏，运行时显示实时进度）
+        const verifyProgressWrap = document.createElement("div");
+        verifyProgressWrap.style.cssText = `
+            display:none;align-items:center;gap:8px;margin-top:8px;width:100%;
+        `;
+        const verifyProgressBarBg = document.createElement("div");
+        verifyProgressBarBg.style.cssText = `
+            flex:1;height:8px;background:${COLORS.inputBg};
+            border:1px solid ${COLORS.border};border-radius:4px;overflow:hidden;
+        `;
+        const verifyProgressBar = document.createElement("div");
+        verifyProgressBar.style.cssText = `
+            height:100%;width:0%;background:${COLORS.warning};
+            transition:width .15s ease;
+        `;
+        verifyProgressBarBg.appendChild(verifyProgressBar);
+        const verifyProgressText = document.createElement("span");
+        verifyProgressText.textContent = "0/0";
+        verifyProgressText.style.cssText = `
+            color:${COLORS.textDim};font-size:12px;min-width:46px;text-align:right;
+        `;
+        verifyProgressWrap.appendChild(verifyProgressBarBg);
+        verifyProgressWrap.appendChild(verifyProgressText);
+
+        function setVerifyProgress(done, total) {
+            const t = Math.max(0, total || 0);
+            const d = Math.max(0, Math.min(done || 0, t));
+            const pct = t > 0 ? Math.round((d / t) * 100) : 0;
+            verifyProgressBar.style.width = pct + "%";
+            verifyProgressText.textContent = t > 0 ? `${d}/${t}` : "—";
+            verifyProgressBar.style.background = pct >= 100 ? COLORS.success : COLORS.warning;
+        }
+
+        topSection.appendChild(uploadRow);
+        topSection.appendChild(verifyRow);
+        topSection.appendChild(verifyProgressWrap);
+        
+        // 创建内容区域：校验结果
+        const contentArea = document.createElement("div");
+        contentArea.style.cssText = `
+            flex:1;display:flex;flex-direction:column;overflow:hidden;
+        `;
+        
+        const verifyResultsTitle = document.createElement("div");
+        verifyResultsTitle.textContent = "校验结果（上传JSON后显示）";
+        verifyResultsTitle.style.cssText = `
+            padding:8px;background:${COLORS.sidebarBg};
+            color:${COLORS.text};font-size:12px;font-weight:500;
+            border-bottom:1px solid ${COLORS.border};
+        `;
+        
+        const verifyResultsContent = document.createElement("div");
+        verifyResultsContent.style.cssText = `
+            flex:1;overflow-y:auto;padding:8px;
+        `;
+        
+        contentArea.appendChild(verifyResultsTitle);
+        contentArea.appendChild(verifyResultsContent);
+        
+        // 底部：本地缺失预览框
+        const missingSection = document.createElement("div");
+        missingSection.style.cssText = `
+            height:200px;border-top:1px solid ${COLORS.border};
+            display:flex;flex-direction:column;
+        `;
+        
+        const missingTitle = document.createElement("div");
+        missingTitle.textContent = "本地缺失LoRA（文件不存在）";
+        missingTitle.style.cssText = `
+            padding:8px;background:${COLORS.sidebarBg};
+            color:${COLORS.warning};font-size:12px;font-weight:500;
+            border-bottom:1px solid ${COLORS.border};
+        `;
+        
+        const missingContent = document.createElement("div");
+        missingContent.style.cssText = `
+            flex:1;overflow-y:auto;padding:8px;
+            font-family:monospace;font-size:11px;
+        `;
+        
+        missingSection.appendChild(missingTitle);
+        missingSection.appendChild(missingContent);
+        
+        checkContainer.appendChild(topSection);
+        checkContainer.appendChild(contentArea);
+        checkVerifyResultsContent = verifyResultsContent;
+        checkMissingContent = missingContent;
+        checkMissingSection = missingSection;
+        
+        mainContent.appendChild(checkContainer);
+        mainContent.appendChild(missingSection);
+        
+        // 绑定上传按钮事件
+        uploadBtn.addEventListener("click", () => fileInput.click());
+        fileInput.addEventListener("change", (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                uploadFileName.textContent = file.name;
+                uploadFileName.style.color = COLORS.success;
+            }
+        });
+        
+        // 绑定校验按钮事件
+        verifyBtn.addEventListener("click", () => startCivitaiVerifyFromUpload(fileInput, verifyStatus, gateBanner, verifyBtn, verifyProgressWrap, setVerifyProgress));
+        
+        // 绑定调试按钮事件（再次点击可隐藏列表）
+        debugBtn.addEventListener("click", async () => {
+            // 若当前已显示调试列表，则再次点击隐藏
+            const existing = checkVerifyResultsContent.querySelector('[data-debug-list]');
+            if (existing) {
+                checkVerifyResultsContent.innerHTML = "";
+                checkMissingContent.innerHTML = "";
+                debugBtn.textContent = "调试:列出本地LoRA";
+                return;
+            }
+            debugBtn.textContent = "加载中...";
+            debugBtn.disabled = true;
+            try {
+                const resp = await fetch('/naiba/lora/list-all');
+                const data = await resp.json();
+                const loras = data.loras || [];
+                const count = data.count || 0;
+                
+                // 显示结果
+                checkVerifyResultsContent.innerHTML = "";
+                checkMissingContent.innerHTML = "";
+                
+                const infoDiv = document.createElement("div");
+                infoDiv.dataset.debugList = "1";
+                infoDiv.style.cssText = `padding:12px;background:${COLORS.inputBg};border-radius:6px;margin-bottom:8px;`;
+                infoDiv.innerHTML = `
+                    <div style="color:${COLORS.success};font-size:13px;font-weight:bold;margin-bottom:8px;">
+                        本地LoRA文件总数: ${count}
+                    </div>
+                    <div style="color:${COLORS.textDim};font-size:11px;max-height:300px;overflow-y:auto;word-break:break-all;">
+                        ${loras.slice(0, 100).join('<br>')}
+                        ${count > 100 ? '<br><em>...仅显示前100个</em>' : ''}
+                    </div>
+                `;
+                checkVerifyResultsContent.appendChild(infoDiv);
+                
+                debugBtn.textContent = `调试:隐藏列表 (${count})`;
+            } catch (e) {
+                console.error("[LoraDataPreview] 调试查询失败:", e);
+                debugBtn.textContent = "调试:失败";
+            }
+            debugBtn.disabled = false;
+        });
+    }
+    
+    // ========== Civitai校验功能 ==========
+    let civitaiVerifyResults = [];
+    let civitaiMissingResults = [];
+    
+    async function startCivitaiVerify() {
+        // 获取lora_data
+        const loraDataWidget = node.widgets.find(w => w.name === "lora_data");
+        if (!loraDataWidget || !loraDataWidget.value) {
+            checkVerifyResultsContent.innerHTML = `
+                <div style="color:${COLORS.error};text-align:center;padding:20px;">
+                    没有找到lora_data数据
+                </div>
+            `;
+            return;
+        }
+        
+        let loraData;
+        try {
+            loraData = JSON.parse(loraDataWidget.value);
+        } catch (e) {
+            checkVerifyResultsContent.innerHTML = `
+                <div style="color:${COLORS.error};text-align:center;padding:20px;">
+                    lora_data格式错误: ${e.message}
+                </div>
+            `;
+            return;
+        }
+        
+        if (!Array.isArray(loraData) || loraData.length === 0) {
+            checkVerifyResultsContent.innerHTML = `
+                <div style="color:${COLORS.textDim};text-align:center;padding:20px;">
+                    lora_data为空或格式不正确
+                </div>
+            `;
+            return;
+        }
+        
+        // 过滤启用的lora
+        const enabledLoras = loraData.filter(item => item.enabled !== false);
+        if (enabledLoras.length === 0) {
+            checkVerifyResultsContent.innerHTML = `
+                <div style="color:${COLORS.textDim};text-align:center;padding:20px;">
+                    没有启用的LoRA
+                </div>
+            `;
+            return;
+        }
+        
+        // 开始校验
+        civitaiVerifyResults = [];
+        civitaiMissingResults = [];
+        checkVerifyResultsContent.innerHTML = "";
+        checkMissingContent.innerHTML = "";
+        
+        const statusSpan = document.createElement("div");
+        statusSpan.textContent = `开始校验 ${enabledLoras.length} 个LoRA...`;
+        statusSpan.style.cssText = `
+            color:${COLORS.text};font-size:12px;padding:8px;
+            background:${COLORS.inputBg};border-radius:4px;margin-bottom:8px;
+        `;
+        checkVerifyResultsContent.appendChild(statusSpan);
+        
+        // 批量校验（每批4个）
+        const batchSize = 4;
+        for (let i = 0; i < enabledLoras.length; i += batchSize) {
+            const batch = enabledLoras.slice(i, i + batchSize);
+            statusSpan.textContent = `校验中... (${i + 1}-${Math.min(i + batchSize, enabledLoras.length)}/${enabledLoras.length})`;
+            
+            const promises = batch.map(lora => verifySingleLora(lora));
+            await Promise.all(promises);
+        }
+        
+        statusSpan.textContent = `校验完成！找到: ${civitaiVerifyResults.length}, 缺失: ${civitaiMissingResults.length}`;
+        statusSpan.style.background = civitaiMissingResults.length > 0 ? COLORS.warningBg : COLORS.successBg;
+    }
+    
+    // 旧版实现（已被下方四分类版本覆盖，保留以避免影响 lora_data 路径）
+    async function startCivitaiVerifyFromUploadLegacy(fileInput, statusSpan) {
+        // 1. 读取上传的JSON文件
+        const file = fileInput.files[0];
+        if (!file) {
+            statusSpan.textContent = "请先选择JSON文件！";
+            statusSpan.style.color = COLORS.error;
+            return;
+        }
+        
+        let fileContent;
+        try {
+            fileContent = await file.text();
+        } catch (e) {
+            statusSpan.textContent = `读取文件失败: ${e.message}`;
+            statusSpan.style.color = COLORS.error;
+            return;
+        }
+        
+        // 2. 解析JSON
+        let presetData;
+        try {
+            presetData = JSON.parse(fileContent);
+        } catch (e) {
+            statusSpan.textContent = `JSON解析失败: ${e.message}`;
+            statusSpan.style.color = COLORS.error;
+            return;
+        }
+        
+        // 支持两种格式：直接数组 或 {lora_list: [...]}
+        let loraList = [];
+        if (Array.isArray(presetData)) {
+            loraList = presetData;
+        } else if (presetData.lora_list && Array.isArray(presetData.lora_list)) {
+            loraList = presetData.lora_list;
+        } else if (presetData.loras && Array.isArray(presetData.loras)) {
+            loraList = presetData.loras;
+        } else {
+            statusSpan.textContent = "JSON格式不正确，需要数组或包含lora_list/loras字段";
+            statusSpan.style.color = COLORS.error;
+            return;
+        }
+        
+        if (loraList.length === 0) {
+            statusSpan.textContent = "JSON中没有LoRA数据";
+            statusSpan.style.color = COLORS.warning;
+            return;
+        }
+        
+        // 3. 过滤启用的LoRA
+        const enabledLoras = loraList.filter(item => item.enabled !== false);
+        if (enabledLoras.length === 0) {
+            statusSpan.textContent = "没有启用的LoRA";
+            statusSpan.style.color = COLORS.textDim;
+            return;
+        }
+        
+        // 4. 清空结果区域
+        civitaiVerifyResults = [];
+        civitaiMissingResults = [];
+        checkVerifyResultsContent.innerHTML = "";
+        checkMissingContent.innerHTML = "";
+        
+        statusSpan.textContent = `正在检查 ${enabledLoras.length} 个LoRA的本地状态...`;
+        statusSpan.style.color = COLORS.text;
+        
+        // 5. 批量检查本地存在性（基于SHA256匹配）
+        let localResults = {};
+        try {
+            const localResponse = await fetch('/naiba/lora/check-local', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lora_list: enabledLoras })
+            });
+            const localData = await localResponse.json();
+            localResults = localData.results || {};
+            console.log("[LoraDataPreview] check-local API响应:", localData);
+            console.log("[LoraDataPreview] 发送的enabledLoras:", enabledLoras);
+            console.log("[LoraDataPreview] localResults:", localResults);
+        } catch (e) {
+            console.warn("[LoraDataPreview] 检查本地存在性失败:", e);
+        }
+        
+        // 6. 显示本地存在的LoRA卡片
+        let localFoundCount = 0;
+        let localMissingCount = 0;
+        let noHashCount = 0;
+        
+        for (const loraItem of enabledLoras) {
+            const sha256 = (loraItem.sha256 || "").toLowerCase();
+            const localInfo = sha256 ? localResults[sha256] : null;
+            
+            if (localInfo && localInfo.exists) {
+                localFoundCount++;
+                addLocalFoundCard(loraItem, localInfo);
+            } else if (!sha256 || (localInfo && localInfo.no_hash)) {
+                noHashCount++;
+                addNoHashResult(loraItem);
+            } else {
+                localMissingCount++;
+                addLocalMissingResult(loraItem);
+            }
+        }
+        
+        // 7. 批量查询Civitai（仅对本地存在的LoRA查Civitai）
+        const localFoundLoras = enabledLoras.filter(item => {
+            const sha256 = (item.sha256 || "").toLowerCase();
+            return sha256 && localResults[sha256]?.exists;
+        });
+        
+        statusSpan.textContent = `本地检查完成：存在 ${localFoundCount}，缺失 ${localMissingCount}${noHashCount > 0 ? '，无法匹配 ' + noHashCount : ''}。正在查询Civitai...`;
+        
+        // 批量查Civitai
+        const batchSize = 4;
+        for (let i = 0; i < localFoundLoras.length; i += batchSize) {
+            const batch = localFoundLoras.slice(i, i + batchSize);
+            statusSpan.textContent = `Civitai查询中... (${i + 1}-${Math.min(i + batchSize, localFoundLoras.length)}/${localFoundLoras.length})`;
+            
+            const promises = batch.map(lora => verifySingleLora(lora));
+            await Promise.all(promises);
+        }
+        
+        // 8. 更新状态
+        statusSpan.textContent = `校验完成！本地存在: ${localFoundCount}, 本地缺失: ${localMissingCount}, Civitai找到: ${civitaiVerifyResults.length}`;
+        statusSpan.style.background = localMissingCount > 0 || civitaiMissingResults.length > 0 ? COLORS.warningBg : COLORS.successBg;
+    }
+    
+    // ========== 重做的上传预设校验（四分类卡片） ==========
+    function updateGateBanner(bannerEl, ok, cacheData) {
+        if (!bannerEl) return;
+        if (ok) {
+            const n = cacheData ? cacheData.cached_count : 0;
+            bannerEl.textContent = `✓ 已建立 sha256 全局缓存（共 ${n} 个），可以执行校验`;
+            bannerEl.style.background = 'rgba(63,185,80,0.15)';
+            bannerEl.style.borderColor = COLORS.success;
+            bannerEl.style.color = COLORS.success;
+        } else {
+            const n = cacheData && cacheData.success ? cacheData.cached_count : 0;
+            const t = cacheData && cacheData.success ? cacheData.total_loras : 0;
+            bannerEl.textContent = `⚠ 请确定所有 LoRA 都已有 sha256 缓存，否则不要执行（请先执行批量同步/离线缓存）` +
+                (n > 0 ? `  [当前 ${n}/${t}]` : `  [当前 0]`);
+            bannerEl.style.background = 'rgba(210,153,34,0.15)';
+            bannerEl.style.borderColor = '#d29922';
+            bannerEl.style.color = '#d29922';
+        }
+    }
+
+    // 读取 SSE 流，逐条回调事件对象；返回未解析的原始文本（用于非 SSE 接口的 JSON 回退）
+    async function readSSE(resp, onEvent) {
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            let idx;
+            while ((idx = buffer.indexOf("\n\n")) !== -1) {
+                const chunk = buffer.slice(0, idx);
+                buffer = buffer.slice(idx + 2);
+                const line = chunk.split("\n").find(l => l.startsWith("data: "));
+                if (line) {
+                    try {
+                        onEvent(JSON.parse(line.slice(6)));
+                    } catch (e) {
+                        // 忽略非 JSON 行
+                    }
+                }
+            }
+        }
+        return buffer;
+    }
+
+    async function startCivitaiVerifyFromUpload(fileInput, statusSpan, gateBanner, verifyBtn, verifyProgressWrap, setVerifyProgress) {
+        const file = fileInput.files[0];
+        if (!file) {
+            statusSpan.textContent = "请先选择JSON文件！";
+            statusSpan.style.color = COLORS.error;
+            return;
+        }
+
+        let fileContent;
+        try {
+            fileContent = await file.text();
+        } catch (e) {
+            statusSpan.textContent = `读取文件失败: ${e.message}`;
+            statusSpan.style.color = COLORS.error;
+            return;
+        }
+
+        let presetData;
+        try {
+            presetData = JSON.parse(fileContent);
+        } catch (e) {
+            statusSpan.textContent = `JSON解析失败: ${e.message}`;
+            statusSpan.style.color = COLORS.error;
+            return;
+        }
+
+        let loraList = [];
+        if (Array.isArray(presetData)) {
+            loraList = presetData;
+        } else if (presetData.lora_list && Array.isArray(presetData.lora_list)) {
+            loraList = presetData.lora_list;
+        } else if (presetData.loras && Array.isArray(presetData.loras)) {
+            loraList = presetData.loras;
+        } else {
+            statusSpan.textContent = "JSON格式不正确，需要数组或包含lora_list/loras字段";
+            statusSpan.style.color = COLORS.error;
+            return;
+        }
+
+        if (loraList.length === 0) {
+            statusSpan.textContent = "JSON中没有LoRA数据";
+            statusSpan.style.color = COLORS.warning;
+            return;
+        }
+
+        const enabledLoras = loraList.filter(item => item.enabled !== false);
+        if (enabledLoras.length === 0) {
+            statusSpan.textContent = "没有启用的LoRA";
+            statusSpan.style.color = COLORS.textDim;
+            return;
+        }
+
+        // ========== 执行门禁：检查全局 sha256 缓存 ==========
+        let cacheData = null;
+        try {
+            const resp = await fetch('/naiba/lora/sha256-cache');
+            cacheData = await resp.json();
+        } catch (e) {
+            console.warn("[LoraDataPreview] 读取缓存状态失败:", e);
+        }
+
+        if (!cacheData || !cacheData.success || cacheData.cached_count === 0) {
+            updateGateBanner(gateBanner, false, cacheData);
+            alert("⚠ 尚未建立 sha256 全局缓存！\n\n请先执行「批量同步所有」或「离线缓存SHA256」，\n否则无法准确判断预设中的 LoRA 是否存在于本地。\n\n（同步完成后重新点击校验）");
+            statusSpan.textContent = "已阻止：请先建立 sha256 缓存";
+            statusSpan.style.color = COLORS.warning;
+            return;
+        }
+        if (!cacheData.all_cached) {
+            updateGateBanner(gateBanner, false, cacheData);
+            const ok = confirm(
+                `当前仅缓存了 ${cacheData.cached_count}/${cacheData.total_loras} 个 LoRA 的 sha256（缺失 ${cacheData.missing_count} 个）。\n` +
+                `未缓存的本地 LoRA 将无法被准确匹配，可能导致误判为「本地缺失」。\n\n仍要执行校验吗？（建议先完成同步）`
+            );
+            if (!ok) {
+                statusSpan.textContent = "已取消：未完成全部缓存";
+                statusSpan.style.color = COLORS.warning;
+                return;
+            }
+        } else {
+            updateGateBanner(gateBanner, true, cacheData);
+        }
+
+        // ========== 调用聚合校验接口（SSE 流式，实时进度） ==========
+        // 即时按钮反馈：点下即变「校验中...」并置灰，让用户一眼看到按钮已响应
+        verifyBtn.textContent = "校验中...";
+        verifyBtn.disabled = true;
+        statusSpan.textContent = `正在校验 ${enabledLoras.length} 个 LoRA（本地匹配 + Civitai 实时查询）...`;
+        statusSpan.style.color = COLORS.text;
+        checkVerifyResultsContent.innerHTML = "";
+        checkMissingContent.innerHTML = "";
+        verifyProgressWrap.style.display = "flex";
+        setVerifyProgress(0, 0);
+
+        const resetVerifyBtn = () => {
+            verifyBtn.textContent = "开始校验（本地+Civitai）";
+            verifyBtn.disabled = false;
+            verifyProgressWrap.style.display = "none";
+        };
+
+        let finalResult = null;
+        let streamError = null;
+        try {
+            const resp = await fetch('/naiba/lora/verify-preset', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lora_list: enabledLoras, api_key: "" })
+            });
+            if (!resp.ok) {
+                const errData = await resp.json().catch(() => ({}));
+                throw new Error(errData.error || `HTTP ${resp.status}`);
+            }
+            // 读取流；raw 为未解析的原始响应体（旧 JSON 接口场景下等于整个 JSON）
+            const raw = await readSSE(resp, (evt) => {
+                if (evt.type === "progress") {
+                    setVerifyProgress(evt.done, evt.total);
+                    statusSpan.textContent = evt.msg || "校验中...";
+                } else if (evt.type === "done") {
+                    finalResult = evt;
+                } else if (evt.type === "error") {
+                    streamError = evt.message || "校验失败";
+                }
+            });
+            if (streamError) {
+                throw new Error(streamError);
+            }
+            // 兼容未重启 ComfyUI 时后端仍为旧 JSON 接口的情况：回退解析 JSON
+            if (!finalResult && raw && raw.trim()) {
+                try {
+                    const j = JSON.parse(raw.trim());
+                    if (j && j.success && j.green !== undefined) {
+                        finalResult = j;
+                    }
+                } catch (e) {
+                    // 非 JSON，忽略
+                }
+            }
+            if (!finalResult) {
+                throw new Error("未收到校验结果");
+            }
+        } catch (e) {
+            statusSpan.textContent = `校验请求失败: ${e.message}`;
+            statusSpan.style.color = COLORS.error;
+            resetVerifyBtn();
+            return;
+        }
+
+        resetVerifyBtn();
+        renderVerifyPresetResult(finalResult, statusSpan);
+    }
+
+    function renderVerifyPresetResult(result, statusSpan) {
+        const green = result.green || [];
+        const gray = result.gray || [];
+        const notFound = result.not_found || [];
+        const noSha = result.no_sha256 || [];
+        const s = result.summary || {};
+
+        checkVerifyResultsContent.innerHTML = "";
+        checkMissingContent.innerHTML = "";
+
+        const header = document.createElement("div");
+        header.style.cssText = `
+            padding:8px 10px;border-radius:6px;margin-bottom:10px;
+            background:${COLORS.inputBg};color:${COLORS.text};font-size:12px;
+            display:flex;flex-wrap:wrap;gap:12px;align-items:center;
+        `;
+        header.innerHTML = `
+            <span style="color:${COLORS.success};font-weight:600;">● 绿色(本地+C站) ${green.length}</span>
+            <span style="color:${COLORS.textDim};font-weight:600;">● 灰色(需下载) ${gray.length}</span>
+            <span style="color:${COLORS.error};font-weight:600;">● 找不到地址 ${notFound.length}</span>
+            <span style="color:${COLORS.warning};font-weight:600;">● 预设内无sha256 ${noSha.length}</span>
+            <span style="color:${COLORS.textDim};">共 ${s.total || 0} 条</span>
+        `;
+        checkVerifyResultsContent.appendChild(header);
+
+        if (green.length) {
+            checkVerifyResultsContent.appendChild(makeSectionTitle("✓ 本地存在且 C 站上也有（绿色卡片）", COLORS.success));
+            green.forEach(item => checkVerifyResultsContent.appendChild(makeCard(item, "green")));
+        }
+        if (gray.length) {
+            checkVerifyResultsContent.appendChild(makeSectionTitle("⬜ 本地不存在但 C 站有（灰色卡片，点击详情下载）", COLORS.textDim));
+            gray.forEach(item => checkVerifyResultsContent.appendChild(makeCard(item, "gray")));
+        }
+        if (notFound.length) {
+            checkVerifyResultsContent.appendChild(makeSectionTitle("✗ 本地不存在且 C 站也找不到（找不到地址）", COLORS.error));
+            notFound.forEach(item => checkMissingContent.appendChild(makeBottomItem(item, "not_found")));
+        }
+        if (noSha.length) {
+            checkVerifyResultsContent.appendChild(makeSectionTitle("? 预设条目无 sha256（无法匹配，请自行确认）", COLORS.warning));
+            noSha.forEach(item => checkMissingContent.appendChild(makeBottomItem(item, "no_sha256")));
+        }
+
+        if (!green.length && !gray.length && !notFound.length && !noSha.length) {
+            checkVerifyResultsContent.appendChild(makeSectionTitle("无结果", COLORS.textDim));
+        }
+
+        statusSpan.textContent = `校验完成！绿 ${green.length}・灰 ${gray.length}・找不到 ${notFound.length}・无sha256 ${noSha.length}`;
+        statusSpan.style.color = COLORS.success;
+    }
+
+    function makeSectionTitle(text, color) {
+        const d = document.createElement("div");
+        d.textContent = text;
+        d.style.cssText = `margin:10px 0 6px;padding:4px 8px;border-radius:4px;background:${COLORS.sidebarBg};color:${color};font-size:12px;font-weight:600;`;
+        return d;
+    }
+
+    function makeCard(item, type) {
+        const name = item.name || "Unknown";
+        const info = item.civitai_info || {};
+        const isGreen = type === "green";
+
+        const card = document.createElement("div");
+        const barColor = isGreen ? COLORS.success : COLORS.textDim;
+        card.style.cssText = `
+            display:flex;align-items:center;gap:10px;
+            padding:8px;background:${COLORS.listItemBg};border-radius:6px;
+            margin-bottom:6px;border-left:4px solid ${barColor};
+            opacity:${isGreen ? "1" : "0.72"};
+            transition:transform .12s ease, box-shadow .12s ease;
+        `;
+        card.addEventListener("mouseenter", () => { card.style.transform = "translateY(-1px)"; card.style.boxShadow = "0 2px 10px rgba(0,0,0,.35)"; });
+        card.addEventListener("mouseleave", () => { card.style.transform = "none"; card.style.boxShadow = "none"; });
+
+        const previewDiv = document.createElement("div");
+        previewDiv.style.cssText = `width:52px;height:52px;border-radius:5px;overflow:hidden;background:${COLORS.inputBg};flex-shrink:0;`;
+        const previewUrl = info.preview_url || "";
+        if (previewUrl) {
+            const img = document.createElement("img");
+            img.src = previewUrl;
+            img.style.cssText = "width:100%;height:100%;object-fit:cover;";
+            img.onerror = () => { img.style.display = "none"; previewDiv.innerHTML = `<div style="color:${COLORS.textDim};font-size:10px;text-align:center;line-height:52px;">无图</div>`; };
+            previewDiv.appendChild(img);
+        } else if (isGreen && item.local_name) {
+            const img = document.createElement("img");
+            img.src = `/naiba/lora/preview?name=${encodeURIComponent(item.local_name)}&t=${Date.now()}`;
+            img.style.cssText = "width:100%;height:100%;object-fit:cover;";
+            img.onerror = () => { img.style.display = "none"; previewDiv.innerHTML = `<div style="color:${COLORS.textDim};font-size:10px;text-align:center;line-height:52px;">无图</div>`; };
+            previewDiv.appendChild(img);
+        } else {
+            previewDiv.innerHTML = `<div style="color:${COLORS.textDim};font-size:10px;text-align:center;line-height:52px;">无图</div>`;
+        }
+
+        const infoDiv = document.createElement("div");
+        infoDiv.style.cssText = "flex:1;min-width:0;";
+        const modelName = info.model_name || name;
+        const versionName = info.version_name || "";
+        const nameDiv = document.createElement("div");
+        nameDiv.textContent = modelName;
+        nameDiv.style.cssText = `color:${COLORS.text};font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+        const subDiv = document.createElement("div");
+        subDiv.textContent = versionName || name;
+        subDiv.style.cssText = `color:${COLORS.textDim};font-size:10px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+        const strengthDiv = document.createElement("div");
+        strengthDiv.textContent = `模型 ${item.strength_model ?? 1.0} | CLIP ${item.strength_clip ?? 1.0}`;
+        strengthDiv.style.cssText = `color:${COLORS.textDim};font-size:10px;margin-top:2px;`;
+        infoDiv.appendChild(nameDiv);
+        infoDiv.appendChild(subDiv);
+        infoDiv.appendChild(strengthDiv);
+
+        const rightDiv = document.createElement("div");
+        rightDiv.style.cssText = "display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;";
+        if (!isGreen) {
+            const tag = document.createElement("div");
+            tag.textContent = "需下载";
+            tag.style.cssText = `font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(110,118,129,.3);color:${COLORS.textDim};`;
+            rightDiv.appendChild(tag);
+        }
+        const url = info.model_page_url || info.download_url || "";
+        if (url) {
+            const btn = document.createElement("button");
+            btn.textContent = isGreen ? "详情" : "详情/下载";
+            btn.style.cssText = `padding:4px 10px;background:${isGreen ? COLORS.accent : COLORS.warning};color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;`;
+            btn.addEventListener("click", () => window.open(url, "_blank"));
+            rightDiv.appendChild(btn);
+        }
+
+        card.appendChild(previewDiv);
+        card.appendChild(infoDiv);
+        card.appendChild(rightDiv);
+        return card;
+    }
+
+    function makeBottomItem(item, type) {
+        const name = item.name || "Unknown";
+        const sha = item.sha256 || "";
+        const d = document.createElement("div");
+        d.style.cssText = `padding:6px 8px;background:${COLORS.inputBg};border-radius:4px;margin-bottom:4px;border-left:3px solid ${type === "not_found" ? COLORS.error : COLORS.warning};`;
+        d.innerHTML = `
+            <div style="color:${COLORS.text};font-size:11px;word-break:break-all;">
+                <strong>${type === "not_found" ? "✗ 找不到地址:" : "? 预设内无sha256:"}</strong> ${name}
+            </div>
+            ${sha ? `<div style="color:${COLORS.textDim};font-size:10px;margin-top:2px;word-break:break-all;">sha256: ${sha}</div>` : ""}
+            <div style="color:${COLORS.textDim};font-size:10px;margin-top:2px;">强度: ${item.strength_model ?? 1.0} / ${item.strength_clip ?? 1.0}</div>
+        `;
+        return d;
+    }
+
+    function addLocalFoundCard(loraItem, localInfo) {
+        const loraName = loraItem.name || "Unknown";
+        const strengthModel = loraItem.strength_model ?? 1.0;
+        const strengthClip = loraItem.strength_clip ?? 1.0;
+        
+        const card = document.createElement("div");
+        card.style.cssText = `
+            display:flex;align-items:center;gap:8px;
+            padding:8px;background:${COLORS.listItemBg};border-radius:4px;
+            margin-bottom:4px;border-left:3px solid ${COLORS.success};
+        `;
+        
+        // 本地存在指示器
+        const statusDot = document.createElement("div");
+        statusDot.style.cssText = `
+            width:8px;height:8px;border-radius:50%;
+            background:${COLORS.success};
+        `;
+        
+        // 预览图 - 使用本地实际文件名
+        const localFileName = localInfo.local_name || loraName;
+        const previewDiv = document.createElement("div");
+        previewDiv.style.cssText = `
+            width:48px;height:48px;border-radius:4px;overflow:hidden;
+            background:${COLORS.inputBg};flex-shrink:0;
+        `;
+        
+        if (localInfo.has_preview) {
+            const previewImg = document.createElement("img");
+            previewImg.src = `/naiba/lora/preview?name=${encodeURIComponent(localFileName)}&t=${Date.now()}`;
+            previewImg.style.cssText = `width:100%;height:100%;object-fit:cover;`;
+            previewImg.onerror = () => {
+                previewImg.style.display = "none";
+                previewDiv.innerHTML = `<div style="color:${COLORS.textDim};font-size:10px;text-align:center;line-height:48px;">无图</div>`;
+            };
+            previewDiv.appendChild(previewImg);
+        } else {
+            previewDiv.innerHTML = `<div style="color:${COLORS.textDim};font-size:10px;text-align:center;line-height:48px;">无图</div>`;
+        }
+        
+        // LoRA信息
+        const loraInfo = document.createElement("div");
+        loraInfo.style.cssText = `flex:1;min-width:0;`;
+        
+        const nameDiv = document.createElement("div");
+        nameDiv.textContent = loraName;
+        nameDiv.style.cssText = `
+            color:${COLORS.text};font-size:12px;font-weight:500;
+            white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+        `;
+        
+        const strengthDiv = document.createElement("div");
+        strengthDiv.textContent = `模型强度: ${strengthModel} | CLIP强度: ${strengthClip}`;
+        strengthDiv.style.cssText = `
+            color:${COLORS.textDim};font-size:10px;margin-top:2px;
+        `;
+        
+        const localStatus = document.createElement("div");
+        localStatus.textContent = "✓ 本地存在";
+        localStatus.style.cssText = `
+            color:${COLORS.success};font-size:10px;margin-top:2px;
+        `;
+        
+        loraInfo.appendChild(nameDiv);
+        loraInfo.appendChild(strengthDiv);
+        loraInfo.appendChild(localStatus);
+        
+        card.appendChild(statusDot);
+        card.appendChild(previewDiv);
+        card.appendChild(loraInfo);
+        
+        checkVerifyResultsContent.appendChild(card);
+    }
+    
+    function addLocalMissingResult(loraItem) {
+        const loraName = loraItem.name || "Unknown";
+        
+        const missingItem = document.createElement("div");
+        missingItem.style.cssText = `
+            padding:6px;background:${COLORS.inputBg};border-radius:3px;
+            margin-bottom:4px;border-left:3px solid ${COLORS.error};
+        `;
+        
+        missingItem.innerHTML = `
+            <div style="color:${COLORS.error};font-size:11px;">
+                <strong>✗ 缺失:</strong> ${loraName}
+            </div>
+            <div style="color:${COLORS.textDim};font-size:10px;margin-top:2px;">
+                强度: ${loraItem.strength_model ?? 1.0} / ${loraItem.strength_clip ?? 1.0}
+            </div>
+        `;
+        
+        checkMissingContent.appendChild(missingItem);
+    }
+    
+    function addNoHashResult(loraItem) {
+        const loraName = loraItem.name || "Unknown";
+        
+        const noHashItem = document.createElement("div");
+        noHashItem.style.cssText = `
+            padding:6px;background:${COLORS.inputBg};border-radius:3px;
+            margin-bottom:4px;border-left:3px solid ${COLORS.textDim};
+        `;
+        
+        noHashItem.innerHTML = `
+            <div style="color:${COLORS.textDim};font-size:11px;">
+                <strong>? 无法匹配:</strong> ${loraName}
+            </div>
+            <div style="color:${COLORS.textDim};font-size:10px;margin-top:2px;">
+                该预设没有sha256字段，请自行确认文件是否存在
+            </div>
+            <div style="color:${COLORS.textDim};font-size:10px;margin-top:2px;">
+                强度: ${loraItem.strength_model ?? 1.0} / ${loraItem.strength_clip ?? 1.0}
+            </div>
+        `;
+        
+        checkMissingContent.appendChild(noHashItem);
+    }
+    
+    async function verifySingleLora(loraItem) {
+        const loraName = loraItem.name || "";
+        let sha256 = loraItem.sha256;
+        
+        // sha256自动回退
+        if (!sha256) {
+            try {
+                const response = await fetch(`/naiba/lora/resolve-sha256?name=${encodeURIComponent(loraName)}`);
+                const result = await response.json();
+                if (result.sha256) {
+                    sha256 = result.sha256;
+                }
+            } catch (e) {
+                console.warn(`[LoraDataPreview] 获取sha256失败: ${loraName}`, e);
+            }
+        }
+        
+        // 如果还是没有sha256，标记为无法校验
+        if (!sha256) {
+            addVerifyResult(loraItem, null, "无法校验（无sha256）", "unknown");
+            return;
+        }
+        
+        // 查询Civitai
+        try {
+            const response = await fetch(`/naiba/lora/civitai-by-hash?hash=${sha256}`);
+            const result = await response.json();
+            
+            if (result.found) {
+                addVerifyResult(loraItem, result.info, "已找到", "found");
+            } else {
+                addVerifyResult(loraItem, null, "未找到", "missing");
+                addMissingResult(loraItem, sha256);
+            }
+        } catch (e) {
+            console.warn(`[LoraDataPreview] Civitai查询失败: ${loraName}`, e);
+            addVerifyResult(loraItem, null, `查询失败: ${e.message}`, "error");
+        }
+    }
+    
+    function addVerifyResult(loraItem, info, status, statusType) {
+        civitaiVerifyResults.push({ loraItem, info, status, statusType });
+        
+        const resultCard = document.createElement("div");
+        resultCard.style.cssText = `
+            display:flex;align-items:center;gap:8px;
+            padding:8px;background:${COLORS.listItemBg};border-radius:4px;
+            margin-bottom:4px;opacity:${statusType === "found" ? "1" : "0.7"};
+        `;
+        
+        // 状态指示器
+        const statusDot = document.createElement("div");
+        statusDot.style.cssText = `
+            width:8px;height:8px;border-radius:50%;
+            background:${statusType === "found" ? COLORS.success : 
+                        statusType === "missing" ? COLORS.error : 
+                        statusType === "unknown" ? COLORS.textDim : COLORS.warning};
+        `;
+        
+        // LoRA信息
+        const loraInfo = document.createElement("div");
+        loraInfo.style.cssText = `flex:1;`;
+        
+        const loraName = document.createElement("div");
+        loraName.textContent = loraItem.name || "Unknown";
+        loraName.style.cssText = `
+            color:${statusType === "found" ? COLORS.text : COLORS.textDim};
+            font-size:12px;font-weight:500;
+        `;
+        
+        const loraStatus = document.createElement("div");
+        loraStatus.textContent = status;
+        loraStatus.style.cssText = `
+            color:${statusType === "found" ? COLORS.success : 
+                   statusType === "missing" ? COLORS.error : COLORS.textDim};
+            font-size:10px;margin-top:2px;
+        `;
+        
+        loraInfo.appendChild(loraName);
+        loraInfo.appendChild(loraStatus);
+        
+        // 操作按钮
+        const actions = document.createElement("div");
+        actions.style.cssText = `display:flex;gap:4px;`;
+        
+        if (statusType === "found" && info) {
+            const detailBtn = document.createElement("button");
+            detailBtn.textContent = "详情";
+            detailBtn.style.cssText = `
+                padding:4px 8px;background:${COLORS.accent};
+                color:white;border:none;border-radius:3px;cursor:pointer;font-size:10px;
+            `;
+            detailBtn.addEventListener("click", () => {
+                showCivitaiDetail(info);
+            });
+            actions.appendChild(detailBtn);
+        }
+        
+        resultCard.appendChild(statusDot);
+        resultCard.appendChild(loraInfo);
+        resultCard.appendChild(actions);
+        
+        checkVerifyResultsContent.appendChild(resultCard);
+    }
+    
+    function addMissingResult(loraItem, sha256) {
+        civitaiMissingResults.push({ loraItem, sha256 });
+        
+        const missingItem = document.createElement("div");
+        missingItem.style.cssText = `
+            padding:6px;background:${COLORS.inputBg};border-radius:3px;
+            margin-bottom:4px;border-left:3px solid ${COLORS.warning};
+        `;
+        
+        missingItem.innerHTML = `
+            <div style="color:${COLORS.text};font-size:11px;">
+                <strong>文件名:</strong> ${loraItem.name || "Unknown"}
+            </div>
+            <div style="color:${COLORS.textDim};font-size:10px;margin-top:2px;">
+                <strong>SHA256:</strong> 
+                <span style="user-select:all;font-family:monospace;">${sha256}</span>
+            </div>
+        `;
+        
+        checkMissingContent.appendChild(missingItem);
+    }
+    
+    function showCivitaiDetail(info) {
+        const detailHtml = `
+            <div style="background:${COLORS.inputBg};padding:12px;border-radius:6px;margin-top:8px;">
+                <div style="display:flex;gap:8px;margin-bottom:8px;">
+                    ${info.preview_url ? `
+                        <img src="${info.preview_url}" style="width:80px;height:80px;object-fit:cover;border-radius:4px;" />
+                    ` : ""}
+                    <div>
+                        <div style="color:${COLORS.text};font-size:13px;font-weight:500;">
+                            ${info.model_name || "Unknown"}
+                        </div>
+                        <div style="color:${COLORS.textDim};font-size:11px;margin-top:2px;">
+                            ${info.version_name || ""}
+                        </div>
+                        <div style="color:${COLORS.accent};font-size:10px;margin-top:4px;">
+                            ${info.base_model || ""}
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="color:${COLORS.textDim};font-size:11px;margin-bottom:4px;">
+                    <strong>下载地址:</strong>
+                </div>
+                <div style="color:${COLORS.accent};font-size:10px;word-break:break-all;
+                    background:${COLORS.sidebarBg};padding:6px;border-radius:3px;
+                    margin-bottom:8px;user-select:all;">
+                    ${info.download_url || "无"}
+                </div>
+                
+                <div style="color:${COLORS.textDim};font-size:11px;margin-bottom:4px;">
+                    <strong>模型页面:</strong>
+                </div>
+                <div style="color:${COLORS.accent};font-size:10px;word-break:break-all;
+                    background:${COLORS.sidebarBg};padding:6px;border-radius:3px;
+                    margin-bottom:8px;">
+                    <a href="${info.model_page_url || "#"}" target="_blank" 
+                       style="color:${COLORS.accent};text-decoration:none;">
+                        ${info.model_page_url || "无"}
+                    </a>
+                </div>
+                
+                ${info.trigger_words && info.trigger_words.length > 0 ? `
+                    <div style="color:${COLORS.textDim};font-size:11px;margin-bottom:4px;">
+                        <strong>触发词:</strong>
+                    </div>
+                    <div style="color:${COLORS.accent};font-size:10px;
+                        background:${COLORS.sidebarBg};padding:6px;border-radius:3px;">
+                        ${info.trigger_words.join(", ")}
+                    </div>
+                ` : ""}
+                
+                <div style="color:${COLORS.textDim};font-size:10px;margin-top:8px;">
+                    下载次数: ${info.download_count || 0} | 评分: ${info.rating || 0} (${info.rating_count || 0}人)
+                </div>
+            </div>
+        `;
+        
+        checkVerifyResultsContent.insertAdjacentHTML('afterbegin', detailHtml);
+    }
+
     // ========== 同步单个LoRA ==========
     async function syncSingleLora(loraName, button) {
         button.disabled = true;
@@ -1261,6 +2489,9 @@ function createLoraDataPreviewModal(node, loraList) {
                 
                 syncStatus.textContent = `批量同步完成: ${finalResults.success} 成功, ${finalResults.failed} 失败`;
                 syncStatus.style.color = COLORS.success;
+
+                // 刷新 sha256 全局缓存提示
+                refreshSha256CacheHint();
                 
                 // 刷新列表
                 renderLoraList();
@@ -1289,6 +2520,115 @@ function createLoraDataPreviewModal(node, loraList) {
         batchSyncBtn.style.background = COLORS.accent;
         
         // 5秒后恢复状态栏默认颜色
+        setTimeout(() => {
+            syncStatus.style.color = COLORS.textDim;
+            syncStatus.textContent = "就绪";
+            progressBarStatus.style.color = COLORS.textDim;
+        }, 5000);
+    }
+
+    // ========== 离线仅计算 SHA256 缓存 ==========
+    async function startCacheSha256Only() {
+        if (isSyncing) return;
+
+        if (!confirm("确定要离线扫描所有本地 LoRA 并计算 sha256 写入全局缓存吗？\n此操作完全不查询 Civitai，仅本地计算。")) {
+            return;
+        }
+
+        isSyncing = true;
+        cacheSha256Btn.disabled = true;
+        cacheSha256Btn.textContent = "缓存中...";
+        cacheSha256Btn.style.background = COLORS.textDim;
+        cacheSha256Badge.textContent = "缓存中...";
+        cacheSha256Badge.style.background = "transparent";
+        cacheSha256Badge.style.color = COLORS.textDim;
+
+        progressBarContainer.style.display = "block";
+        progressBarTitle.textContent = "离线 SHA256 缓存进度";
+        progressBarInner.style.width = "0%";
+        progressBarStatus.textContent = "准备开始...";
+
+        try {
+            const response = await fetch('/naiba/lora/cache-sha256-only', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ folder: '' })
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let finalData = null;
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+                let eventType = '', eventData = '';
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) eventType = line.substring(7).trim();
+                    else if (line.startsWith('data: ')) eventData = line.substring(6).trim();
+                    else if (line === '' && eventType && eventData) {
+                        try {
+                            const data = JSON.parse(eventData);
+                            switch (eventType) {
+                                case 'start':
+                                    progressBarStatus.textContent = `开始计算 ${data.total} 个 LoRA 的 sha256...`;
+                                    break;
+                                case 'progress':
+                                    const pct = Math.round((data.current / data.total) * 100);
+                                    progressBarInner.style.width = `${pct}%`;
+                                    progressBarStatus.textContent = `[${data.current}/${data.total}] 正在计算: ${data.name.split('/').pop().split('\\').pop()}`;
+                                    break;
+                                case 'item_done':
+                                    const dp = Math.round((data.current / data.total) * 100);
+                                    progressBarInner.style.width = `${dp}%`;
+                                    const label = data.status === 'cached' ? '✓' : (data.status === 'skipped' ? '跳过' : '✗');
+                                    progressBarStatus.textContent = `[${data.current}/${data.total}] ${label} ${data.name.split('/').pop().split('\\').pop()}`;
+                                    progressBarStatus.style.color = data.status === 'failed' ? COLORS.danger : COLORS.textDim;
+                                    break;
+                                case 'complete':
+                                    finalData = data;
+                                    break;
+                                case 'error':
+                                    throw new Error(data.error || "缓存过程中出错");
+                            }
+                        } catch (parseError) {
+                            console.warn("[LoraDataPreview] SHA256 cache SSE parse error:", parseError);
+                        }
+                        eventType = ''; eventData = '';
+                    }
+                }
+            }
+
+            if (finalData) {
+                progressBarInner.style.width = "100%";
+                progressBarStatus.style.color = COLORS.success;
+                progressBarStatus.textContent = finalData.message || "SHA256 缓存完成";
+                syncStatus.textContent = finalData.message || "SHA256 缓存完成";
+                syncStatus.style.color = COLORS.success;
+                refreshSha256CacheHint();
+                alert(finalData.message || "SHA256 缓存完成");
+            }
+        } catch (error) {
+            console.error("[LoraDataPreview] 离线缓存失败:", error);
+            progressBarStatus.style.color = COLORS.danger;
+            progressBarStatus.textContent = `缓存错误: ${error.message}`;
+            syncStatus.textContent = "离线缓存错误";
+            syncStatus.style.color = COLORS.danger;
+            alert(`离线缓存错误: ${error.message}`);
+        }
+
+        isSyncing = false;
+        cacheSha256Btn.disabled = false;
+        cacheSha256Btn.textContent = "离线缓存SHA256";
+        cacheSha256Btn.style.background = COLORS.accent2 || COLORS.accent;
+        // 无论成功/失败，结束都重新拉取最新缓存状态刷新徽章
+        refreshSha256CacheHint();
+
         setTimeout(() => {
             syncStatus.style.color = COLORS.textDim;
             syncStatus.textContent = "就绪";

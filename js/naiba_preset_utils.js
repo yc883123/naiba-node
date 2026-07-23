@@ -680,22 +680,40 @@ export function createPresetsModal(node, onImport = null) {
         }
     });
 
-    // 导出到本地文件
-    exportBtn.addEventListener("click", () => {
+    // 导出到本地文件（先经后端补全 sha256，再下载，避免丢失哈希）
+    exportBtn.addEventListener("click", async () => {
         const data = getCurrentData();
         if (data.length === 0) {
             showStatus("当前没有 LoRA 配置可导出", true);
             return;
         }
 
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `lora_preset_${new Date().toISOString().slice(0, 10)}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-        showStatus("预设已导出到本地文件");
+        try {
+            showShaProgress();
+            const resp = await api.fetchApi("/naiba/presets/save", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ data, return_data: true }),
+            });
+            const result = await resp.json();
+            if (result.error) {
+                showStatus("导出失败：" + result.error, true);
+                return;
+            }
+            const out = result.data || data;
+            const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `lora_preset_${new Date().toISOString().slice(0, 10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showStatus("预设已导出（已补全 sha256）");
+        } catch (e) {
+            showStatus("导出失败：" + e.message, true);
+        } finally {
+            hideShaProgress();
+        }
     });
 
     // 从本地文件导入

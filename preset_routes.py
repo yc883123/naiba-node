@@ -8,6 +8,7 @@ import json
 import glob
 import time
 import asyncio
+import hashlib
 from pathlib import Path
 from aiohttp import web
 from server import PromptServer
@@ -405,25 +406,65 @@ async def save_preset_handler(request):
     """保存预设（如果已存在则覆盖）"""
     try:
         body = await request.json()
-        name = body.get('name', '').strip()
         data = body.get('data', [])
-        
-        # 验证名称
-        is_valid, error_msg = validate_preset_name(name)
-        if not is_valid:
-            return web.json_response({"error": error_msg}, status=400)
-        
+        return_data = body.get('return_data', False)
+        name = (body.get('name', '') or '').strip()
+
         # 验证数据格式
         if not isinstance(data, list):
             return web.json_response({"error": "数据格式错误，需要是数组"}, status=400)
+
+        if not return_data:
+            # 验证名称（仅「保存预设」需要落盘文件名；「导出」只补全数据不写盘）
+            is_valid, error_msg = validate_preset_name(name)
+            if not is_valid:
+                return web.json_response({"error": error_msg}, status=400)
         
-        # 不再计算 SHA256，直接保存
-        
+        # 导出时为每个 LoRA 补全 sha256：优先用全局缓存（第一步批量同步/离线缓存已写入），
+        # 缓存缺失且本地文件存在时现场计算并回写缓存。修复「预设导出不带 sha256」问题。
+        from . import sha256_cache
+        from .civitai_utils import CivitaiClient
+
+        enriched = []
+        loop = asyncio.get_event_loop()
+        for item in data:
+            new_item = dict(item)
+            nm = item.get("name", "")
+            sha = None
+            if nm:
+                sha = sha256_cache.get(nm)
+                if not sha:
+                    norm = nm.replace("\\", "/").lstrip("/")
+                    if norm != nm:
+                        sha = sha256_cache.get(norm)
+                if not sha:
+                    full = None
+                    try:
+                        full = folder_paths.get_full_path("loras", nm)
+                    except Exception:
+                        full = None
+                    if full and os.path.exists(full) and sha256_cache.needs_update(nm, full):
+                        try:
+                            sha = await loop.run_in_executor(
+                                None, CivitaiClient.calculate_sha256, full
+                            )
+                            if sha:
+                                sha256_cache.update_entry(nm, sha, full)
+                        except Exception as _e:  # noqa: BLE001
+                            print(f"[Naiba] save_preset 计算 sha256 失败 {nm}: {_e}")
+            if sha:
+                new_item["sha256"] = sha
+            enriched.append(new_item)
+
+        # 「导出」模式：补齐 sha256 后直接返回数据，不落盘
+        if return_data:
+            return web.json_response({"data": enriched})
+
         file_path = os.path.join(PRESETS_DIR, f"{name}.json")
-        
+
         # 保存预设
         with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+            json.dump(enriched, f, indent=2, ensure_ascii=False)
         
         return web.json_response({"success": True})
     except Exception as e:
@@ -434,23 +475,69 @@ async def save_preset_handler(request):
 # ============================================================
 # API 路由：解析/校验预设（导入时按 sha256 定位改名文件，非破坏性）
 # ============================================================
+def _lora_exists(name):
+    """判断某 LoRA 相对名是否能在本地 loras 目录中定位到（不引发异常）。"""
+    if not name:
+        return False
+    try:
+        return folder_paths.get_full_path("loras", name) is not None
+    except Exception:
+        return False
+
+
+def resolve_preset_items(items):
+    """导入预设时按 sha256 重定位改名文件，并归一化名称。
+
+    非破坏性：绝不丢弃任何条目，返回与输入一一对应的新列表。
+    - 含 sha256 且本地存在同哈希文件 -> name 改为全局缓存中的真实相对路径（支持改名匹配）
+    - 含 sha256 但本地无匹配 / 不含 sha256 -> 归一化 name（反斜杠转正斜杠、剥离前导斜杠），
+      若可在本地定位则采用归一化名，否则保留原名（缺失项由前端以 (missing) 显示）
+    """
+    if not isinstance(items, list):
+        return items
+    from . import sha256_cache
+    # sha256(小写) -> 本地真实相对路径，用于改名匹配
+    cache = sha256_cache.build_sha_index()
+
+    resolved = []
+    for item in items:
+        if not isinstance(item, dict):
+            resolved.append(item)
+            continue
+        name = item.get("name", "") or ""
+        sha = (item.get("sha256") or "").strip().lower()
+        new_name = name
+
+        # 1) 优先按 sha256 重定位到本地真实相对路径（支持改名/换目录匹配）
+        if sha and sha in cache:
+            new_name = cache[sha]
+        else:
+            # 2) 归一化 name（与导出/校验规则一致）：反斜杠->正斜杠，剥离前导斜杠
+            norm = name.replace("\\", "/").lstrip("/")
+            if norm and norm != name and _lora_exists(norm):
+                new_name = norm
+            elif name and _lora_exists(name):
+                new_name = name  # 原名即可定位，保底
+
+        new_item = dict(item)
+        new_item["name"] = new_name
+        resolved.append(new_item)
+    return resolved
+
+
 @PromptServer.instance.routes.post('/naiba/presets/resolve')
 async def resolve_preset_handler(request):
-    """导入预设时按 sha256 定位改名文件。
+    """导入预设时按 sha256 定位改名文件（非破坏性）。
 
-    非破坏性：绝不丢弃任何条目。
-    - 含 sha256 且本地存在同哈希文件 -> 将 name 改为本地真实相对路径（支持改名匹配）
-    - 含 sha256 但本地无匹配 / 不含 sha256 -> 保留原始 name（缺失项由前端以 (missing) 显示）
-    旧预设（保存时尚未写入 sha256）不含 sha256，会原样返回，可正常导入。
+    旧预设（保存时尚未写入 sha256）不含 sha256，会按归一化规则尝试匹配本地文件，
+    仍匹配不到则保留原名（缺失项由前端以 (missing) 显示），可正常导入。
     """
     try:
+        from . import sha256_cache
         body = await request.json()
         data = body.get('data', [])
-        if not isinstance(data, list):
-            return web.json_response({"error": "数据格式错误，需要是数组"}, status=400)
-
-        # 直接原样返回，不做 sha256 扫描
-        return web.json_response({"data": data})
+        resolved = resolve_preset_items(data)
+        return web.json_response({"data": resolved})
     except Exception as e:
         print(f"Error resolving preset: {e}")
         return web.json_response({"error": str(e)}, status=500)
@@ -985,7 +1072,10 @@ async def batch_sync_handler(request):
             sync_lora_from_civitai,
             NSFW_LEVELS,
             get_metadata_path,
+            load_cached_metadata,
+            CivitaiClient,
         )
+        from . import sha256_cache
         
         # 获取NSFW级别阈值
         max_nsfw = NSFW_LEVELS.get(nsfw_level, NSFW_LEVELS["R"])
@@ -1084,6 +1174,26 @@ async def batch_sync_handler(request):
                 # 执行同步
                 metadata, preview_path, error = await sync_lora_from_civitai(lora_path, api_key_value, max_nsfw, force)
                 
+                # 无论同步成功与否，都尽量把该 LoRA 的 sha256 写入全局缓存
+                # （sync_lora_from_civitai 在成功/失败/无数据各分支都会把 hash 写入 .civitai.info.json）
+                try:
+                    file_hash = None
+                    if metadata and isinstance(metadata, dict):
+                        file_hash = metadata.get("hash")
+                    if not file_hash:
+                        meta_cached = load_cached_metadata(get_metadata_path(lora_path))
+                        if meta_cached:
+                            file_hash = meta_cached.get("hash")
+                    if not file_hash and sha256_cache.needs_update(lora_name, lora_path):
+                        _loop = asyncio.get_event_loop()
+                        file_hash = await _loop.run_in_executor(
+                            None, CivitaiClient.calculate_sha256, lora_path
+                        )
+                    if file_hash:
+                        sha256_cache.update_entry(lora_name, file_hash, lora_path)
+                except Exception as _ce:  # noqa: BLE001
+                    print(f"[Naiba-SHA256Cache] 缓存 {lora_name} 失败: {_ce}")
+                
                 if error:
                     results["failed"] += 1
                     results["details"].append({
@@ -1151,6 +1261,384 @@ async def batch_sync_handler(request):
     except Exception as e:
         print(f"Error in batch sync: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+# ============================================================
+# API 路由：查询全局 sha256 缓存状态
+# ============================================================
+@PromptServer.instance.routes.get('/naiba/lora/sha256-cache')
+async def sha256_cache_status_handler(request):
+    """
+    返回全局 sha256 缓存状态：
+        cached_count : 已缓存 sha256 的条目数
+        total_loras  : 本地 LoRA 总数
+        missing_count: 尚未缓存的本地 LoRA 数
+        all_cached   : 是否所有本地 LoRA 都已缓存
+    可选 query: include_map=1 时附带完整 cache 映射与 missing 列表（前 200 条）。
+    """
+    try:
+        from . import sha256_cache
+
+        include_map = request.query.get('include_map', '') in ('1', 'true', 'yes')
+        cache = sha256_cache.get_all()
+        cached_count = len(cache)
+
+        try:
+            local_loras = folder_paths.get_filename_list("loras")
+        except Exception:
+            local_loras = []
+        # 统一分隔符后比较
+        local_norm = [str(n).replace("\\", "/") for n in local_loras]
+        total = len(local_norm)
+        missing = [n for n in local_norm if n not in cache]
+
+        resp = {
+            "success": True,
+            "cached_count": cached_count,
+            "total_loras": total,
+            "missing_count": len(missing),
+            "all_cached": (total > 0 and len(missing) == 0),
+        }
+        if include_map:
+            resp["cache"] = cache
+            resp["missing"] = missing[:200]
+        return web.json_response(resp)
+    except Exception as e:
+        print(f"[Naiba] sha256-cache status error: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+# ============================================================
+# API 路由：纯离线计算所有本地 LoRA 的 sha256 并写入全局缓存（不查询 C 站）
+# ============================================================
+@PromptServer.instance.routes.post('/naiba/lora/cache-sha256-only')
+async def cache_sha256_only_handler(request):
+    """
+    仅扫描本地所有 LoRA 文件并计算 sha256，写入全局缓存；完全不调用 Civitai。
+    用于网络不佳时先把本地 sha256 全部收齐，供后续上传预设做本地匹配。
+    通过 SSE 流式返回进度。
+    请求体（可选）：{"folder": "子目录名"} 仅处理指定子目录。
+    """
+    try:
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        target_folder = (body.get("folder") or "").strip()
+
+        from .civitai_utils import CivitaiClient
+        from . import sha256_cache
+
+        # 收集所有本地 LoRA 文件路径
+        all_lora_paths = []
+        lora_dirs = folder_paths.get_folder_paths("loras")
+        for lora_dir in lora_dirs:
+            if not os.path.exists(lora_dir):
+                continue
+            for root, dirs, files in os.walk(lora_dir):
+                if target_folder:
+                    rel_path = os.path.relpath(root, lora_dir)
+                    if not rel_path.startswith(target_folder) and rel_path != ".":
+                        continue
+                for file in files:
+                    if file.lower().endswith((".safetensors", ".pt", ".ckpt", ".pth")):
+                        file_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(file_path, lora_dir)
+                        all_lora_paths.append((rel_path, file_path))
+
+        results = {
+            "total": len(all_lora_paths),
+            "cached": 0,
+            "skipped": 0,   # 缓存已是最新，跳过
+            "failed": 0,
+            "details": [],
+        }
+
+        # 创建 SSE 流式响应
+        response = web.StreamResponse(
+            status=200,
+            reason="OK",
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+        await response.prepare(request)
+
+        import asyncio as _asyncio
+        import json as _json
+
+        async def send_sse(event_type, data):
+            msg = f"event: {event_type}\ndata: {_json.dumps(data)}\n\n"
+            await response.write(msg.encode("utf-8"))
+
+        await send_sse("start", {"total": len(all_lora_paths)})
+
+        loop = _asyncio.get_event_loop()
+        current_index = 0
+        for lora_name, lora_path in all_lora_paths:
+            current_index += 1
+            await send_sse("progress", {
+                "current": current_index,
+                "total": len(all_lora_paths),
+                "name": lora_name,
+                "status": "hashing",
+            })
+            try:
+                if not sha256_cache.needs_update(lora_name, lora_path):
+                    results["skipped"] += 1
+                    await send_sse("item_done", {
+                        "current": current_index,
+                        "total": len(all_lora_paths),
+                        "name": lora_name,
+                        "status": "skipped",
+                    })
+                    continue
+                file_hash = await loop.run_in_executor(
+                    None, CivitaiClient.calculate_sha256, lora_path
+                )
+                if file_hash:
+                    sha256_cache.update_entry(lora_name, file_hash, lora_path)
+                    results["cached"] += 1
+                    status = "cached"
+                else:
+                    results["failed"] += 1
+                    status = "failed"
+                await send_sse("item_done", {
+                    "current": current_index,
+                    "total": len(all_lora_paths),
+                    "name": lora_name,
+                    "status": status,
+                })
+            except Exception as e:
+                results["failed"] += 1
+                await send_sse("item_done", {
+                    "current": current_index,
+                    "total": len(all_lora_paths),
+                    "name": lora_name,
+                    "status": "failed",
+                    "error": str(e),
+                })
+
+        await _asyncio.sleep(0)
+
+        # 收尾：返回缓存概览
+        cache = sha256_cache.get_all()
+        local_norm = [str(n).replace("\\", "/")
+                      for n in folder_paths.get_filename_list("loras")]
+        total = len(local_norm)
+        missing = [n for n in local_norm if n not in cache]
+        results["cached_count"] = len(cache)
+        results["missing_count"] = len(missing)
+        results["all_cached"] = (total > 0 and len(missing) == 0)
+
+        await send_sse("complete", {
+            "results": results,
+            "cached_count": len(cache),
+            "missing_count": len(missing),
+            "all_cached": results["all_cached"],
+            "message": (
+                f"SHA256 缓存完成：新增/更新 {results['cached']} 个，"
+                f"跳过 {results['skipped']} 个，失败 {results['failed']} 个；"
+                f"当前已缓存共 {len(cache)} 个"
+            ),
+        })
+
+        await response.write_eof()
+        return response
+
+    except Exception as e:
+        print(f"[Naiba] cache-sha256-only error: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+# ============================================================
+# API 路由：上传预设校验（本地匹配 + Civitai 实时查询，四分类）
+# ============================================================
+@PromptServer.instance.routes.post('/naiba/lora/verify-preset')
+async def verify_preset_handler(request):
+    """
+    上传预设校验聚合接口（SSE 流式，实时回传进度）：
+      1) 按预设条目中的 sha256 与本地全局缓存 / 磁盘匹配，判断本地是否存在；
+      2) 对去重后的唯一 sha256 实时查询 Civitai，判断是否上站；
+    事件流格式（每行 data: {json}\\n\\n）:
+      {"type":"progress","stage":"init","done":0,"total":N,"msg":"..."}
+      {"type":"progress","stage":"civitai","done":k,"total":N,"msg":"已查询 Civitai k/N"}
+      {"type":"done","success":true,"green":[...],"gray":[...],"not_found":[...],"no_sha256":[...],"summary":{...}}
+      {"type":"error","message":"..."}
+    四分类：
+      green      本地存在且 C 站上也有（含 civitai_info，可显示绿色卡片）
+      gray       本地不存在但 C 站上有（含 civitai_info + 下载地址，灰色卡片）
+      not_found  本地不存在且 C 站上也没有（置底「找不到地址」）
+      no_sha256  预设条目本身没有 sha256（置底「预设内无sha256」）
+    请求体：{"lora_list":[{"name","sha256"?,"strength_model","strength_clip","enabled"}...], "api_key":""}
+    """
+    try:
+        body = await request.json()
+        lora_list = body.get("lora_list", [])
+        api_key = (body.get("api_key") or "").strip()
+        if not isinstance(lora_list, list):
+            return web.json_response({"error": "lora_list 需为数组"}, status=400)
+
+        from . import sha256_cache
+        from .civitai_utils import CivitaiClient, build_civitai_version_info
+
+        # 全局缓存：sha256(小写) -> 相对名，用于本地存在性匹配
+        cache = sha256_cache.get_all()
+        sha_to_name = {}
+        for n, info in cache.items():
+            if isinstance(info, dict) and info.get("sha256"):
+                sha_to_name[info["sha256"].lower()] = n
+
+        def is_local(name, sha):
+            norm = (name or "").replace("\\", "/").lstrip("/")
+            if norm:
+                try:
+                    fp = folder_paths.get_full_path("loras", norm)
+                except Exception:
+                    fp = None
+                if fp and os.path.exists(fp):
+                    return True, norm
+            if sha:
+                key = sha.lower()
+                if key in sha_to_name:
+                    return True, sha_to_name[key]
+            return False, None
+
+        # 收集需查 Civitai 的唯一 sha256（去重，仅限有 sha256 的条目）
+        unique_shas = []
+        seen = set()
+        for item in lora_list:
+            sha = (item.get("sha256") or "").strip().lower()
+            if sha and sha not in seen:
+                seen.add(sha)
+                unique_shas.append(sha)
+
+        total = len(unique_shas)
+
+        # ---- 建立 SSE 流式响应 ----
+        prepared = False
+        resp = web.StreamResponse()
+        resp.headers["Content-Type"] = "text/event-stream"
+        resp.headers["Cache-Control"] = "no-cache"
+        resp.headers["X-Accel-Buffering"] = "no"
+        resp.headers["Connection"] = "keep-alive"
+        resp.enable_chunked_encoding()
+        await resp.prepare(request)
+        prepared = True
+
+        write_lock = asyncio.Lock()
+
+        async def send(obj):
+            payload = "data: " + json.dumps(obj, ensure_ascii=False) + "\n\n"
+            async with write_lock:
+                await resp.write(payload.encode("utf-8"))
+
+        await send({
+            "type": "progress", "stage": "init", "done": 0, "total": total,
+            "msg": f"准备校验 {len(lora_list)} 条（唯一 sha256 {total} 个）",
+        })
+
+        sha_info_map = {}
+        client = None
+        if unique_shas:
+            client = CivitaiClient(api_key=api_key)
+            sem = asyncio.Semaphore(6)
+            done_count = 0
+
+            async def _query(sha):
+                nonlocal done_count
+                async with sem:
+                    info = None
+                    try:
+                        data, err = await client.query_by_hash(sha)
+                        if data and isinstance(data, dict):
+                            info = build_civitai_version_info(data)
+                    except Exception as _e:  # noqa: BLE001
+                        print(f"[Naiba] verify-preset 查询 {sha} 失败: {_e}")
+                    sha_info_map[sha] = info
+                done_count += 1
+                await send({
+                    "type": "progress", "stage": "civitai",
+                    "done": done_count, "total": total,
+                    "msg": f"已查询 Civitai {done_count}/{total}",
+                })
+
+            await asyncio.gather(*[_query(s) for s in unique_shas])
+        else:
+            await send({
+                "type": "progress", "stage": "civitai", "done": 0, "total": 0,
+                "msg": "无 sha256 可查询 Civitai",
+            })
+
+        # 分类
+        green, gray, not_found, no_sha256 = [], [], [], []
+        for item in lora_list:
+            name = item.get("name", "")
+            sha = (item.get("sha256") or "").strip().lower()
+            entry = {
+                "name": name,
+                "sha256": sha or None,
+                "strength_model": item.get("strength_model", 1.0),
+                "strength_clip": item.get("strength_clip", 1.0),
+                "enabled": item.get("enabled", True),
+            }
+            if not sha:
+                no_sha256.append(entry)
+                continue
+            local, local_name = is_local(name, sha)
+            info = sha_info_map.get(sha)
+            if local:
+                entry["local_name"] = local_name
+                entry["civitai_found"] = info is not None
+                entry["civitai_info"] = info
+                green.append(entry)
+            elif info is not None:
+                entry["civitai_info"] = info
+                gray.append(entry)
+            else:
+                entry["civitai_info"] = None
+                not_found.append(entry)
+
+        await send({
+            "type": "done",
+            "success": True,
+            "green": green,
+            "gray": gray,
+            "not_found": not_found,
+            "no_sha256": no_sha256,
+            "summary": {
+                "total": len(lora_list),
+                "green": len(green),
+                "gray": len(gray),
+                "not_found": len(not_found),
+                "no_sha256": len(no_sha256),
+            },
+        })
+        await resp.write_eof()
+        return resp
+    except Exception as e:
+        print(f"[Naiba] verify-preset error: {e}")
+        if "prepared" in dir() and prepared:
+            try:
+                payload = "data: " + json.dumps(
+                    {"type": "error", "message": str(e)}, ensure_ascii=False
+                ) + "\n\n"
+                await resp.write(payload.encode("utf-8"))
+                await resp.write_eof()
+                return resp
+            except Exception:
+                pass
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+    finally:
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:
+                pass
 
 
 # ============================================================
@@ -1565,7 +2053,164 @@ async def delete_metadata_preview_handler(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
-print("✅ Naiba Routes loaded: /naiba/presets/*, /naiba/presets/resolve, /naiba/presets/upload-image, /naiba/presets/image, /naiba/lora/preview, /naiba/lora/metadata/preview, /naiba/lora/civitai-sync, /naiba/lora/batch-sync, /naiba/lora/metadata, /naiba/cache/*, /naiba/lora/favorites/*, /naiba/lora/detail, /naiba/lora/custom-data/*")
+# ============================================================
+# API 路由：列出所有本地LoRA文件（调试用）
+# ============================================================
+@PromptServer.instance.routes.get('/naiba/lora/list-all')
+async def list_all_loras(request):
+    """列出本地所有LoRA文件，用于调试"""
+    try:
+        lora_paths = folder_paths.get_filename_list("loras")
+        return web.json_response({"loras": lora_paths, "count": len(lora_paths)})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+# ============================================================
+# API 路由：批量检查 LoRA 本地存在性（支持SHA256或文件名匹配）
+# ============================================================
+@PromptServer.instance.routes.post('/naiba/lora/check-local')
+async def check_lora_local_existence(request):
+    """
+    批量检查 LoRA 文件是否在本地存在，同时返回预览图路径
+    支持两种模式：
+    1. 如果有hash字段，用SHA256匹配
+    2. 如果没有hash字段，用文件名匹配
+    
+    POST body: { "lora_list": [{"name": "xxx.safetensors", "hash": "ac9a447b46", ...}, ...] }
+    Returns: { "results": { "lora_name_or_hash": { "exists": true/false, "has_preview": true/false, "local_path": "...", "local_name": "..." }, ... } }
+    """
+    try:
+        data = await request.json()
+        lora_list = data.get('lora_list', [])
+        
+        if not lora_list:
+            return web.json_response({"results": {}})
+        
+        print(f"[Naiba-Debug] check-local: 收到 {len(lora_list)} 个LoRA条目")
+        
+        results = {}
+        
+        def check_preview_exists(lora_path):
+            """检查LoRA文件是否有预览图"""
+            try:
+                lora_dir = os.path.dirname(lora_path)
+                lora_basename = os.path.splitext(os.path.basename(lora_path))[0]
+                preview_extensions = ['.png', '.jpg', '.jpeg', '.webp', '.preview.png', '.preview.jpg', '.custom.preview.png', '.custom.preview.jpg']
+                for ext in preview_extensions:
+                    for pattern in [lora_basename + ext, lora_basename + '.preview' + os.path.splitext(ext)[0], lora_basename + '.custom.preview' + os.path.splitext(ext)[0]]:
+                        if os.path.exists(os.path.join(lora_dir, pattern)):
+                            return True
+                # 检查视频/GIF封面缓存
+                cached_cover = os.path.join(lora_dir, lora_basename + ".naiba.preview.png")
+                if os.path.exists(cached_cover):
+                    return True
+            except:
+                pass
+            return False
+        
+        # 分离有hash和没有hash的LoRA
+        loras_with_hash = []
+        loras_without_hash = []
+        for item in lora_list:
+            h = item.get("hash", "") or item.get("sha256", "")
+            if h:
+                loras_with_hash.append(item)
+            else:
+                loras_without_hash.append(item)
+        
+        print(f"[Naiba-Debug] check-local: {len(loras_with_hash)} 个有sha256，{len(loras_without_hash)} 个无sha256")
+        
+        # 处理没有hash的LoRA - 直接标记为无法匹配
+        for item in loras_without_hash:
+            name = item.get("name", "")
+            if name:
+                results[name] = {
+                    "exists": False,
+                    "has_preview": False,
+                    "no_hash": True,
+                    "original_name": name
+                }
+        
+        # SHA256 匹配模式（处理有sha256的LoRA）
+        if loras_with_hash:
+            sha256_to_lora = {}
+            for item in loras_with_hash:
+                h = item.get("sha256", "").lower()
+                if h:
+                    sha256_to_lora[h] = item
+            
+            print(f"[Naiba-Debug] check-local: 需要匹配 {len(sha256_to_lora)} 个sha256值")
+            
+            lora_files = folder_paths.get_filename_list("loras")
+            print(f"[Naiba-Debug] check-local: 本地有 {len(lora_files)} 个LoRA文件")
+            
+            matched_hashes = set()
+            
+            for lora_file in lora_files:
+                if len(matched_hashes) >= len(sha256_to_lora):
+                    break
+                    
+                try:
+                    lora_path = folder_paths.get_full_path("loras", lora_file)
+                    if not lora_path or not os.path.exists(lora_path):
+                        continue
+                    
+                    # 计算SHA256
+                    sha256 = hashlib.sha256()
+                    with open(lora_path, 'rb') as f:
+                        while True:
+                            chunk = f.read(65536)
+                            if not chunk:
+                                break
+                            sha256.update(chunk)
+                    file_hash = sha256.hexdigest()
+                    
+                    if file_hash in sha256_to_lora and file_hash not in matched_hashes:
+                        matched_hashes.add(file_hash)
+                        original_item = sha256_to_lora[file_hash]
+                        
+                        has_preview = check_preview_exists(lora_path)
+                        
+                        results[file_hash] = {
+                            "exists": True,
+                            "has_preview": has_preview,
+                            "local_path": lora_path,
+                            "local_name": lora_file,
+                            "original_name": original_item.get("name", "")
+                        }
+                        
+                        if len(matched_hashes) <= 5:
+                            print(f"[Naiba-Debug] check-local: 匹配成功 sha256={file_hash[:12]}... -> {lora_file}")
+                        
+                except Exception as e:
+                    print(f"[Naiba-Debug] check-local: 处理 {lora_file} 时出错: {e}")
+                    continue
+            
+            # 对于没有匹配到的sha256，标记为不存在
+            for h, item in sha256_to_lora.items():
+                if h not in matched_hashes:
+                    results[h] = {
+                        "exists": False,
+                        "has_preview": False,
+                        "original_name": item.get("name", "")
+                    }
+                
+                if list(name_to_lora.keys()).index(lora_name) < 3:
+                    print(f"[Naiba-Debug] check-local: {lora_name} -> exists={exists}")
+        
+        # 调试：打印统计
+        found_count = sum(1 for v in results.values() if v.get("exists"))
+        print(f"[Naiba-Debug] check-local: 完成，{found_count}/{len(results)} 存在本地")
+        
+        return web.json_response({"results": results})
+        
+    except Exception as e:
+        print(f"Error checking lora local existence: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+print("✅ Naiba Routes loaded: /naiba/presets/*, /naiba/presets/resolve, /naiba/presets/upload-image, /naiba/presets/image, /naiba/lora/preview, /naiba/lora/metadata/preview, /naiba/lora/civitai-sync, /naiba/lora/batch-sync, /naiba/lora/metadata, /naiba/cache/*, /naiba/lora/favorites/*, /naiba/lora/detail, /naiba/lora/custom-data/*, /naiba/lora/civitai-by-hash, /naiba/lora/civitai-search, /naiba/lora/resolve-sha256, /naiba/lora/check-local, /naiba/lora/list-all")
 
 
 # ============================================================
@@ -2068,4 +2713,192 @@ async def delete_custom_data_handler(request):
 
     except Exception as e:
         print(f"Error deleting custom data: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.get('/naiba/lora/civitai-by-hash')
+async def civitai_by_hash_handler(request):
+    """按sha256查询Civitai模型"""
+    client = None
+    try:
+        file_hash = request.query.get("hash", "").strip()
+        if not file_hash:
+            return web.json_response({"error": "hash参数不能为空"}, status=400)
+        
+        # 安全检查：只允许十六进制字符
+        if not all(c in '0123456789abcdefABCDEF' for c in file_hash):
+            return web.json_response({"error": "hash格式无效，只允许十六进制字符"}, status=400)
+        
+        from .civitai_utils import CivitaiClient, build_civitai_version_info
+        client = CivitaiClient()
+        data, error = await client.query_by_hash(file_hash)
+        
+        if error:
+            if "Model not found" in str(error):
+                return web.json_response({
+                    "found": False,
+                    "hash": file_hash,
+                    "error": "Model not found"
+                })
+            return web.json_response({
+                "found": False,
+                "hash": file_hash,
+                "error": error
+            })
+        
+        # 提取关键信息
+        info = build_civitai_version_info(data)
+        
+        return web.json_response({
+            "found": True,
+            "hash": file_hash,
+            "info": info
+        })
+        
+    except Exception as e:
+        print(f"Error in civitai_by_hash: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+    finally:
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:
+                pass
+
+
+@PromptServer.instance.routes.get('/naiba/lora/civitai-search')
+async def civitai_search_handler(request):
+    """搜索Civitai模型"""
+    client = None
+    try:
+        query = request.query.get("query", "").strip()
+        page = int(request.query.get("page", "1"))
+        limit = int(request.query.get("limit", "20"))
+        model_type = request.query.get("types", "").strip() or None
+        
+        if not query:
+            return web.json_response({"error": "query参数不能为空"}, status=400)
+        
+        # 限制参数范围
+        page = max(1, page)
+        limit = max(1, min(100, limit))
+        
+        from .civitai_utils import CivitaiClient, build_civitai_version_info
+        client = CivitaiClient()
+        data, error = await client.search_models(query, page, limit, model_type)
+        
+        if error:
+            return web.json_response({"error": error}, status=500)
+        
+        # 处理搜索结果
+        items = []
+        if data and "items" in data:
+            for item in data["items"]:
+                model_info = {
+                    "model_id": item.get("id"),
+                    "model_name": item.get("name", "Unknown"),
+                    "model_type": item.get("type", "Unknown"),
+                    "nsfw_level": item.get("nsfwLevel", 0),
+                    "stats": item.get("stats", {}),
+                    "creator": item.get("creator", {}),
+                    "tags": item.get("tags", []),
+                    "versions": []
+                }
+                
+                # 处理每个版本
+                for version in item.get("modelVersions", []):
+                    version_info = build_civitai_version_info(version)
+                    model_info["versions"].append(version_info)
+                
+                items.append(model_info)
+        
+        return web.json_response({
+            "items": items,
+            "metadata": data.get("metadata", {}) if data else {}
+        })
+        
+    except Exception as e:
+        print(f"Error in civitai_search: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+    finally:
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:
+                pass
+
+
+@PromptServer.instance.routes.get('/naiba/lora/resolve-sha256')
+async def resolve_sha256_handler(request):
+    """解析lora的sha256，支持自动回退"""
+    try:
+        lora_name = request.query.get("name", "").strip()
+        if not lora_name:
+            return web.json_response({"error": "name参数不能为空", "sha256": None, "source": "none"}, status=400)
+        
+        # 安全检查：防止路径遍历
+        if ".." in lora_name or os.path.isabs(lora_name):
+            return web.json_response({"error": "无效的lora名称"}, status=400)
+        
+        sha256 = None
+        source = "none"
+        
+        # 1. 尝试从.civitai.info.json缓存读取
+        try:
+            from .civitai_utils import get_metadata_path
+            import folder_paths
+            
+            # 获取lora文件夹路径
+            lora_folders = folder_paths.get_folder_paths("loras")
+            for lora_dir in lora_folders:
+                lora_path = os.path.join(lora_dir, lora_name)
+                if not os.path.splitext(lora_path)[1]:
+                    # 尝试常见扩展名
+                    for ext in [".safetensors", ".pt", ".ckpt"]:
+                        if os.path.isfile(lora_path + ext):
+                            lora_path = lora_path + ext
+                            break
+                
+                if os.path.isfile(lora_path):
+                    metadata_path = get_metadata_path(lora_path)
+                    if os.path.isfile(metadata_path):
+                        with open(metadata_path, 'r', encoding='utf-8') as f:
+                            metadata = json.load(f)
+                        if metadata.get("hash"):
+                            sha256 = metadata["hash"]
+                            source = "cache"
+                            break
+        except Exception as e:
+            print(f"[Naiba] Warning: Failed to read cache for {lora_name}: {e}")
+        
+        # 2. 如果缓存没有，尝试计算本地文件
+        if not sha256:
+            try:
+                from .civitai_utils import CivitaiClient
+                import folder_paths
+                
+                lora_folders = folder_paths.get_folder_paths("loras")
+                for lora_dir in lora_folders:
+                    lora_path = os.path.join(lora_dir, lora_name)
+                    if not os.path.splitext(lora_path)[1]:
+                        for ext in [".safetensors", ".pt", ".ckpt"]:
+                            if os.path.isfile(lora_path + ext):
+                                lora_path = lora_path + ext
+                                break
+                    
+                    if os.path.isfile(lora_path):
+                        sha256 = await CivitaiClient.calculate_sha256(lora_path)
+                        if sha256:
+                            source = "calculated"
+                        break
+            except Exception as e:
+                print(f"[Naiba] Warning: Failed to calculate sha256 for {lora_name}: {e}")
+        
+        return web.json_response({
+            "sha256": sha256,
+            "source": source
+        })
+        
+    except Exception as e:
+        print(f"Error in resolve_sha256: {e}")
         return web.json_response({"error": str(e)}, status=500)

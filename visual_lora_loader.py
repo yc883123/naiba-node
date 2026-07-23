@@ -13,36 +13,51 @@ import comfy.sd
 
 def _load_lora_cached_sha256(lora_name: str) -> str | None:
     """
-    从 .civitai.info.json 缓存文件中读取 LoRA 的 SHA256 哈希值
-    
+    读取 LoRA 的 SHA256 哈希值。
+    优先从全局离线缓存(naiba_sha256_cache.json)读取，其次回退到
+    模型同目录的 .civitai.info.json 文件。
+
     Args:
-        lora_name: LoRA 文件名
-        
+        lora_name: LoRA 文件名（可能带前导斜杠/反斜杠）
+
     Returns:
-        str | None: SHA256 哈希值，如果缓存不存在则返回 None
+        str | None: SHA256 哈希值，如果都查不到则返回 None
     """
+    if not lora_name:
+        return None
+
+    # 1) 优先：全局离线缓存（离线缓存SHA256/批量同步写入）
+    try:
+        from . import sha256_cache
+        sha = sha256_cache.get(lora_name)
+        if not sha:
+            norm = lora_name.replace("\\", "/").lstrip("/")
+            if norm != lora_name:
+                sha = sha256_cache.get(norm)
+        if sha:
+            return sha
+    except Exception:
+        pass
+
+    # 2) 回退：模型同目录的 .civitai.info.json
     try:
         lora_path = folder_paths.get_full_path("loras", lora_name)
         if not lora_path or not os.path.exists(lora_path):
             return None
-        
-        # 构建元数据缓存文件路径
+
         metadata_path = os.path.splitext(lora_path)[0] + ".civitai.info.json"
-        
         if not os.path.exists(metadata_path):
             return None
-        
-        # 读取缓存文件
+
         with open(metadata_path, "r", encoding="utf-8") as f:
             metadata = json.load(f)
-        
-        # 返回 hash 字段（如果存在）
+
         if isinstance(metadata, dict):
             return metadata.get("hash")
-        
-        return None
     except Exception:
         return None
+
+    return None
 
 
 class VisualLoRALoader:

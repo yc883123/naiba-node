@@ -622,6 +622,18 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 
 ## 更新日志
 
+### v3.3.0 (2026-07-23)
+
+#### 问题修复
+- **Lora Data Preview 本地+Civitai 校验崩溃**：修复 `startCivitaiVerifyFromUpload` 引用 `renderCivitaiCheckView` 内部局部变量（`gateBanner` / `verifyBtn` / `verifyProgressWrap` / `setVerifyProgress`）导致的 `ReferenceError`，改为通过参数传入
+- **aiohttp 连接未关闭警告**：修复 `preset_routes` 中 `verify-preset`、`civitai-by-hash`、`civitai-search` 三个接口创建 `CivitaiClient` 后未关闭 session 导致的 `Unclosed client session` / `Unclosed connector` 警告，统一在 `finally` 中关闭
+
+#### 优化改进
+- **调试按钮可切换**：「列出本地LoRA」调试按钮再次点击可隐藏列表，使用标记自同步状态，避免与校验清空面板后状态错乱
+- **「已选择」空状态引导**：未选择任何 LoRA 时显示「去「全部」选择」按钮，可直接跳转回全部列表勾选
+
+---
+
 ### v3.2.0 (2026-07-21)
 
 #### 问题修复

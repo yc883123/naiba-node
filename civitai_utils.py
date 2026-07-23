@@ -140,6 +140,68 @@ class CivitaiClient:
         
         return None, "Max retries exceeded"
     
+    async def search_models(self, query: str, page: int = 1, limit: int = 20, model_type: Optional[str] = None, max_retries: int = 3) -> Tuple[Optional[Dict], Optional[str]]:
+        """
+        搜索Civitai模型
+        
+        Args:
+            query: 搜索关键词
+            page: 页码（从1开始）
+            limit: 每页数量（默认20）
+            model_type: 模型类型过滤（可选，如 "LORA"）
+            max_retries: 最大重试次数
+            
+        Returns:
+            Tuple[Optional[Dict], Optional[str]]: (搜索结果数据, 错误信息)
+        """
+        for attempt in range(max_retries):
+            try:
+                session = await self._get_session()
+                params = {
+                    "query": query,
+                    "page": str(page),
+                    "limit": str(limit),
+                }
+                if model_type:
+                    params["types"] = model_type
+                
+                url = f"{self.api_base}/models"
+                
+                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data, None
+                    elif response.status == 429:
+                        # 速率限制，等待后重试
+                        if attempt < max_retries - 1:
+                            wait_time = 2 ** attempt  # 指数退避: 1s, 2s, 4s
+                            await asyncio.sleep(wait_time)
+                            continue
+                        return None, "Rate limit exceeded, please try again later"
+                    else:
+                        error_text = await response.text()
+                        if attempt < max_retries - 1 and response.status >= 500:
+                            # 服务器错误，重试
+                            await asyncio.sleep(2 ** attempt)
+                            continue
+                        return None, f"API error {response.status}: {error_text}"
+                        
+            except asyncio.TimeoutError:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                return None, "Request timeout"
+            except aiohttp.ClientError as e:
+                if attempt < max_retries - 1:
+                    # 网络错误，重试
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                return None, f"Network error: {str(e)}"
+            except Exception as e:
+                return None, f"Unexpected error: {str(e)}"
+        
+        return None, "Max retries exceeded"
+    
     async def download_image(self, image_url: str, save_path: str, validate: bool = True) -> bool:
         """
         下载图片/视频到本地
@@ -768,3 +830,87 @@ async def get_lora_preview(
         return preview_path, metadata, error
     
     return None, None, "No local preview found and auto_sync is disabled"
+
+
+def build_civitai_version_info(version_data: Dict) -> Dict:
+    """
+    从Civitai版本数据中提取关键信息
+    
+    Args:
+        version_data: Civitai API返回的版本数据
+        
+    Returns:
+        Dict: 提取的信息，包含以下字段：
+            - model_name: 模型名称
+            - version_name: 版本名称
+            - model_id: 模型ID
+            - version_id: 版本ID
+            - base_model: 基础模型
+            - download_url: 下载地址
+            - model_page_url: 模型页面地址
+            - preview_url: 预览图地址
+            - trigger_words: 触发词列表
+            - description: 描述
+            - nsfw_level: NSFW级别
+            - download_count: 下载次数
+            - rating: 评分
+            - rating_count: 评分数量
+            - published_at: 发布时间
+            - updated_at: 更新时间
+    """
+    if not version_data or not isinstance(version_data, dict):
+        return {}
+    
+    # 提取模型信息
+    model_info = version_data.get("model", {})
+    
+    # 构建下载地址
+    version_id = version_data.get("id")
+    download_url = None
+    if version_id:
+        # 优先使用API提供的downloadUrl
+        download_url = version_data.get("downloadUrl")
+        if not download_url:
+            # 构建标准下载地址
+            download_url = f"https://civitai.com/api/download/models/{version_id}"
+    
+    # 构建模型页面地址
+    model_id = model_info.get("id") or version_data.get("modelId")
+    model_page_url = None
+    if model_id:
+        model_page_url = f"https://civitai.com/models/{model_id}"
+        if version_id:
+            model_page_url += f"?modelVersionId={version_id}"
+    
+    # 提取预览图
+    images = version_data.get("images", [])
+    preview_url = None
+    if images:
+        selected_image = CivitaiClient.select_preview_image(images)
+        if selected_image:
+            preview_url = selected_image.get("url")
+    
+    # 提取触发词
+    trained_words = version_data.get("trainedWords", [])
+    
+    # 提取统计信息
+    stats = version_data.get("stats", {}) or {}
+    
+    return {
+        "model_name": model_info.get("name", "Unknown"),
+        "version_name": version_data.get("name", "Unknown"),
+        "model_id": model_id,
+        "version_id": version_id,
+        "base_model": version_data.get("baseModel", "Unknown"),
+        "download_url": download_url,
+        "model_page_url": model_page_url,
+        "preview_url": preview_url,
+        "trigger_words": trained_words,
+        "description": version_data.get("description", ""),
+        "nsfw_level": version_data.get("nsfwLevel", 0),
+        "download_count": stats.get("downloadCount", version_data.get("downloadCount", 0)),
+        "rating": stats.get("rating", version_data.get("rating", 0)),
+        "rating_count": stats.get("ratingCount", version_data.get("ratingCount", 0)),
+        "published_at": version_data.get("publishedAt"),
+        "updated_at": version_data.get("updatedAt"),
+    }
