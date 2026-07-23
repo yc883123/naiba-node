@@ -31,6 +31,10 @@ const COLORS = {
 const PAGE_SIZE = 20;
 const MAX_TOTAL_SELECTED = 100;
 const GACHA_TAB = "__gacha__";
+const CUSTOM_TAB = "__custom__";
+const FAVORITES_TAB = "__favorites__";
+
+function isVirtualTab(cat) { return cat === GACHA_TAB || cat === CUSTOM_TAB || cat === FAVORITES_TAB; }
 
 let currentModal = null;
 
@@ -42,6 +46,12 @@ const state = {
     currentTab: null,
 };
 const gachaState = { resultTags: [], count: 3, checkedCats: [], catCounts: {} };  // [{tag, raw_en, category, cn}], count: 扭蛋数量, checkedCats: 勾选参与扭蛋的分类, catCounts: 每个分类的抽取数量 {category: number}
+// 自定义词条与收藏（全局数据，跨分类共享）
+const customState = { tags: {}, loaded: false };
+const favState = { items: [], set: new Set(), loaded: false };
+function favKey(raw_en, cat) { return String(raw_en || "").toLowerCase() + "|" + String(cat || ""); }
+function isFav(raw_en, cat) { return favState.set.has(favKey(raw_en, cat)); }
+function rebuildFavSet() { favState.set = new Set((favState.items || []).map((x) => favKey(x.raw_en, x.category))); }
 // 多节点状态存储：nodeId -> { state, gachaState }
 const nodeStates = new Map();
 let nodeRef = null;
@@ -256,18 +266,30 @@ async function doSearch(cat) {
 
 // ========== 卡片构建 ==========
 function buildGalleryCard(it, cat) {
-    const key = itemKey(it);
+    const ren = it.raw_en || it.tag || "";
+    const key = String(ren);
     const isSel = state.selectedMap.has(key);
+    const isFavHere = isFav(ren, cat);
     const card = el("div", {
         class: "ap-card" + (isSel ? " selected" : ""),
         tabindex: "0",
-        title: it.raw_en || "",
+        title: ren || "",
     });
-    const header = el("div", { class: "ap-card-header" },
-        el("div", { class: "ap-card-en" }, it.raw_en || ""),
+    const star = el("div", {
+        class: "ap-card-fav" + (isFavHere ? " active" : ""),
+        title: "收藏",
+        onclick: (e) => { e.stopPropagation(); toggleFavorite(it, cat); },
+    }, isFavHere ? "★" : "☆");
+    const rightCluster = el("div", { class: "ap-card-right" },
         el("div", { class: "ap-card-check" + (isSel ? " active" : "") }, "✓"),
+        star,
     );
-    const cn = el("div", { class: "ap-card-cn" }, it.cn_description || "");
+    const header = el("div", { class: "ap-card-header" },
+        it._custom ? el("span", { class: "ap-card-badge-inline" }, "自定义") : null,
+        el("div", { class: "ap-card-en" }, ren || ""),
+        rightCluster,
+    );
+    const cn = el("div", { class: "ap-card-cn" }, it.cn_description || it.cn || "");
     card.append(header, cn);
     card.dataset.key = key;
     card.addEventListener("click", () => selectTag(it, cat));
@@ -294,6 +316,8 @@ function renderGallery() {
     if (!mainScroll) return;
     const cat = state.currentTab;
     if (cat === GACHA_TAB) { renderGachaPanel(); return; }
+    if (cat === CUSTOM_TAB) { renderCustomPanel(); return; }
+    if (cat === FAVORITES_TAB) { renderFavoritesPanel(); return; }
     const ts = ensureTabState(cat);
     mainScroll.innerHTML = "";
     if (ts.loading) { mainScroll.appendChild(el("div", { class: "ap-empty" }, "加载中…")); updatePager(); return; }
@@ -495,14 +519,172 @@ function buildQuickRandomRow(defaultCount) {
     );
 }
 
+// ========== 自定义词条分页 ==========
+async function loadCustomTags(force) {
+    if (customState.loaded && !force) return customState.tags;
+    try {
+        const data = await apiGetJson("/anima/prompt/custom/list");
+        customState.tags = (data && data.tags) || {};
+        customState.loaded = true;
+        return customState.tags;
+    } catch (e) { flashStatus("加载自定义词条失败：" + e.message); return {}; }
+}
+
+async function renderCustomPanel() {
+    if (!mainScroll) return;
+    mainScroll.innerHTML = "";
+    const wrap = el("div", { class: "ap-custom" });
+    const sel = el("select", { class: "ap-mini-select" });
+    state.categories.forEach((c) => sel.appendChild(el("option", { value: c }, c)));
+    const en = el("input", { class: "ap-search", type: "text", placeholder: "英文词（如 1girl）" });
+    const cn = el("input", { class: "ap-search", type: "text", placeholder: "中文描述（可选）" });
+    const addBtn = el("button", { class: "ap-btn small", onclick: async () => {
+        const category = sel.value;
+        const raw_en = en.value.trim();
+        const cnv = cn.value.trim();
+        if (!category || !raw_en) { flashStatus("请选择分类并填写英文词"); return; }
+        addBtn.disabled = true;
+        try {
+            const resp = await api.fetchApi("/anima/prompt/custom/add", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ category, raw_en, cn_description: cnv }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.ok) throw new Error(data.error || ("HTTP " + resp.status));
+            customState.loaded = false;
+            if (state.tabState[category]) state.tabState[category].items = [];
+            en.value = ""; cn.value = "";
+            flashStatus("已添加自定义词条");
+            renderCustomPanel();
+        } catch (e) { flashStatus("添加失败：" + e.message); }
+        finally { addBtn.disabled = false; }
+    } }, "添加");
+    wrap.appendChild(el("div", { class: "ap-custom-form" },
+        el("div", { class: "ap-gacha-rowlabel" }, "新增自定义词条（仅可删除自定义项）"),
+        el("div", { class: "ap-gacha-row" }, sel, en, cn, addBtn),
+    ));
+    const tags = await loadCustomTags();
+    const cats = Object.keys(tags).filter((c) => Array.isArray(tags[c]) && tags[c].length);
+    if (!cats.length) {
+        wrap.appendChild(el("div", { class: "ap-empty" }, "暂无自定义词条，使用上方表单添加"));
+    } else {
+        cats.forEach((cat) => {
+            wrap.appendChild(el("div", { class: "ap-gacha-sub" }, cat));
+            const grid = el("div", { class: "ap-grid" });
+            tags[cat].forEach((it) => {
+                const card = el("div", { class: "ap-card custom", tabindex: "0", title: it.raw_en || "" });
+                const header = el("div", { class: "ap-card-header" },
+                    el("span", { class: "ap-card-badge-inline" }, "自定义"),
+                    el("div", { class: "ap-card-en" }, it.raw_en || ""),
+                    el("div", { class: "ap-card-check", style: "visibility:hidden;" }, "✓"),
+                );
+                const cnEl = el("div", { class: "ap-card-cn" }, it.cn_description || "");
+                card.append(header, cnEl);
+                const del = el("button", { class: "ap-card-del", title: "删除", onclick: async (e) => {
+                    e.stopPropagation();
+                    del.disabled = true;
+                    try {
+                        const resp = await api.fetchApi("/anima/prompt/custom/delete", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ category: cat, raw_en: it.raw_en }),
+                        });
+                        const data = await resp.json();
+                        if (!resp.ok || !data.ok) throw new Error(data.error || ("HTTP " + resp.status));
+                        customState.loaded = false;
+                        if (state.tabState[cat]) state.tabState[cat].items = [];
+                        flashStatus("已删除自定义词条");
+                        renderCustomPanel();
+                    } catch (e2) { flashStatus("删除失败：" + e2.message); }
+                    finally { del.disabled = false; }
+                } }, "✕");
+                card.appendChild(del);
+                card.addEventListener("click", () => selectTag(it, cat));
+                grid.appendChild(card);
+            });
+            wrap.appendChild(grid);
+        });
+    }
+    mainScroll.appendChild(wrap);
+    updatePager();
+}
+
+// ========== 收藏分页 ==========
+async function loadFavorites(force) {
+    if (favState.loaded && !force) return favState.items;
+    try {
+        const data = await apiGetJson("/anima/prompt/favorites/list");
+        favState.items = (data && data.items) || [];
+        rebuildFavSet();
+        favState.loaded = true;
+        return favState.items;
+    } catch (e) { flashStatus("加载收藏失败：" + e.message); return []; }
+}
+
+async function renderFavoritesPanel() {
+    if (!mainScroll) return;
+    if (!favState.loaded) await loadFavorites();
+    mainScroll.innerHTML = "";
+    const wrap = el("div", { class: "ap-fav" });
+    const items = favState.items || [];
+    if (!items.length) {
+        wrap.appendChild(el("div", { class: "ap-empty" }, "暂无收藏，在分类浏览中点击 ☆ 收藏词条"));
+    } else {
+        const byCat = {};
+        items.forEach((it) => { (byCat[it.category] = byCat[it.category] || []).push(it); });
+        Object.keys(byCat).forEach((cat) => {
+            wrap.appendChild(el("div", { class: "ap-gacha-sub" }, cat));
+            const grid = el("div", { class: "ap-grid" });
+            byCat[cat].forEach((it) => { const card = buildGalleryCard(it, it.category); if (card) grid.appendChild(card); });
+            wrap.appendChild(grid);
+        });
+    }
+    mainScroll.appendChild(wrap);
+    updatePager();
+}
+
+async function toggleFavorite(it, cat) {
+    const raw_en = it.raw_en || it.tag || "";
+    const cn = it.cn_description || it.cn || "";
+    if (!raw_en || !cat) return;
+    try {
+        let resp;
+        if (isFav(raw_en, cat)) {
+            resp = await api.fetchApi("/anima/prompt/favorites/remove", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ raw_en, category: cat }),
+            });
+            favState.items = favState.items.filter((x) => favKey(x.raw_en, x.category) !== favKey(raw_en, cat));
+            flashStatus("已取消收藏");
+        } else {
+            resp = await api.fetchApi("/anima/prompt/favorites/add", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ raw_en, category: cat, cn_description: cn }),
+            });
+            favState.items.push({ raw_en, category: cat, cn_description: cn });
+            flashStatus("已收藏");
+        }
+        rebuildFavSet();
+    } catch (e) { flashStatus("收藏操作失败：" + e.message); return; }
+    if (state.currentTab === FAVORITES_TAB) renderFavoritesPanel();
+    else if (!isVirtualTab(state.currentTab)) renderGallery();
+}
+
 // ========== 标签页 ==========
 function buildTabs() {
     if (!tabGroupEl) return;
     tabGroupEl.innerHTML = "";
     tabEls = {};
-    const all = [...state.categories, GACHA_TAB];
+    const all = [...state.categories, CUSTOM_TAB, FAVORITES_TAB, GACHA_TAB];
     all.forEach((cat) => {
-        const label = cat === GACHA_TAB ? "🎰 扭蛋" : cat;
+        let label;
+        if (cat === GACHA_TAB) label = "🎰 扭蛋";
+        else if (cat === CUSTOM_TAB) label = "✏ 自定义";
+        else if (cat === FAVORITES_TAB) label = "⭐ 收藏";
+        else label = cat;
         const t = el("div", { class: "ap-tab", onclick: () => switchTab(cat) }, label);
         tabEls[cat] = t;
         tabGroupEl.appendChild(t);
@@ -516,14 +698,16 @@ function updateTabStyle() {
         t.style.color = active ? "#fff" : COLORS.textDim;
         t.style.fontWeight = active ? "600" : "400";
     }
-    if (pagerBar) pagerBar.style.display = state.currentTab === GACHA_TAB ? "none" : "flex";
-    if (toolbarEl) toolbarEl.style.display = state.currentTab === GACHA_TAB ? "none" : "flex";
+    if (pagerBar) pagerBar.style.display = isVirtualTab(state.currentTab) ? "none" : "flex";
+    if (toolbarEl) toolbarEl.style.display = isVirtualTab(state.currentTab) ? "none" : "flex";
 }
 function switchTab(cat) {
     state.currentTab = cat;
     updateTabStyle();
-    if (searchInputEl && cat !== GACHA_TAB) searchInputEl.value = ensureTabState(cat).query || "";
+    if (searchInputEl && !isVirtualTab(cat)) searchInputEl.value = ensureTabState(cat).query || "";
     if (cat === GACHA_TAB) { renderGachaPanel(); return; }
+    if (cat === CUSTOM_TAB) { renderCustomPanel(); return; }
+    if (cat === FAVORITES_TAB) { renderFavoritesPanel(); return; }
     const ts = ensureTabState(cat);
     if (!ts.items.length) doSearch(cat);
     else renderGallery();
@@ -532,7 +716,7 @@ function switchTab(cat) {
 function updatePager() {
     if (!pagerBar) return;
     const cat = state.currentTab;
-    if (cat === GACHA_TAB) { pagerBar.innerHTML = ""; return; }
+    if (isVirtualTab(cat)) { pagerBar.innerHTML = ""; return; }
     const ts = ensureTabState(cat);
     pagerBar.innerHTML = "";
     const prev = el("button", { class: "ap-page-btn", onclick: () => { if (ts.page > 1) { ts.page--; doSearch(cat); } } }, "‹ 上一页");
@@ -599,14 +783,14 @@ async function createAnimaModal(node) {
     const searchInput = el("input", { class: "ap-search", type: "text", placeholder: "搜索标签（英文/中文，回车搜索）" });
     const searchBtn = el("button", { class: "ap-btn small", onclick: () => {
         const cat = state.currentTab;
-        if (cat === GACHA_TAB) return;
+        if (isVirtualTab(cat)) return;
         const ts = ensureTabState(cat);
         ts.query = searchInput.value.trim(); ts.page = 1; doSearch(cat);
     } }, "搜索");
     searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") searchBtn.click(); });
     const defaultBtn = el("button", { class: "ap-btn small", title: "清空搜索", onclick: () => {
         const cat = state.currentTab;
-        if (cat === GACHA_TAB) return;
+        if (isVirtualTab(cat)) return;
         const ts = ensureTabState(cat);
         searchInput.value = ""; ts.query = ""; ts.page = 1; doSearch(cat);
     } }, "重置");
@@ -635,6 +819,7 @@ async function createAnimaModal(node) {
     restoreFromNode(node);
 
     await loadCategories();
+    await loadFavorites();
     // 应用待处理的页码
     if (state._pendingTabPages) {
         for (const cat in state._pendingTabPages) {
@@ -646,7 +831,7 @@ async function createAnimaModal(node) {
         delete state._pendingTabPages;
     }
     buildTabs();
-    const first = (state.currentTab === GACHA_TAB || state.categories.includes(state.currentTab)) ? state.currentTab : (state.categories[0] || GACHA_TAB);
+    const first = (isVirtualTab(state.currentTab) || state.categories.includes(state.currentTab)) ? state.currentTab : (state.categories[0] || GACHA_TAB);
     renderResult();
     switchTab(first);
 }
@@ -734,6 +919,14 @@ function injectStyle() {
 .ap-mini-select{background:${COLORS.inputBg};color:${COLORS.text};border:1px solid ${COLORS.border};border-radius:5px;padding:6px 8px;font-size:12px;}
 .ap-mini-num{width:56px;background:${COLORS.inputBg};color:${COLORS.text};border:1px solid ${COLORS.border};border-radius:5px;padding:6px;font-size:12px;text-align:center;appearance:textfield;-moz-appearance:textfield;-webkit-appearance:none;outline:none;}
 .ap-gacha-sub{color:${COLORS.accentHover};font-size:13px;font-weight:500;margin-bottom:8px;}
+.ap-card-right{display:flex;align-items:center;gap:6px;flex-shrink:0;}
+.ap-card-fav{cursor:pointer;font-size:15px;color:${COLORS.textDim};transition:.15s;user-select:none;line-height:1;}
+.ap-card-fav:hover{color:#ffa502;}
+.ap-card-fav.active{color:#ffd700;}
+.ap-card-badge-inline{background:rgba(233,69,96,.18);color:${COLORS.accentHover};border:1px solid ${COLORS.accent};border-radius:4px;font-size:10px;padding:2px 6px;flex-shrink:0;}
+.ap-card-del{position:absolute;top:6px;right:6px;background:none;border:none;color:${COLORS.danger};cursor:pointer;font-size:14px;padding:2px 6px;border-radius:4px;z-index:3;}
+.ap-card-del:hover{background:rgba(255,107,107,.15);}
+.ap-custom-form{margin-bottom:14px;}
 @media (max-width:780px){
   .ap-body{flex-direction:column;}
   .ap-result{width:100%;border-left:none;border-top:1px solid ${COLORS.border};max-height:38vh;}

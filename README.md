@@ -622,6 +622,23 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 
 ## 更新日志
 
+### v3.3.1 (2026-07-23)
+
+#### 新增功能
+- **收藏标签页（⭐ 收藏）**：Anima Prompt Node 弹窗新增独立「⭐ 收藏」分页，分类浏览时每张卡片右上角显示收藏星标（☆/★），点击即收藏/取消；收藏页按分类集中展示所有收藏词条
+- **自定义标签页（✏ 自定义）**：新增「✏ 自定义」分页，可输入词条加入已有分类（自定义词条带角标并插入该分类开头），支持删除自定义词条（原始词条不可删）
+- **自定义词条参与扭蛋**：自定义词条在**数据层**合并进所属分类（`_get_merged_data()`），浏览与全部扭蛋函数共用合并数据，自定义词条可正常被扭蛋抽取
+- **数据持久化**：收藏与自定义词条分别持久化至 `anima_favorites.json` / `anima_custom_tags.json`，重启 ComfyUI 后保留
+
+#### 问题修复
+- **收藏本地状态更新崩溃**：修复 `toggleFavorite` 收藏分支中 `favState.items.push({ ..., category, ... })` 误用未定义裸变量 `category`（函数形参为 `cat`）导致的 `ReferenceError: category is not defined`；该错误发生在后端已成功写入收藏之后，导致前端误报「收藏操作失败」但数据实际已保存（重启后收藏出现）。改为 `category: cat` 后本地状态更新与后端写入均正常
+
+#### 数据文件
+- 新增 `anima_custom_tags.json`（自定义词条）
+- 新增 `anima_favorites.json`（收藏词条）
+
+---
+
 ### v3.3.0 (2026-07-23)
 
 #### 问题修复

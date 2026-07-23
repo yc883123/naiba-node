@@ -23,6 +23,8 @@ except Exception:  # pragma: no cover
     PromptServer = None
 
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "anima_prompts.json")
+CUSTOM_DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "anima_custom_tags.json")
+FAVORITES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "anima_favorites.json")
 
 # ----------------------------- 模块级数据缓存 -----------------------------
 _DATA = None
@@ -51,12 +53,121 @@ def _load_data(force=False):
         return _DATA
 
 
+# ----------------------------- 自定义词条数据缓存 -----------------------------
+_CUSTOM_DATA = None
+_CUSTOM_DATA_LOCK = threading.Lock()
+
+
+def _load_custom_data(force=False):
+    """加载并缓存用户自定义词条；首次访问若文件不存在则创建空 {}。"""
+    global _CUSTOM_DATA
+    if _CUSTOM_DATA is not None and not force:
+        return _CUSTOM_DATA
+    with _CUSTOM_DATA_LOCK:
+        if _CUSTOM_DATA is not None and not force:
+            return _CUSTOM_DATA
+        try:
+            with open(CUSTOM_DATA_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                data = {}
+        except FileNotFoundError:
+            data = {}
+            try:
+                with open(CUSTOM_DATA_FILE, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"[anima_prompt_node] 创建自定义数据文件失败: {e}")
+        except Exception as e:
+            print(f"[anima_prompt_node] 加载自定义数据失败: {e}")
+            data = {}
+        _CUSTOM_DATA = data
+        return _CUSTOM_DATA
+
+
+def _save_custom_data(data):
+    global _CUSTOM_DATA
+    _CUSTOM_DATA = data
+    with _CUSTOM_DATA_LOCK:
+        try:
+            with open(CUSTOM_DATA_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[anima_prompt_node] 保存自定义数据失败: {e}")
+
+
+# ----------------------------- 收藏数据缓存 -----------------------------
+_FAVORITES = None
+_FAVORITES_LOCK = threading.Lock()
+
+
+def _load_favorites(force=False):
+    """加载并缓存收藏引用；首次访问若文件不存在则创建 {"items":[]}。"""
+    global _FAVORITES
+    if _FAVORITES is not None and not force:
+        return _FAVORITES
+    with _FAVORITES_LOCK:
+        if _FAVORITES is not None and not force:
+            return _FAVORITES
+        try:
+            with open(FAVORITES_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+                data = {"items": []}
+        except FileNotFoundError:
+            data = {"items": []}
+            try:
+                with open(FAVORITES_FILE, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"[anima_prompt_node] 创建收藏文件失败: {e}")
+        except Exception as e:
+            print(f"[anima_prompt_node] 加载收藏失败: {e}")
+            data = {"items": []}
+        _FAVORITES = data
+        return _FAVORITES
+
+
+def _save_favorites(data):
+    global _FAVORITES
+    _FAVORITES = data
+    with _FAVORITES_LOCK:
+        try:
+            with open(FAVORITES_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[anima_prompt_node] 保存收藏失败: {e}")
+
+
+def _get_merged_data():
+    """返回 {分类: [词条...]} 合并视图：原始分类数据 + 自定义词条（带 _custom:true）。
+    浏览分页与全部扭蛋函数共用此视图，使自定义词条同时进入浏览与扭蛋抽取池。"""
+    base = _load_data()
+    custom = _load_custom_data()
+    merged = {}
+    for cat, tags in base.items():
+        merged[cat] = list(tags) if isinstance(tags, list) else []
+    for cat, tags in custom.items():
+        if not isinstance(tags, list):
+            continue
+        if cat not in merged:
+            merged[cat] = []
+        custom_items = []
+        for t in tags:
+            if isinstance(t, dict) and t.get("raw_en"):
+                item = dict(t)
+                item["_custom"] = True
+                custom_items.append(item)
+        merged[cat] = custom_items + merged[cat]
+    return merged
+
+
 def _get_categories():
     return [c for c in _load_data().keys() if c not in _EXCLUDED_CATEGORIES]
 
 
 def _get_tags(category, query="", page=1, page_size=20):
-    data = _load_data()
+    data = _get_merged_data()
     tags = data.get(category) or []
     if not isinstance(tags, list):
         tags = []
@@ -82,7 +193,7 @@ def _get_tags(category, query="", page=1, page_size=20):
 
 
 def _gacha(category, count=1):
-    data = _load_data()
+    data = _get_merged_data()
     tags = data.get(category) or []
     if not isinstance(tags, list) or not tags:
         return []
@@ -95,7 +206,7 @@ _EXCLUDED_CATEGORIES = {"全库标签"}
 
 def _gacha_random(count=1):
     """跨全部分类完全随机抽取，返回带 category 的条目。排除全库标签等聚合分类。"""
-    data = _load_data()
+    data = _get_merged_data()
     pool = []
     for cat, tags in data.items():
         if cat in _EXCLUDED_CATEGORIES:
@@ -117,7 +228,7 @@ def _gacha_multi(categories=None, count=1, category_counts=None):
     如果提供 category_counts 字典（{category: count}），则按每个分类的指定数量抽取，忽略 categories 和 count 参数。
     排除全库标签等聚合分类。
     """
-    data = _load_data()
+    data = _get_merged_data()
     if category_counts is not None:
         # category_counts: {category: count}
         out = []
@@ -157,7 +268,7 @@ def _gacha_across(count=1):
     """跨不同分类随机抽取：先洗牌分类，随机取 count 个**不同**分类，每类各取 1 个标签。
     用于『随机抽取』场景，保证每个分类最多 1 个，输出总数恰为 count（不重复）。
     排除全库标签等聚合分类。"""
-    data = _load_data()
+    data = _get_merged_data()
     count = max(1, int(count))
     cats = [c for c, v in data.items() if isinstance(v, list) and v and c not in _EXCLUDED_CATEGORIES]
     if not cats:
@@ -353,7 +464,171 @@ def register_routes():
     @routes.get("/anima/prompt/reload")
     async def anima_reload(request):
         await _run_in_exec(_load_data, True)
+        await _run_in_exec(_load_custom_data, True)
+        await _run_in_exec(_load_favorites, True)
         return web.json_response({"ok": True, "categories": _get_categories()})
+
+    # --------------------------- 自定义词条 ---------------------------
+    @routes.get("/anima/prompt/custom/list")
+    async def anima_custom_list(request):
+        tags = await _run_in_exec(_load_custom_data)
+        return web.json_response({"tags": tags if isinstance(tags, dict) else {}})
+
+    @routes.post("/anima/prompt/custom/add")
+    async def anima_custom_add(request):
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        category = str(body.get("category") or "").strip()
+        raw_en = str(body.get("raw_en") or "").strip()
+        cn = str(body.get("cn_description") or "").strip()
+        if not category or not raw_en:
+            return web.json_response({"ok": False, "error": "分类与英文词不能为空"}, status=400)
+
+        def _add():
+            if category not in _get_categories():
+                return {"ok": False, "error": "分类不存在"}
+            data = _load_custom_data()
+            lst = data.get(category)
+            if not isinstance(lst, list):
+                lst = []
+                data[category] = lst
+            key = raw_en.lower()
+            for t in lst:
+                if isinstance(t, dict) and str(t.get("raw_en", "")).lower() == key:
+                    return {"ok": False, "error": "该分类已存在相同词条"}
+            lst.append({
+                "en_tags": [raw_en],
+                "cn_description": cn,
+                "raw_en": raw_en,
+                "_custom": True,
+            })
+            _save_custom_data(data)
+            return {"ok": True}
+
+        try:
+            res = await _run_in_exec(_add)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
+        if not res.get("ok"):
+            return web.json_response(res, status=400)
+        return web.json_response(res)
+
+    @routes.post("/anima/prompt/custom/delete")
+    async def anima_custom_delete(request):
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        category = str(body.get("category") or "").strip()
+        raw_en = str(body.get("raw_en") or "").strip()
+        if not category or not raw_en:
+            return web.json_response({"ok": False, "error": "参数缺失"}, status=400)
+
+        def _del():
+            data = _load_custom_data()
+            lst = data.get(category)
+            if not isinstance(lst, list):
+                return {"ok": False, "error": "词条不存在"}
+            key = raw_en.lower()
+            idx = -1
+            for i, t in enumerate(lst):
+                if isinstance(t, dict) and str(t.get("raw_en", "")).lower() == key and t.get("_custom"):
+                    idx = i
+                    break
+            if idx < 0:
+                return {"ok": False, "error": "仅允许删除自定义词条"}
+            lst.pop(idx)
+            _save_custom_data(data)
+            # 同步清理收藏中对应引用，避免悬空
+            fav = _load_favorites()
+            items = fav.get("items") or []
+            fav["items"] = [x for x in items if not (
+                isinstance(x, dict)
+                and str(x.get("raw_en", "")).lower() == key
+                and str(x.get("category", "")) == category
+            )]
+            _save_favorites(fav)
+            return {"ok": True}
+
+        try:
+            res = await _run_in_exec(_del)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
+        if not res.get("ok"):
+            return web.json_response(res, status=400)
+        return web.json_response(res)
+
+    # --------------------------- 收藏 ---------------------------
+    @routes.get("/anima/prompt/favorites/list")
+    async def anima_favorites_list(request):
+        fav = await _run_in_exec(_load_favorites)
+        items = fav.get("items") if isinstance(fav, dict) else None
+        return web.json_response({"items": items if isinstance(items, list) else []})
+
+    @routes.post("/anima/prompt/favorites/add")
+    async def anima_favorites_add(request):
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        raw_en = str(body.get("raw_en") or "").strip()
+        category = str(body.get("category") or "").strip()
+        cn = str(body.get("cn_description") or "").strip()
+        if not raw_en or not category:
+            return web.json_response({"ok": False, "error": "参数缺失"}, status=400)
+
+        def _add():
+            fav = _load_favorites()
+            items = fav.get("items") or []
+            key = raw_en.lower()
+            for x in items:
+                if isinstance(x, dict) and str(x.get("raw_en", "")).lower() == key and str(x.get("category", "")) == category:
+                    return {"ok": True}
+            items.append({"raw_en": raw_en, "category": category, "cn_description": cn})
+            fav["items"] = items
+            _save_favorites(fav)
+            return {"ok": True}
+
+        try:
+            res = await _run_in_exec(_add)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
+        if not res.get("ok"):
+            return web.json_response(res, status=400)
+        return web.json_response(res)
+
+    @routes.post("/anima/prompt/favorites/remove")
+    async def anima_favorites_remove(request):
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        raw_en = str(body.get("raw_en") or "").strip()
+        category = str(body.get("category") or "").strip()
+        if not raw_en or not category:
+            return web.json_response({"ok": False, "error": "参数缺失"}, status=400)
+
+        def _remove():
+            fav = _load_favorites()
+            items = fav.get("items") or []
+            key = raw_en.lower()
+            fav["items"] = [x for x in items if not (
+                isinstance(x, dict)
+                and str(x.get("raw_en", "")).lower() == key
+                and str(x.get("category", "")) == category
+            )]
+            _save_favorites(fav)
+            return {"ok": True}
+
+        try:
+            res = await _run_in_exec(_remove)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
+        if not res.get("ok"):
+            return web.json_response(res, status=400)
+        return web.json_response(res)
 
 
 try:
