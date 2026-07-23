@@ -65,6 +65,10 @@ __pycache__/
 # 忽略标签画廊预览图磁盘缓存（见 naiba_tag_picker 的 cache_enabled）
 preview_cache/
 
+# 忽略 Gelbooru 标签画廊预览图磁盘缓存与凭据文件（见 naiba_gelbooru_tag_picker）
+preview_cache_gelbooru/
+data/gelbooru_auth.json
+
 # 忽略PowerShell自动监视和同步脚本
 start-watcher.ps1
 stop-watcher.ps1

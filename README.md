@@ -1,6 +1,6 @@
 # Naiba Test Custom Nodes for ComfyUI
 
-自定义ComfyUI节点集合，包含WAN模型优化、Multi LoRA Loader、Multi LoRA Loader (only model)、Visual LoRA Loader、List LoRA Loader、Lora Testing Converter、Save Text File、Lora Data Preview、Civitai Info Reader、Custom Data Reader和Power LoRA Config Reader功能。
+自定义ComfyUI节点集合，包含WAN模型优化、Multi LoRA Loader、Multi LoRA Loader (only model)、Visual LoRA Loader、List LoRA Loader、Lora Testing Converter、Save Text File、Lora Data Preview、Civitai Info Reader、Custom Data Reader、Power LoRA Config Reader、**Naiba Tag Picker（Danbooru 标签画廊/扭蛋）**和**Naiba Gelbooru Tag Picker（Gelbooru 标签画廊/扭蛋）**功能。
 
 ## 节点列表
 
@@ -524,6 +524,70 @@
 
 ---
 
+### 14. Naiba Gelbooru Tag Picker (Gelbooru 标签画廊选择器 / 扭蛋)
+
+**节点名称**: `NaibaGelbooruTagPicker`  
+**显示名称**: Naiba Gelbooru Tag Picker 🎯  
+**分类**: `naiba-node`
+
+#### 功能说明
+通过 Gelbooru 公开接口搜索 **画师(artist) / 角色(character) / IP(copyright) / 标签(tag)** 四类标签，前端画廊多选（带缩略图预览）。支持**匿名**与**凭据(DAPI)**两种模式：
+
+- **匿名模式**（节点上 `gelbooru_api_key` / `gelbooru_user_id` 留空）：走 `autocomplete2` 接口搜索，预览走 Gelbooru 列表页 HTML 正则兜底。
+- **凭据模式**（填入 API Key / User ID）：走 Gelbooru DAPI `s=tag`（带分类、Post 数、分页），预览走 DAPI `s=post`，分类搜索与全库随机扭蛋能力完整启用。
+
+凭据优先级：节点控件 > 环境变量 `GELBOORU_API_KEY` / `GELBOORU_USER_ID` > 本地文件 `data/gelbooru_auth.json`。
+
+**磁盘缓存系统**：预览图与搜索结果可缓存到本地磁盘（目录 `preview_cache_gelbooru/`），减少重复网络请求。缓存开关 / 上限 / 实时用量 / 一键清理均放在弹窗「设置」分页，运行时读写节点隐藏控件持久化。
+
+内置**扭蛋随机**功能（与 Danbooru 版一致）：弹窗内分别指定「画师 / 角色 / IP / 标签 每类抽几个（0~10）」：
+- **部分随机**：由后端从 Gelbooru 实时随机取样画师 a 个 + 角色 c 个 + IP i 个 + 标签 t 个；
+- **完全随机**：忽略数量，随机抽 0~(a+c+i+t) 个标签；
+- 弹窗内「清除」按钮一键清空；节点外部「随机生成」按钮无需开弹窗即可直接输出到 `RANDOM_TAGS`。
+
+节点外部「随机生成」按钮点击即实时生成随机标签并显示在节点预览区；弹窗内生成 / 删除扭蛋结果会**自动开启**后端扭蛋输出并刷新预览。
+
+#### 输入参数
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| gelbooru_api_key | STRING | "" | Gelbooru DAPI 凭据 API Key（留空 = 匿名模式）；优先级高于环境变量与本地文件 |
+| gelbooru_user_id | STRING | "" | Gelbooru DAPI 凭据 User ID（留空 = 匿名模式） |
+| selection_data | STRING | {} | 四分类选中数据（由前端画廊自动管理） |
+| max_images | INT | 16 | 批量预览图最大张数（超出截断） |
+| preview_size | INT | 320 | 预览图边长上限（保持比例居中贴到正方形） |
+| artist_at | BOOLEAN | False | 开启后画师标签输出为 `@画师名`（画师输出与扭蛋结果加 @） |
+| gacha_mode | BOOLEAN | False | 由前端自动管理：有扭蛋结果时自动开启以输出 RANDOM_TAGS |
+| gacha_data | STRING | {} | 扭蛋结果（由弹窗扭蛋标签页管理） |
+| cache_enabled | BOOLEAN | True | 开启磁盘缓存（设置分页内可视化控制） |
+| cache_max_mb | INT | 500 | 磁盘缓存上限（MB），到限自动 LRU 淘汰（设置分页内可视化控制） |
+
+#### 输出
+
+| 输出 | 类型 | 说明 |
+|------|------|------|
+| ARTIST_NAMES | STRING | 选中的画师标签名串（逗号分隔，artist_at 开启时加 @） |
+| CHARACTER_NAMES | STRING | 选中的角色标签名串 |
+| IP_NAMES | STRING | 选中的 IP 标签名串 |
+| TAG_NAMES | STRING | 选中的标签名串 |
+| MERGED_TAGS | STRING | 画师+角色+IP+标签 选中项合并成一条（artist_at 开启时画师部分加 @） |
+| RANDOM_TAGS | STRING | 扭蛋随机标签名串（有扭蛋结果时自动输出） |
+| PREVIEW_IMAGES | IMAGE | 选中标签代表作批量预览（仅内存，不落盘） |
+
+#### 使用方法
+1. 在 `naiba-node` 分类下添加 `Naiba Gelbooru Tag Picker 🎯` 节点
+2. 如需完整分类/全库随机能力，先在节点上 `gelbooru_api_key` / `gelbooru_user_id` 填入凭据（留空亦可匿名使用）；点击「打开标签画廊」
+3. 在弹窗内切换 画师/角色/IP/标签 标签页搜索并多选；切到「扭蛋」标签页设定每类数量，点「部分随机」或「完全随机」
+4. 点「应用选中」写回数据；「设置」分页可控制缓存开关 / 上限 / 一键清理，并查看实时缓存用量
+5. 点击「随机生成」即可直接得到扭蛋组合并输出到 `RANDOM_TAGS`（无需开弹窗）；需要合并全部选中标签时用 `MERGED_TAGS`
+
+#### 注意事项
+- 匿名模式受 Gelbooru 访问频率限制，搜索与预览走限流 + 重试（指数退避）；填凭据后限额更高、分类/分页/全库随机能力完整启用
+- 预览图 `/image` 路由加 Referer 并做 SSRF 白名单（仅放行 `gelbooru.com`），绝不代理任意外部地址
+- 凭据文件 `data/gelbooru_auth.json` 与缓存目录 `preview_cache_gelbooru/` 已在 `.gitignore` 中忽略，不会提交
+
+---
+
 ## 安装方法
 
 1. 将 `naiba-test` 文件夹复制到 `ComfyUI/custom_nodes/` 目录
@@ -621,6 +685,24 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 > **注意**: Multi LoRA Loader (only model) 节点导入含 `strength_clip` 的预设时会自动忽略 clip 字段。两个节点的预设可以互相导入。
 
 ## 更新日志
+
+### v3.4.0 (2026-07-23)
+
+#### 新增功能
+- **Naiba Gelbooru Tag Picker 🎯（全新节点）**：克隆 Danbooru 标签画廊/扭蛋交互，改为对接 Gelbooru。支持 画师 / 角色 / IP / 标签 四类标签画廊多选、缩略图预览、扭蛋随机（部分/完全/节点外一键生成）、黑名单、收藏。
+- **双模式认证（节点控件最方便）**：节点上 `gelbooru_api_key` / `gelbooru_user_id` 两个可见文本框，留空 = 匿名（`autocomplete2` 接口）；填凭据 = DAPI 模式（`s=tag` 带分类/Post 数/分页、`s=post` 预览），分类搜索与全库随机扭蛋能力完整启用。凭据优先级：节点控件 > 环境变量 > `data/gelbooru_auth.json`。
+- **设置分页缓存控制**：弹窗「设置」分页可视化控制磁盘缓存开关、上限（MB）、实时用量、一键清理，运行时读写节点隐藏控件 `cache_enabled` / `cache_max_mb` 持久化。
+- **预览代理与 SSRF 白名单**：`/naiba/gelbooru/image` 路由加 Referer 并仅放行 `gelbooru.com`，避免任意地址代理。
+
+#### 节点独立性
+- 该节点为**完全独立实现**，不 import、不继承 `comfyui-anima-t8` 或任何内置节点类，所有 Gelbooru 客户端逻辑在本文件内自实现（符合本项目铁律）。
+
+#### 数据文件
+- 新增 `naiba_gelbooru_tag_picker.py`（节点 + 路由）
+- 新增 `js/naiba_gelbooru_tag_picker.js`（前端，独立样式 id `gb-style-v2`）
+- `.gitignore` 忽略 `preview_cache_gelbooru/` 与 `data/gelbooru_auth.json`
+
+---
 
 ### v3.3.1 (2026-07-23)
 
