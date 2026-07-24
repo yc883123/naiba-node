@@ -237,15 +237,19 @@ async function doSearch(cat) {
     const seq = ++ts.seq;
     const category = TAB_CAT[cat];
     const q = ts.query;
+    const limit = Math.max(1, parseInt(getWidget(nodeRef, "max_images", 9), 10) || 9);
     // 画师页支持「仅单画师」：用 name_matches 收紧；这里直接走 search
-    const path = `/naiba/tag/search?q=${encodeURIComponent(q)}&cat=${encodeURIComponent(category)}&limit=${encodeURIComponent(getWidget(nodeRef, "max_images", 9))}&page=${ts.page}&cache=${cacheOn()}&max=${cacheMax()}`;
+    const path = `/naiba/tag/search?q=${encodeURIComponent(q)}&cat=${encodeURIComponent(category)}&limit=${encodeURIComponent(limit)}&page=${ts.page}&cache=${cacheOn()}&max=${cacheMax()}`;
     try {
         const data = await apiGetJson(path);
         if (seq !== ts.seq) return; // 过期请求，丢弃
         ts.items = (data.items || []).map((it) => ({ id: it.id, tag: it.tag, post_count: it.post_count, category: it.category, preview_url: it.preview_url, source_url: it.source_url }));
+        // 当页返回数达到请求的 limit，说明可能还有下一页
+        ts.hasMore = (ts.items.length >= limit);
     } catch (e) {
         if (seq !== ts.seq) return;
         ts.items = [];
+        ts.hasMore = false;
         flashStatus("搜索失败：" + e.message);
     } finally {
         ts.loading = false;
@@ -670,10 +674,12 @@ async function doSearchIpCharacters() {
             id: it.id, tag: it.tag, post_count: it.post_count, category: it.category,
             preview_url: it.preview_url, source_url: it.source_url,
         }));
+        ts.hasMore = (ts.items.length >= max);
         if (data.auth_required) flashStatus("Gelbooru 匿名无权限，请在节点填 API Key/User ID");
     } catch (e) {
         if (seq !== ts.seq) return;
         ts.items = [];
+        ts.hasMore = false;
         flashStatus("IP角色搜索失败：" + (e && e.message ? e.message : e));
     } finally {
         ts.loading = false;
@@ -692,9 +698,11 @@ function updatePager() {
         else if (ts.page > 1) { ts.page--; doSearch(cat); }
     } }, "‹ 上一页");
     const info = el("div", { class: "tp-page-info" }, `第 ${ts.page} 页`);
-    const next = el("button", { class: "tp-page-btn", onclick: () => {
-        if (cat === "ip_char") { if (hasMore) { ts.page++; doSearchIpCharacters(); } }
-        else if (hasMore) { ts.page++; doSearch(cat); }
+    const more = !!ts.hasMore;
+    const next = el("button", { class: "tp-page-btn" + (more ? "" : " disabled"), onclick: () => {
+        if (!more) return;
+        if (cat === "ip_char") { ts.page++; doSearchIpCharacters(); }
+        else { ts.page++; doSearch(cat); }
     } }, "下一页 ›");
     pagerBar.append(prev, info, next);
 }

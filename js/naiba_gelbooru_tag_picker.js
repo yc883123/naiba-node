@@ -245,14 +245,17 @@ async function doSearch(cat) {
     const seq = ++ts.seq;
     const category = TAB_CAT[cat];
     const q = ts.query;
-    const path = `/naiba/gelbooru/search?q=${encodeURIComponent(q)}&cat=${encodeURIComponent(category)}&limit=${encodeURIComponent(getWidget(nodeRef, "max_images", 9))}&page=${ts.page}&cache=${cacheOn()}&max=${cacheMax()}${credParams()}`;
+    const limit = Math.max(1, parseInt(getWidget(nodeRef, "max_images", 9), 10) || 9);
+    const path = `/naiba/gelbooru/search?q=${encodeURIComponent(q)}&cat=${encodeURIComponent(category)}&limit=${encodeURIComponent(limit)}&page=${ts.page}&cache=${cacheOn()}&max=${cacheMax()}${credParams()}`;
     try {
         const data = await apiGetJson(path);
         if (seq !== ts.seq) return;
         ts.items = (data.items || []).map((it) => ({ id: it.id, tag: it.tag, post_count: it.post_count, category: it.category, preview_url: it.preview_url, source_url: it.source_url }));
+        ts.hasMore = (ts.items.length >= limit);
     } catch (e) {
         if (seq !== ts.seq) return;
         ts.items = [];
+        ts.hasMore = false;
         flashStatus("搜索失败：" + e.message);
     } finally {
         ts.loading = false;
@@ -687,12 +690,14 @@ async function doSearchIpCharacters() {
         }));
         ts.authRequired = !!data.auth_required;
         ts.approximate = !!data.approximate;
+        ts.hasMore = (ts.items.length >= max);
         if (data.auth_required) flashStatus("Gelbooru 匿名无权限，请在节点填 API Key/User ID（设置里也可配凭据）");
         else if (data.approximate) flashStatus("匿名模式：仅列出名称含该 IP 的角色（近似），填 API Key 可看完整角色列表");
         if (data.items && data.items.length === 0 && !data.auth_required) flashStatus("该 IP 下未检索到角色，尝试填写 API Key");
     } catch (e) {
         if (seq !== ts.seq) return;
         ts.items = [];
+        ts.hasMore = false;
         flashStatus("IP角色搜索失败：" + (e && e.message ? e.message : e));
     } finally {
         ts.loading = false;
@@ -711,9 +716,11 @@ function updatePager() {
         else if (ts.page > 1) { ts.page--; doSearch(cat); }
     } }, "‹ 上一页");
     const info = el("div", { class: "tp-page-info" }, `第 ${ts.page} 页`);
-    const next = el("button", { class: "tp-page-btn", onclick: () => {
-        if (cat === "ip_char") { if (hasMore) { ts.page++; doSearchIpCharacters(); } }
-        else if (hasMore) { ts.page++; doSearch(cat); }
+    const more = !!ts.hasMore;
+    const next = el("button", { class: "tp-page-btn" + (more ? "" : " disabled"), onclick: () => {
+        if (!more) return;
+        if (cat === "ip_char") { ts.page++; doSearchIpCharacters(); }
+        else { ts.page++; doSearch(cat); }
     } }, "下一页 ›");
     pagerBar.append(prev, info, next);
 }
