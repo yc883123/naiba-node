@@ -686,6 +686,17 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 
 ## 更新日志
 
+### v3.5.1 (2026-07-24)
+
+#### 新增功能
+- **Naiba Anima Formatter · 安全分级标签 `safety_tag`**：可选输入 `不插入 / safe / sensitive / nsfw / explicit`，仅 Anima 模式生效，插入到第一段 quality 之后（安全标签不做下划线/括号/@ 归一）
+- **INPUT_TYPES 参数重排**：分类端口前置为 `required`，控制项归入 `optional`
+
+#### 优化改进
+- **Gelbooru「作品角色」空状态文案**：区分「未填 API Key/User ID（橙色警告）」「匿名近似模式」「正常无结果」三种情况，新增 `.tp-empty.warn` 警告样式
+
+---
+
 ### v3.5.0 (2026-07-24)
 
 #### 新增功能

@@ -1,5 +1,23 @@
 # 更新日志
 
+## v3.5.1 (2026-07-24)
+
+### 新增功能
+- **Naiba Anima Formatter · 安全分级标签 `safety_tag`**：
+  - 新增可选输入 `safety_tag`，选项 `不插入 / safe / sensitive / nsfw / explicit`
+  - 仅 Anima 模式生效，选中的安全分级标签插入到第一段 `[quality/meta/year/safety tags]` 的 quality 之后
+  - 安全标签为简单英文单词（safe/sensitive/nsfw/explicit），不做下划线/括号/@ 归一，保持原样
+- **INPUT_TYPES 参数重排**：可选分类端口（artist/character/ip/general/merged/character_ip_names/quality_meta）统一前置为 `required`，控制项（model_type/safety_tag/underscore_mode 等）归入 `optional`，结构更清晰
+
+### 优化改进
+- **Gelbooru「作品角色」空状态文案**：区分三种情况并给出明确引导
+  - 未填 API Key / User ID：橙色警告框，提示去节点填 `gelbooru_api_key` 与 `gelbooru_user_id`（设置页也可配）
+  - 匿名近似模式：提示仅列出名称含该 IP 的角色，填凭据可看完整列表并翻页
+  - 正常无结果：提示换 IP 或填凭据翻页搜索
+  - 新增 `.tp-empty.warn` 警告样式（橙底描边、换行显示）
+
+---
+
 ## v3.5.0 (2026-07-24)
 
 ### 新增功能

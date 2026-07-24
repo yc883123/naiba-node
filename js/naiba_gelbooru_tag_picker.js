@@ -401,7 +401,22 @@ function renderGallery() {
     if (ts.loading) { mainScroll.appendChild(el("div", { class: "tp-empty" }, "加载中…")); updatePager(); return; }
     const items = (ts.items || []).filter((it) => !state.blacklist.has(it.tag));
     if (!items.length) {
-        mainScroll.appendChild(el("div", { class: "tp-empty" }, ts.query ? `未找到「${ts.query}」相关标签` : "暂无数据，试试搜索或翻页"));
+        let emptyMsg, warn = false;
+        if (cat === "ip_char") {
+            if (ts.authRequired) {
+                warn = true;
+                emptyMsg = "⚠ 未填写 Gelbooru 的 API Key / User ID，无法进行「作品角色」分页搜索。\n请先在节点上填好 gelbooru_api_key 与 gelbooru_user_id（也可在「设置」标签页查看说明），再点 IP 页的「查看角色」。";
+            } else if (ts.approximate) {
+                emptyMsg = "匿名模式：仅列出名称含该 IP 的角色（近似结果）。填 API Key / User ID 可看完整角色列表并支持翻页。";
+            } else {
+                emptyMsg = ts.query ? `未找到「${ts.query}」相关角色` : "该 IP 下未检索到角色，尝试填写 API Key 后翻页搜索，或换个 IP。";
+            }
+        } else {
+            emptyMsg = ts.query ? `未找到「${ts.query}」相关标签` : "暂无数据，试试搜索或翻页";
+        }
+        const emptyEl = el("div", { class: "tp-empty" + (warn ? " warn" : "") }, emptyMsg);
+        if (warn) emptyEl.style.whiteSpace = "pre-line";
+        mainScroll.appendChild(emptyEl);
         updatePager();
         return;
     }
@@ -670,6 +685,8 @@ async function doSearchIpCharacters() {
             id: it.id, tag: it.tag, post_count: it.post_count, category: it.category,
             preview_url: it.preview_url, source_url: it.source_url,
         }));
+        ts.authRequired = !!data.auth_required;
+        ts.approximate = !!data.approximate;
         if (data.auth_required) flashStatus("Gelbooru 匿名无权限，请在节点填 API Key/User ID（设置里也可配凭据）");
         else if (data.approximate) flashStatus("匿名模式：仅列出名称含该 IP 的角色（近似），填 API Key 可看完整角色列表");
         if (data.items && data.items.length === 0 && !data.auth_required) flashStatus("该 IP 下未检索到角色，尝试填写 API Key");
@@ -1040,6 +1057,7 @@ function injectStyle() {
 .tp-fav.active{background:${COLORS.warning};}
 .tp-empty{color:${COLORS.textDim};font-size:13px;padding:40px 10px;text-align:center;}
 .tp-empty.small{padding:14px 6px;font-size:12px;}
+.tp-empty.warn{color:${COLORS.warning};background:rgba(255,165,2,.12);border:1px solid rgba(255,165,2,.45);border-radius:10px;font-weight:600;line-height:1.7;max-width:560px;margin:14px auto;padding:18px 20px;text-align:center;box-shadow:0 0 0 3px rgba(255,165,2,.07);white-space:pre-line;}
 .tp-btn{background:${COLORS.cardBg};color:${COLORS.text};border:1px solid ${COLORS.border};border-radius:6px;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:500;transition:.15s;}
 .tp-btn:hover{border-color:${COLORS.accent};}
 .tp-btn.primary{background:${COLORS.accent};color:#fff;border-color:${COLORS.accent};}

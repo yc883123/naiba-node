@@ -191,6 +191,7 @@ class NaibaAnimaFormatter:
     def INPUT_TYPES(cls):
         return {
             "required": {
+                # ── 文本框（标签输入）全部放在上面 ──
                 "artist_tags": ("STRING", {
                     "multiline": True, "default": "",
                     "placeholder": "画师标签（连 ARTIST_NAMES）。可带 @，会自动归一",
@@ -211,10 +212,31 @@ class NaibaAnimaFormatter:
                     "placeholder": "通用标签（连 TAG_NAMES）",
                     "tooltip": "对应 NaibaTagPicker 的 TAG_NAMES 输出；计数标签会被自动抽到 count 段",
                 }),
+                "merged_tags": ("STRING", {
+                    "multiline": True, "default": "",
+                    "placeholder": "兜底：四个分类端口全空时，解析此合并字符串（连 MERGED_TAGS）",
+                    "tooltip": "连 NaibaTagPicker 的 MERGED_TAGS；仅当四个分类端口都为空时作为兜底",
+                }),
+                "character_ip_names": ("STRING", {
+                    "multiline": True, "default": "",
+                    "placeholder": "角色（作品）配对串（连 CHARACTER_IP_NAMES）",
+                    "tooltip": "连 NaibaTagPicker 的 CHARACTER_IP_NAMES；填了则替代 character+ip 两段（Anima 的 series 位置）",
+                }),
+                "quality_meta": ("STRING", {
+                    "multiline": True, "default": "",
+                    "placeholder": "质量/评分标签（可选；为空时按模型自动填充预制词）",
+                }),
+            },
+            "optional": {
+                # ── 输入参数（控制项）全部放在下面 ──
                 "model_type": (["Anima", "Noob", "CKNoob"], {
                     "default": "Anima",
-                    "tooltip": "Anima：画师自动加@，顺序 quality→count→character→series→artist→general；"
+                    "tooltip": "Anima：画师自动加@，第一段含 [quality/meta/year/safety]，顺序 quality→count→character→series→artist→general；"
                                "Noob/CKNoob：画师去@，顺序 count→character→artist→general→quality，general 内部重排",
+                }),
+                "safety_tag": (["不插入", "safe", "sensitive", "nsfw", "explicit"], {
+                    "default": "不插入",
+                    "tooltip": "仅 Anima 模式生效：选中的安全分级标签（safe/sensitive/nsfw/explicit）插入到第一段 [quality/meta/year/safety tags] 的 quality 之后；不插入=保持原行为",
                 }),
                 "underscore_mode": (["转空格", "保留下划线"], {
                     "default": "转空格",
@@ -234,22 +256,6 @@ class NaibaAnimaFormatter:
                     "label_on": "强制加 @", "label_off": "由模型模式控制",
                 }),
                 "separator": ("STRING", {"default": ", ", "multiline": False}),
-            },
-            "optional": {
-                "merged_tags": ("STRING", {
-                    "multiline": True, "default": "",
-                    "placeholder": "兜底：四个分类端口全空时，解析此合并字符串（连 MERGED_TAGS）",
-                    "tooltip": "连 NaibaTagPicker 的 MERGED_TAGS；仅当四个分类端口都为空时作为兜底",
-                }),
-                "character_ip_names": ("STRING", {
-                    "multiline": True, "default": "",
-                    "placeholder": "角色（作品）配对串（连 CHARACTER_IP_NAMES）",
-                    "tooltip": "连 NaibaTagPicker 的 CHARACTER_IP_NAMES；填了则替代 character+ip 两段（Anima 的 series 位置）",
-                }),
-                "quality_meta": ("STRING", {
-                    "multiline": True, "default": "",
-                    "placeholder": "质量/评分标签（可选；为空时按模型自动填充预制词）",
-                }),
             },
         }
 
@@ -286,10 +292,11 @@ class NaibaAnimaFormatter:
         return processed
 
     def format_prompt(self, artist_tags="", character_tags="", ip_tags="",
-                      general_tags="", model_type="Anima", underscore_mode="转空格",
-                      escape_parens=True, artist_at_prefix=False, separator=", ",
-                      merged_tags="", quality_meta="", character_ip_names="",
-                      escape_ip_parens=False):
+                      general_tags="", merged_tags="", character_ip_names="",
+                      quality_meta="", model_type="Anima", safety_tag="不插入",
+                      underscore_mode="转空格", escape_parens=True,
+                      escape_ip_parens=False, artist_at_prefix=False,
+                      separator=", "):
         # 0. 兜底：四个分类端口全空时解析 merged_tags
         if (not artist_tags.strip() and not character_tags.strip()
                 and not ip_tags.strip() and not general_tags.strip()
@@ -349,6 +356,12 @@ class NaibaAnimaFormatter:
             if not cip_tags:
                 cip_tags = None
 
+        # 3.6 安全分级标签：仅 Anima 模式，插入第一段 [quality/meta/year/safety tags]（quality 之后）
+        # 安全标签本身是简单英文单词（safe/sensitive/nsfw/explicit），不做下划线/括号/@ 归一
+        safety_extra = []
+        if model_type == "Anima" and safety_tag and safety_tag != "不插入":
+            safety_extra.append(safety_tag)
+
         # 4. 按模型模式拼接
         if model_type in ("Noob", "CKNoob"):
             # general 内部按子分类优先级重排
@@ -379,10 +392,10 @@ class NaibaAnimaFormatter:
             if q_tags:
                 ordered.append(separator.join(q_tags))
         else:
-            # Anima 顺序：quality → count → character → series → artist → general
+            # Anima 顺序：quality → safety → count → character → series → artist → general
             ordered = []
-            if q_tags:
-                ordered.append(separator.join(q_tags))
+            if q_tags or safety_extra:
+                ordered.append(separator.join(q_tags + safety_extra))
             if c_tags:
                 ordered.append(separator.join(c_tags))
             if cip_tags is not None:
