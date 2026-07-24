@@ -533,16 +533,19 @@ function createLoraDataPreviewModal(node, loraList) {
         renderLoraList();
     });
 
-    // 应用按钮
-    const applyBtn = document.createElement("button");
-    applyBtn.textContent = "应用选中 (0)";
-    applyBtn.style.cssText = `
-        padding:6px 12px;background:${COLORS.success};
-        color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;
-    `;
-    applyBtn.addEventListener("click", () => {
-        applySelectedLora();
-    });
+    // 应用按钮（仅在节点上下文中显示）
+    let applyBtn;
+    if (node) {
+        applyBtn = document.createElement("button");
+        applyBtn.textContent = "应用选中 (0)";
+        applyBtn.style.cssText = `
+            padding:6px 12px;background:${COLORS.success};
+            color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;
+        `;
+        applyBtn.addEventListener("click", () => {
+            applySelectedLora();
+        });
+    }
 
     const closeFooterBtn = document.createElement("button");
     closeFooterBtn.textContent = "关闭";
@@ -555,7 +558,7 @@ function createLoraDataPreviewModal(node, loraList) {
     buttonGroup.appendChild(refreshBtn);
     buttonGroup.appendChild(selectAllBtn);
     buttonGroup.appendChild(clearSelectBtn);
-    buttonGroup.appendChild(applyBtn);
+    if (applyBtn) buttonGroup.appendChild(applyBtn);
     buttonGroup.appendChild(closeFooterBtn);
 
     statusBar.appendChild(syncStatus);
@@ -584,17 +587,19 @@ function createLoraDataPreviewModal(node, loraList) {
     let checkMissingSection = null;
 
     // 从节点widget中恢复已选中的LoRA，确保重新打开弹窗时"已选择"标签能正确显示
-    const existingDataWidget = node.widgets?.find((w) => w.name === "lora_data");
-    if (existingDataWidget) {
-        try {
-            const existingData = JSON.parse(existingDataWidget.value || "[]");
-            existingData.forEach(item => {
-                if (item.name) {
-                    selectedLoras.add(item.name);
-                }
-            });
-        } catch (e) {
-            // ignore parse errors
+    if (node) {
+        const existingDataWidget = node.widgets?.find((w) => w.name === "lora_data");
+        if (existingDataWidget) {
+            try {
+                const existingData = JSON.parse(existingDataWidget.value || "[]");
+                existingData.forEach(item => {
+                    if (item.name) {
+                        selectedLoras.add(item.name);
+                    }
+                });
+            } catch (e) {
+                // ignore parse errors
+            }
         }
     }
 
@@ -752,6 +757,7 @@ function createLoraDataPreviewModal(node, loraList) {
 
     // ========== 应用选中的LoRA ==========
     function applySelectedLora() {
+        if (!node) return;
         if (selectedLoras.size === 0) {
             alert("请先选择至少一个LoRA");
             return;
@@ -805,7 +811,7 @@ function createLoraDataPreviewModal(node, loraList) {
         mainContent.appendChild(progressBarContainer);
 
         // 更新应用按钮文本显示选中数量
-        applyBtn.textContent = `应用选中 (${selectedLoras.size})`;
+        if (applyBtn) applyBtn.textContent = `应用选中 (${selectedLoras.size})`;
 
         // 根据类别 / 文件夹 / 搜索确定渲染列表
         const searchTerm = (searchInput.value || "").toLowerCase().trim();
@@ -1400,7 +1406,8 @@ function createLoraDataPreviewModal(node, loraList) {
     
     async function startCivitaiVerify() {
         // 获取lora_data
-        const loraDataWidget = node.widgets.find(w => w.name === "lora_data");
+        if (!node) return;
+        const loraDataWidget = node.widgets?.find(w => w.name === "lora_data");
         if (!loraDataWidget || !loraDataWidget.value) {
             checkVerifyResultsContent.innerHTML = `
                 <div style="color:${COLORS.error};text-align:center;padding:20px;">
@@ -3483,6 +3490,61 @@ function createLoraDataPreviewModal(node, loraList) {
 
 app.registerExtension({
     name: "naiba.LoraDataPreview",
+
+    async setup(appInstance) {
+        // 通过 app.menu.element 注入顶部工具栏按钮
+        if (app.menu && app.menu.element) {
+            // 检查是否已注入，避免重复
+            if (document.getElementById("naiba-toolbar-btn")) return;
+
+            const wrap = document.createElement("div");
+            wrap.id = "naiba-toolbar-btn";
+            wrap.style.cssText = "display:flex;gap:6px;margin:4px 0;";
+
+            const btn = document.createElement("button");
+            btn.className = "comfy-button";
+            btn.textContent = "NAIBA";
+            btn.title = "打开 NAIBA LoRA 浏览器";
+            btn.style.cssText = `
+                background: linear-gradient(180deg, #6366f1, #4f46e5);
+                color: #fff;
+                border: 1px solid #4338ca;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.2);
+                padding: 5px 16px;
+                font-weight: 600;
+                font-size: 13px;
+                border-radius: 4px;
+                cursor: pointer;
+                transition: all 0.15s ease;
+            `;
+            btn.addEventListener("mouseenter", () => {
+                btn.style.background = "linear-gradient(180deg, #7c3aed, #6366f1)";
+                btn.style.transform = "translateY(-1px)";
+                btn.style.boxShadow = "0 3px 6px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.25)";
+            });
+            btn.addEventListener("mouseleave", () => {
+                btn.style.background = "linear-gradient(180deg, #6366f1, #4f46e5)";
+                btn.style.transform = "";
+                btn.style.boxShadow = "0 2px 4px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.2)";
+            });
+            btn.addEventListener("click", async () => {
+                let loras = [];
+                try {
+                    const resp = await api.fetchApi("/naiba/lora/list-all");
+                    const data = await resp.json();
+                    if (data.loras) {
+                        loras = data.loras;
+                    }
+                } catch (e) {
+                    console.warn("[NAIBA] Cannot fetch Lora list:", e);
+                }
+                createLoraDataPreviewModal(null, loras);
+            });
+
+            wrap.append(btn);
+            try { app.menu.element.prepend(wrap); } catch (_) {}
+        }
+    },
 
     async beforeRegisterNodeDef(nodeType, nodeData, appInstance) {
         if (nodeData.name !== "LoraDataPreview") return;

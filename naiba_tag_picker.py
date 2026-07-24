@@ -467,6 +467,64 @@ def build_preview_proxy(tag):
     b64 = base64.b64encode(data).decode("ascii")
     return f"data:{mime};base64,{b64}"
 
+# ----------------------------- IP 下角色聚合（作品角色） -----------------------------
+def get_ip_characters(ip, limit=50, page=1):
+    """取某 IP（copyright）下的角色：拉 Danbooru posts，聚合 tag_string_character 计数。
+
+    匿名即可：Danbooru 帖子自带已分类的 tag_string_character 字段，无需类型校验。
+    结果按角色出现次数降序，支持分页。
+    """
+    if not ip or not ip.strip():
+        return {"items": [], "total": 0, "cached": False}
+    cache_key = f"ipchar|{ip}|{page}|{limit}"
+    try:
+        per_page = 30
+        pages_to_fetch = 3
+        agg = {}
+        for pg in range(1, pages_to_fetch + 1):
+            params = {"tags": ip, "limit": per_page, "page": pg}
+            url = BASE + "/posts.json?" + urllib.parse.urlencode(params)
+            raw = _fetch_url(url)
+            if not raw:
+                break
+            try:
+                arr = json.loads(raw.decode("utf-8"))
+            except Exception:
+                break
+            if not isinstance(arr, list) or not arr:
+                break
+            for post in arr:
+                chars = post.get("tag_string_character") or ""
+                for c in chars.split(" "):
+                    c = c.strip()
+                    if c:
+                        agg[c] = agg.get(c, 0) + 1
+        ranked = sorted(agg.items(), key=lambda kv: kv[1], reverse=True)
+        total = len(ranked)
+        start = (page - 1) * limit
+        page_items = ranked[start:start + limit]
+        items = [{
+            "id": None,
+            "tag": t,
+            "post_count": cnt,
+            "category": "character",
+            "preview_url": "",
+            "source_url": f"{BASE}/posts?tags={urllib.parse.quote(t)}",
+        } for t, cnt in page_items]
+        result = {"items": items, "total": total, "cached": False}
+        if _DISK_CACHE is not None:
+            _DISK_CACHE.set_json(cache_key, {"items": items, "total": total})
+        return result
+    except Exception as e:
+        print(f"[naiba_tag_picker] ip_characters error: {e}")
+        if _DISK_CACHE is not None:
+            cached = _DISK_CACHE.get_json(cache_key)
+            if cached is not None:
+                cached["cached"] = True
+                return cached
+        return {"items": [], "total": 0, "cached": False}
+
+
 # ----------------------------- 节点 -----------------------------
 class NaibaTagPicker:
     @classmethod
@@ -507,8 +565,8 @@ class NaibaTagPicker:
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "IMAGE")
-    RETURN_NAMES = ("ARTIST_NAMES", "CHARACTER_NAMES", "IP_NAMES", "TAG_NAMES", "MERGED_TAGS", "RANDOM_TAGS", "PREVIEW_IMAGES")
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "IMAGE", "STRING")
+    RETURN_NAMES = ("ARTIST_NAMES", "CHARACTER_NAMES", "IP_NAMES", "TAG_NAMES", "MERGED_TAGS", "RANDOM_TAGS", "PREVIEW_IMAGES", "CHARACTER_IP_NAMES")
     OUTPUT_NODE = True
     FUNCTION = "execute"
     CATEGORY = "naiba-node"
@@ -547,6 +605,9 @@ class NaibaTagPicker:
         character_items = [it for it in selected if _norm_cat(it.get("category")) == "character"]
         ip_items = [it for it in selected if _norm_cat(it.get("category")) == "ip"]
         tag_items = [it for it in selected if _norm_cat(it.get("category")) == "tag"]
+        # 作品角色（角色（作品）配对串）：前端在「作品角色」页选角色时生成，category="character_ip"
+        # 不进入 merged_tags / 各分类列表，仅单独输出 CHARACTER_IP_NAMES
+        character_ip_items = [it for it in selected if it.get("category") == "character_ip"]
 
         # 画师按 artist_at 开关加 @ 前缀
         artist_names_list = [
@@ -562,6 +623,7 @@ class NaibaTagPicker:
         character_names = ", ".join(character_names_list)
         ip_names = ", ".join(ip_names_list)
         tag_names = ", ".join(tag_names_list)
+        character_ip_names = ", ".join(it.get("tag", "") for it in character_ip_items if it.get("tag"))
         # merged 整合全部分类（画师/角色/IP/标签），便于直接作为最终提示词使用
         merged_tags = ", ".join(artist_names_list + character_names_list + ip_names_list + tag_names_list)
 
@@ -601,7 +663,7 @@ class NaibaTagPicker:
         else:
             previews = torch.zeros((1, preview_size, preview_size, 3), dtype=torch.float32)
 
-        return (artist_names, character_names, ip_names, tag_names, merged_tags, random_tags, previews)
+        return (artist_names, character_names, ip_names, tag_names, merged_tags, random_tags, previews, character_ip_names)
 
 def _format_gacha_tags(gt, artist_at: bool) -> list:
     """把扭蛋标签（兼容 [str] 旧格式 与 [{"tag","category"}] 新格式）转为输出名列表。
@@ -803,6 +865,22 @@ def register_routes():
     @PromptServer.instance.routes.get("/naiba/tag/hello")
     async def tag_hello(request):
         return web.json_response({"ok": True})
+
+    @PromptServer.instance.routes.get("/naiba/tag/ip_characters")
+    async def tag_ip_characters(request):
+        """某 IP 下的角色聚合（作品角色标签页）。"""
+        ip = request.query.get("ip", "")
+        try:
+            limit = int(request.query.get("limit", "50"))
+        except Exception:
+            limit = 50
+        try:
+            page = int(request.query.get("page", "1"))
+        except Exception:
+            page = 1
+        _consume_cache_params(request)
+        res = await _run_in_exec(get_ip_characters, ip, limit, page)
+        return web.json_response(res)
 
 def _consume_cache_params(request):
     cache_on = request.query.get("cache", "1") not in ("0", "false", "False", "0")

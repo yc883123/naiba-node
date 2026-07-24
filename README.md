@@ -686,6 +686,22 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 
 ## 更新日志
 
+### v3.5.0 (2026-07-24)
+
+#### 新增功能
+- **「作品角色」标签页（Danbooru + Gelbooru 双站）**：在 IP 标签页点卡片左下角 👥 按钮可查看该 IP 下的所有角色列表。Danbooru 匿名即用（聚合 `tag_string_character`），Gelbooru 登录凭据用 dapi post 校验、匿名用 autocomplete 近似回退。
+- **节点新增 `CHARACTER_IP_NAMES` 输出**：单独输出作品角色名（不混入 `MERGED_TAGS`）
+- **新增 Naiba Anima Formatter 节点**（`naiba_anima_formatter.py`）
+
+#### Bug 修复
+- 👥 按钮移到卡片左下角，避免与右上角 🚫/★ 冲突
+- 修复 `state.tabState.ipChar` 键名不一致导致「作品角色」页静默崩溃
+- Danbooru IP 卡片补上之前缺失的「查看角色」按钮
+- Gelbooru 匿名 IP→角色 给出明确提示（不再静默为空）
+- Lora Data Preview 无节点上下文时按钮引用空对象修复
+
+---
+
 ### v3.4.0 (2026-07-23)
 
 #### 新增功能

@@ -26,10 +26,10 @@ const COLORS = {
 };
 
 const DANBOORU_BASE = "https://danbooru.donmai.us";
-const GALLERY_TABS = ["artist", "character", "ip", "tag"];
-const TABS = ["artist", "character", "ip", "tag", "gacha", "blacklist", "favorites", "settings"];
-const TAB_LABEL = { artist: "画师", character: "角色", ip: "IP", tag: "标签", gacha: "扭蛋", blacklist: "黑名单", favorites: "收藏", settings: "设置" };
-const CATEGORY_CN = { artist: "画师", character: "角色", copyright: "IP", tag: "标签" };
+const GALLERY_TABS = ["artist", "character", "ip", "tag", "ip_char"];
+const TABS = ["artist", "character", "ip", "tag", "ip_char", "gacha", "blacklist", "favorites", "settings"];
+const TAB_LABEL = { artist: "画师", character: "角色", ip: "IP", tag: "标签", ip_char: "作品角色", gacha: "扭蛋", blacklist: "黑名单", favorites: "收藏", settings: "设置" };
+const CATEGORY_CN = { artist: "画师", character: "角色", copyright: "IP", tag: "标签", character_ip: "作品角色" };
 // 画廊 tab -> Danbooru category 参数
 const TAB_CAT = { artist: "artist", character: "character", ip: "copyright", tag: "tag" };
 // 扭蛋配置 key -> {routeParam, tabCat}
@@ -59,6 +59,7 @@ const state = {
         character: { items: [], page: 1, loading: false, seq: 0, query: "", single: false },
         ip: { items: [], page: 1, loading: false, seq: 0, query: "", single: false },
         tag: { items: [], page: 1, loading: false, seq: 0, query: "", single: false },
+    ip_char: { items: [], page: 1, loading: false, seq: 0, query: "", single: false, ip: "" },
     },
     currentTab: "artist",
 };
@@ -306,14 +307,33 @@ function buildGalleryCard(it, cat) {
         onclick: (e) => { e.stopPropagation(); toggleFavorite({ tag: it.tag, category }); },
     }, isFav ? "★" : "☆");
     card.append(img, name, meta, blockBtn, favBtn);
+    if (cat === "ip") {
+        const viewBtn = el("button", {
+            class: "tp-hover-btn tp-view-char", title: "查看该 IP 下的角色",
+            onclick: (e) => {
+                e.stopPropagation();
+                state.tabState.ip_char.ip = it.tag;
+                state.tabState.ip_char.page = 1;
+                switchTab("ip_char");
+                doSearchIpCharacters();
+            },
+        }, "👥");
+        card.append(viewBtn);
+    }
     card.addEventListener("click", (e) => {
         if (e.ctrlKey || e.metaKey) {
             const url = `${DANBOORU_BASE}/posts?tags=${encodeURIComponent(it.tag)}`;
             window.open(url, "_blank", "noopener");
             return;
         }
-        selectTag({ tag: it.tag, category });
-    });
+            if (cat === "ip_char") {
+                const ip = state.tabState.ip_char.ip;
+                const paired = ip ? `${it.tag}（${ip}）` : it.tag;
+                selectTag({ tag: paired, category: "character_ip" });
+                return;
+            }
+            selectTag({ tag: it.tag, category });
+        });
     return card;
 }
 
@@ -627,7 +647,38 @@ function switchTab(cat) {
     if (searchInputEl && (cat === "blacklist" || cat === "favorites")) searchInputEl.value = listFilter;
     renderMain();
     renderResult();
-    if (GALLERY_TABS.includes(cat) && !state.tabState[cat].items.length) doSearch(cat);
+    if (cat === "ip_char") {
+        if (!state.tabState.ip_char.ip) { flashStatus("请先在 IP 页点「查看角色」"); renderGallery(); return; }
+        if (!state.tabState.ip_char.items.length) doSearchIpCharacters();
+    } else if (GALLERY_TABS.includes(cat) && !state.tabState[cat].items.length) {
+        doSearch(cat);
+    }
+}
+
+async function doSearchIpCharacters() {
+    const ts = state.tabState.ip_char;
+    if (!ts.ip) { flashStatus("请先在 IP 页点「查看角色」"); return; }
+    ts.loading = true;
+    if (state.currentTab === "ip_char") renderGallery();
+    const seq = ++ts.seq;
+    const max = Math.max(1, parseInt(getWidget(nodeRef, "max_images", 9), 10) || 9);
+    const path = `/naiba/tag/ip_characters?ip=${encodeURIComponent(ts.ip)}&limit=${max}&page=${ts.page}&cache=${cacheOn()}&max=${cacheMax()}`;
+    try {
+        const data = await apiGetJson(path);
+        if (seq !== ts.seq) return;
+        ts.items = (data.items || []).map((it) => ({
+            id: it.id, tag: it.tag, post_count: it.post_count, category: it.category,
+            preview_url: it.preview_url, source_url: it.source_url,
+        }));
+        if (data.auth_required) flashStatus("Gelbooru 匿名无权限，请在节点填 API Key/User ID");
+    } catch (e) {
+        if (seq !== ts.seq) return;
+        ts.items = [];
+        flashStatus("IP角色搜索失败：" + (e && e.message ? e.message : e));
+    } finally {
+        ts.loading = false;
+        if (seq === ts.seq && state.currentTab === "ip_char") renderGallery();
+    }
 }
 
 function updatePager() {
@@ -636,9 +687,15 @@ function updatePager() {
     if (!GALLERY_TABS.includes(cat)) { pagerBar.innerHTML = ""; return; }
     const ts = state.tabState[cat];
     pagerBar.innerHTML = "";
-    const prev = el("button", { class: "tp-page-btn", onclick: () => { if (ts.page > 1) { ts.page--; doSearch(cat); } } }, "‹ 上一页");
+    const prev = el("button", { class: "tp-page-btn", onclick: () => {
+        if (cat === "ip_char") { if (ts.page > 1) { ts.page--; doSearchIpCharacters(); } }
+        else if (ts.page > 1) { ts.page--; doSearch(cat); }
+    } }, "‹ 上一页");
     const info = el("div", { class: "tp-page-info" }, `第 ${ts.page} 页`);
-    const next = el("button", { class: "tp-page-btn", onclick: () => { ts.page++; doSearch(cat); } }, "下一页 ›");
+    const next = el("button", { class: "tp-page-btn", onclick: () => {
+        if (cat === "ip_char") { if (hasMore) { ts.page++; doSearchIpCharacters(); } }
+        else if (hasMore) { ts.page++; doSearch(cat); }
+    } }, "下一页 ›");
     pagerBar.append(prev, info, next);
 }
 
@@ -843,6 +900,12 @@ function createTagPickerModal(node) {
     const searchInput = el("input", { class: "tp-search", type: "text", placeholder: "搜索标签（回车搜索）" });
     const searchBtn = el("button", { class: "tp-btn small", onclick: () => {
         const cat = state.currentTab;
+        if (cat === "ip_char") {
+            state.tabState.ip_char.ip = searchInput.value.trim() || state.tabState.ip_char.ip;
+            state.tabState.ip_char.page = 1;
+            doSearchIpCharacters();
+            return;
+        }
         if (GALLERY_TABS.includes(cat)) {
             state.tabState[cat].query = searchInput.value.trim(); state.tabState[cat].page = 1; doSearch(cat);
         } else if (cat === "blacklist" || cat === "favorites") {
@@ -853,6 +916,12 @@ function createTagPickerModal(node) {
     // 「默认」按钮：清空搜索词，恢复该分类的默认（热门）标签列表，免去手动搜空白的奇怪交互
     const defaultBtn = el("button", { class: "tp-btn small", title: "清空搜索，恢复默认标签列表", onclick: () => {
         const cat = state.currentTab;
+        if (cat === "ip_char") {
+            state.tabState.ip_char.page = 1;
+            searchInput.value = state.tabState.ip_char.ip || "";
+            doSearchIpCharacters();
+            return;
+        }
         if (GALLERY_TABS.includes(cat)) {
             searchInput.value = ""; state.tabState[cat].query = ""; state.tabState[cat].page = 1; doSearch(cat);
         } else if (cat === "blacklist" || cat === "favorites") {
@@ -983,6 +1052,7 @@ function injectStyle() {
 .tp-card:hover .tp-hover-btn,.tp-card:focus-within .tp-hover-btn,.tp-card:focus .tp-hover-btn{opacity:1;}
 .tp-block{right:6px;background:${COLORS.danger};color:#fff;}
 .tp-fav{right:40px;background:${COLORS.textDim};color:#1a1a2e;}
+.tp-view-char{left:6px;bottom:6px;background:${COLORS.accent};color:#fff;}
 .tp-fav.active{background:${COLORS.warning};}
 .tp-empty{color:${COLORS.textDim};font-size:13px;padding:40px 10px;text-align:center;}
 .tp-empty.small{padding:14px 6px;font-size:12px;}

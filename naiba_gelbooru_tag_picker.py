@@ -713,6 +713,120 @@ def build_preview_proxy(tag, api_key=None, user_id=None):
     b64 = base64.b64encode(data).decode("ascii")
     return f"data:{mime};base64,{b64}"
 
+# ----------------------------- IP 下角色聚合（作品角色） -----------------------------
+def _is_character_tag(tag, cache):
+    """Gelbooru 帖子标签未分类，需逐个校验 type==4(角色)。结果缓存到磁盘。"""
+    if tag in cache:
+        return cache[tag]
+    if _DISK_CACHE is not None:
+        c = _DISK_CACHE.get_json("ipchar_type|" + tag)
+        if c is not None:
+            v = bool(c.get("v"))
+            cache[tag] = v
+            return v
+    is_char = False
+    try:
+        rows = _autocomplete_search(tag, 5, 4)  # cat_id=4 => character
+        for r in (rows or []):
+            if r.get("name") == tag:
+                is_char = True
+                break
+    except Exception:
+        is_char = False
+    cache[tag] = is_char
+    if _DISK_CACHE is not None:
+        try:
+            _DISK_CACHE.set_json("ipchar_type|" + tag, {"v": is_char})
+        except Exception:
+            pass
+    return is_char
+
+
+def get_ip_characters(ip, limit=50, page=1, api_key=None, user_id=None):
+    """取某 IP 下的角色。
+
+    - 登录（api_key+user_id）：拉 dapi post 列表，聚合标签并逐个校验 type==4 取角色。
+    - 匿名：dapi post 常被限流，直接要求填写凭据（返回 auth_required）。
+    """
+    if not ip or not ip.strip():
+        return {"items": [], "total": 0, "cached": False}
+    api_key, user_id = _resolve_auth(api_key, user_id)
+    auth = bool(api_key and user_id)
+    if not auth:
+        # 匿名：dapi post 被限流(401)，无法聚合真实“IP 下角色”。
+        # 退而求其次：用公开 autocomplete 取名字含该 IP 的角色标签（近似，可能为空）。
+        try:
+            rows = _autocomplete_search(ip, max(1, min(int(limit or 50), 50)), 4)
+            if rows:
+                items = []
+                for r in rows:
+                    name = (r.get("name") or "").strip()
+                    if not name or name == ip.strip():
+                        continue
+                    items.append({
+                        "id": None,
+                        "tag": name,
+                        "post_count": r.get("post_count", 0),
+                        "category": "character",
+                        "preview_url": "",
+                        "source_url": f"{BASE}/index.php?page=post&s=list&tags={urllib.parse.quote(name)}",
+                    })
+                if items:
+                    return {"items": items[:limit], "total": len(items), "cached": False, "approximate": True}
+        except Exception:
+            pass
+        return {"items": [], "total": 0, "cached": False, "auth_required": True}
+    cache_key = f"ipchar|{ip}|{page}|{limit}|a"
+    try:
+        per_page = 30
+        pages_to_fetch = 3
+        agg = {}
+        char_type_cache = {}
+        for pg in range(1, pages_to_fetch + 1):
+            params = {
+                "page": "dapi", "s": "post", "q": "index", "json": 1,
+                "limit": per_page, "pid": pg - 1, "tags": ip,
+                "api_key": api_key, "user_id": user_id,
+            }
+            url = BASE + "/index.php?" + urllib.parse.urlencode(params)
+            raw = _fetch_url(url)
+            if not raw:
+                break
+            try:
+                rows = _extract_records(json.loads(raw.decode("utf-8")), "post")
+            except Exception:
+                break
+            if not rows:
+                break
+            for post in rows:
+                tags_str = post.get("tags") or ""
+                for t in tags_str.split(" "):
+                    t = t.strip()
+                    if not t:
+                        continue
+                    if _is_character_tag(t, char_type_cache):
+                        agg[t] = agg.get(t, 0) + 1
+        ranked = sorted(agg.items(), key=lambda kv: kv[1], reverse=True)
+        total = len(ranked)
+        start = (page - 1) * limit
+        page_items = ranked[start:start + limit]
+        items = [{
+            "id": None,
+            "tag": t,
+            "post_count": cnt,
+            "category": "character",
+            "preview_url": "",
+            "source_url": f"{BASE}/index.php?page=post&s=list&tags={urllib.parse.quote(t)}",
+        } for t, cnt in page_items]
+        result = {"items": items, "total": total, "cached": False}
+        if _DISK_CACHE is not None:
+            _DISK_CACHE.set_json(cache_key, {"items": items, "total": total})
+        return result
+    except Exception as e:
+        print(f"[naiba_gelbooru] ip_characters error: {e}")
+        return {"items": [], "total": 0, "cached": False, "auth_required": False}
+
+
 # ----------------------------- 节点 -----------------------------
 class NaibaGelbooruTagPicker:
     @classmethod
@@ -754,8 +868,8 @@ class NaibaGelbooruTagPicker:
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "IMAGE")
-    RETURN_NAMES = ("ARTIST_NAMES", "CHARACTER_NAMES", "IP_NAMES", "TAG_NAMES", "MERGED_TAGS", "RANDOM_TAGS", "PREVIEW_IMAGES")
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "IMAGE", "STRING")
+    RETURN_NAMES = ("ARTIST_NAMES", "CHARACTER_NAMES", "IP_NAMES", "TAG_NAMES", "MERGED_TAGS", "RANDOM_TAGS", "PREVIEW_IMAGES", "CHARACTER_IP_NAMES")
     OUTPUT_NODE = True
     FUNCTION = "execute"
     CATEGORY = "naiba-node"
@@ -793,6 +907,9 @@ class NaibaGelbooruTagPicker:
         character_items = [it for it in selected if _norm_cat(it.get("category")) == "character"]
         ip_items = [it for it in selected if _norm_cat(it.get("category")) == "ip"]
         tag_items = [it for it in selected if _norm_cat(it.get("category")) == "tag"]
+        # 作品角色（角色（作品）配对串）：前端在「作品角色」页选角色时生成，category="character_ip"
+        # 不进入 merged_tags / 各分类列表，仅单独输出 CHARACTER_IP_NAMES
+        character_ip_items = [it for it in selected if it.get("category") == "character_ip"]
 
         artist_names_list = [
             (("@" + t) if artist_at else t)
@@ -807,6 +924,7 @@ class NaibaGelbooruTagPicker:
         character_names = ", ".join(character_names_list)
         ip_names = ", ".join(ip_names_list)
         tag_names = ", ".join(tag_names_list)
+        character_ip_names = ", ".join(it.get("tag", "") for it in character_ip_items if it.get("tag"))
         merged_tags = ", ".join(artist_names_list + character_names_list + ip_names_list + tag_names_list)
 
         random_tags = ""
@@ -845,7 +963,7 @@ class NaibaGelbooruTagPicker:
         else:
             previews = torch.zeros((1, preview_size, preview_size, 3), dtype=torch.float32)
 
-        return (artist_names, character_names, ip_names, tag_names, merged_tags, random_tags, previews)
+        return (artist_names, character_names, ip_names, tag_names, merged_tags, random_tags, previews, character_ip_names)
 
 def _format_gacha_tags(gt, artist_at: bool) -> list:
     parts = []
@@ -1053,6 +1171,23 @@ def register_routes():
     @PromptServer.instance.routes.get("/naiba/gelbooru/hello")
     async def gelbooru_hello(request):
         return web.json_response({"ok": True})
+
+    @PromptServer.instance.routes.get("/naiba/gelbooru/ip_characters")
+    async def gelbooru_ip_characters(request):
+        """某 IP 下的角色聚合（作品角色标签页）。需登录凭据。"""
+        ip = request.query.get("ip", "")
+        try:
+            limit = int(request.query.get("limit", "50"))
+        except Exception:
+            limit = 50
+        try:
+            page = int(request.query.get("page", "1"))
+        except Exception:
+            page = 1
+        _consume_cache_params(request)
+        ak, uid = _cred_params(request)
+        res = await _run_in_exec(get_ip_characters, ip, limit, page, ak, uid)
+        return web.json_response(res)
 
 # ----------------------------- 后台预加载 -----------------------------
 _PRELOAD_TASK = None

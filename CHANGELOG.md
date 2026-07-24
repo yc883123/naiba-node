@@ -1,6 +1,30 @@
 # 更新日志
 
-## v3.3.0 (2026-07-23)
+## v3.5.0 (2026-07-24)
+
+### 新增功能
+- **「作品角色」标签页（Danbooru + Gelbooru 双站）**：
+  - 两个 Tag Picker 新增「作品角色」画廊分页，在 IP 标签页点卡片左下角 👥 按钮可查看该 IP 下的所有角色列表
+  - Danbooru：拉取 posts 聚合 `tag_string_character` 字段计数（匿名即可用，`fate_(series)` 实测返回 120 角色）
+  - Gelbooru：登录凭据用 dapi post 聚合+逐个校验 type==4；匿名用户因 dapi 全 401 无法聚合，改用公开 autocomplete 近似回退并给出明确提示
+  - 节点新增 `CHARACTER_IP_NAMES` 输出，单独输出作品角色名（不混入 `MERGED_TAGS`，方便单独调控角色权重）
+  - 后端新增 `/naiba/tag/ip_characters` 和 `/naiba/gelbooru/ip_characters` 路由，支持分页与磁盘缓存
+
+### Bug 修复
+- **「查看角色」按钮位置冲突**：👥 按钮从 IP 卡片右上角移到左下角（`left:6px;bottom:6px`），不再与 🚫黑名单 / ★收藏 按钮重叠
+- **画廊渲染静默崩溃**：修复 `state.tabState.ipChar`（驼峰）与 `GALLERY_TABS` 的 `"ip_char"`（下划线）键名不一致，导致 `renderGallery()` 取 `undefined` 抛 TypeError，整页「作品角色」无法渲染
+- **Danbooru IP 卡片缺失按钮**：补上之前 Danbooru IP 卡片缺失的「查看角色」👥 按钮（原仅 Gelbooru 有）
+- **Gelbooru IP→角色静默为空**：匿名无凭据时不直接返回空，改为匿名近似回退（autocomplete 取名称含该 IP 的角色），并前端区分 `auth_required` / `approximate` 提示
+
+### 新增节点
+- **Naiba Anima Formatter**：新增 `naiba_anima_formatter.py` 节点，已注册到 `__init__.py`
+
+### 修复 - Lora Data Preview
+- **无节点上下文崩溃**：修复 `createLoraDataPreviewModal` 中 `applyBtn` 在无 `node` 参数时引用空对象的问题
+
+---
+
+## v3.4.0 (2026-07-23)
 
 ### Bug 修复
 - **Lora Data Preview 本地+Civitai 校验崩溃**：修复 `startCivitaiVerifyFromUpload` 引用 `renderCivitaiCheckView` 内部局部变量（`gateBanner` / `verifyBtn` / `verifyProgressWrap` / `setVerifyProgress`）导致的 `ReferenceError`，改为通过参数传入

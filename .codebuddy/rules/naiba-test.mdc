@@ -24,12 +24,3 @@ provider:
 - 自动同步脚本会尊重.gitignore规则，只提交允许的文件
 - user/default/workflows/naiba-test 示例工作流.json每一次修改后自动同步到naiba-test项目中
 
-### DOM 容器节点高度自适应（易错，必须遵循）
-为节点添加 `addDOMWidget` 自定义面板（如标签选择器、扭蛋预览）时，高度计算极易踩坑，曾导致「按钮溢出黑框」与「默认打开高度约 2 倍」两类问题。必须遵守以下规范：
-
-- **禁止硬编码高度下限**：`getMinHeight()` / `computeSize()` 中不得写 `Math.max(200, …)` 这类固定下限，否则内容较少的节点会被强制撑高。应一律返回容器真实内容高度 `Math.ceil(container.scrollHeight || 0)`；仅在 `scrollHeight` 为 0（完全未布局）时才用保守保底值（如 120）。
-- **容器布局前测量会失真**：节点初次 `computeSize()` 调用时 DOM 尚未布局，`width:100%` 解析异常会导致文字/按钮换行翻倍，`scrollHeight` 被误测成约 2 倍。不要依赖首次测量值作为最终高度。
-- **ResizeObserver 必须真正重设尺寸**：监听回调与初始 `requestAnimationFrame` 里不能只调 `setDirtyCanvas` 重绘，必须调用 `node.setSize([node.size[0], node.computeSize()[1]])` 把节点高度收敛到真实内容高度（即布局稳定后再测一次）。仅重绘不重设尺寸会让节点长期停留于误测的错误高度。
-- **防抖与阈值**：`ResizeObserver` 用 `requestAnimationFrame` 节流；`setSize` 仅在 `|node.size[1] - computeSize()[1]| > 4` 时触发，避免与尺寸监听互相触发抖动形成死循环。
-- **溢出控制**：容器设 `container.style.overflow = "hidden"`，并在 `addDOMWidget` 后移除 ComfyUI 注入的 `h-full` 类、设 `height:auto`，让面板按真实内容高度展开。
-- **可参考实现**：`js/multi_lora_loader.js` 的 DOM 面板自适应写法（measure + ResizeObserver + computeSize 覆写）是正确范式，新节点请对齐该模式。
