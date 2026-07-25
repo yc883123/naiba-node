@@ -430,7 +430,8 @@ def search_cn_tags(query, limit=10):
     q = (query or "").strip()
     if not q:
         return []
-    cache_key = "cn|" + q
+    # 带算法版本号：旧 other_names 路线曾把 1girl 等错误结果缓存进 cn|，必须失效
+    cache_key = "cn_v2|" + q
     if _DISK_CACHE is not None:
         cached = _DISK_CACHE.get_json(cache_key)
         if cached is not None:
