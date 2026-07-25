@@ -15,6 +15,7 @@ const COLORS = {
     danger: "#ff6b6b",
     dangerHover: "#ff8b8b",
     success: "#2ed573",
+    warn: "#ffb347",
     text: "#e0e0e0",
     textDim: "#888",
     border: "#2a3a5c",
@@ -89,6 +90,10 @@ export function createPresetsModal(node, onImport = null) {
         currentModal.focus();
         return;
     }
+
+    // 是否绑定了节点：无节点时进入「仅管理」模式（list/delete/rename/cover 可用，
+    // save/export/导入到节点/从文件导入 给出提示并禁用）
+    const hasNode = !!node;
 
     // ========== 创建模态框容器 ==========
     const overlay = document.createElement("div");
@@ -421,6 +426,14 @@ export function createPresetsModal(node, onImport = null) {
                     item.style.borderColor = "transparent";
                 });
                 item.addEventListener("click", () => {
+                    // 若已选中，则再次点击取消选中
+                    if (item._selected) {
+                        item._selected = false;
+                        item.style.background = COLORS.listItemBg;
+                        item.style.borderColor = "transparent";
+                        selectedPreset = null;
+                        return;
+                    }
                     // 取消其他选中
                     for (const pi of presetItems) {
                         pi._selected = false;
@@ -555,6 +568,10 @@ export function createPresetsModal(node, onImport = null) {
 
     // 导入预设
     importBtn.addEventListener("click", async () => {
+        if (!hasNode) {
+            showStatus("请先在画布中放置 Lora Data Preview 节点", true);
+            return;
+        }
         if (!selectedPreset) {
             showStatus("请先选择一个预设", true);
             return;
@@ -590,18 +607,13 @@ export function createPresetsModal(node, onImport = null) {
         }
     });
 
-    // 保存预设
-    saveBtn.addEventListener("click", async () => {
-        const name = prompt("请输入预设名称:");
-        if (!name || !name.trim()) return;
-
+    // ========== 保存预设（自定义对话框：预填已选预设名 + 覆盖二次确认） ==========
+    async function doSavePreset(trimmedName) {
         const data = getCurrentData();
         if (data.length === 0) {
             showStatus("当前没有 LoRA 配置可保存", true);
-            return;
+            return false;
         }
-
-        const trimmedName = name.trim();
 
         try {
             // 若有暂存封面，先上传
@@ -628,16 +640,121 @@ export function createPresetsModal(node, onImport = null) {
 
                 if (result.error) {
                     showStatus(result.error, true);
+                    return false;
                 } else {
                     showStatus("预设保存成功");
                     await loadPresetList();
+                    return true;
                 }
             } finally {
                 hideShaProgress();
             }
         } catch (e) {
             showStatus("保存失败: " + e.message, true);
+            return false;
         }
+    }
+
+    function openSavePresetDialog() {
+        // 已有预设名（大小写不敏感比较）用于判断覆盖
+        const existingNames = presetItems.map((el) => el._name);
+
+        const dialogOverlay = document.createElement("div");
+        dialogOverlay.style.cssText = `
+            position:fixed;left:0;top:0;width:100%;height:100%;
+            background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:10000;
+        `;
+
+        const box = document.createElement("div");
+        box.style.cssText = `
+            background:${COLORS.modalBg};border:1px solid ${COLORS.border};border-radius:6px;
+            padding:16px;width:320px;box-shadow:0 4px 20px rgba(0,0,0,0.4);
+        `;
+
+        const title = document.createElement("div");
+        title.textContent = "保存预设";
+        title.style.cssText = `color:${COLORS.text};font-size:14px;font-weight:bold;margin-bottom:10px;`;
+
+        const input = document.createElement("input");
+        // 默认预填当前选中的预设名（满足「自动弹出已有的预设名」）
+        input.value = selectedPreset != null ? selectedPreset : "";
+        input.placeholder = "请输入预设名称";
+        input.style.cssText = `
+            width:100%;box-sizing:border-box;background:${COLORS.inputBg};border:1px solid ${COLORS.border};
+            color:${COLORS.text};padding:6px 8px;border-radius:3px;font-size:13px;outline:none;
+        `;
+
+        const warn = document.createElement("div");
+        warn.style.cssText = `color:${COLORS.warn};font-size:12px;margin-top:8px;display:none;`;
+
+        const btnRow = document.createElement("div");
+        btnRow.style.cssText = `display:flex;justify-content:flex-end;gap:8px;margin-top:14px;`;
+
+        const btnStyle = (primary) =>
+            `padding:6px 14px;border-radius:3px;font-size:12px;cursor:pointer;` +
+            `border:1px solid ${primary ? COLORS.accent : COLORS.border};` +
+            `background:${primary ? COLORS.accent : "transparent"};` +
+            `color:${primary ? "#fff" : COLORS.text};`;
+
+        const cancelBtn = document.createElement("button");
+        cancelBtn.textContent = "取消";
+        cancelBtn.style.cssText = btnStyle(false);
+
+        const confirmBtn = document.createElement("button");
+        confirmBtn.style.cssText = btnStyle(true);
+
+        function updateWarn() {
+            const name = input.value.trim();
+            const dup = name && existingNames.some((n) => n.toLowerCase() === name.toLowerCase());
+            if (dup) {
+                warn.textContent = `预设「${name}」已存在，将覆盖现有内容`;
+                warn.style.display = "block";
+                confirmBtn.textContent = "确认覆盖";
+            } else {
+                warn.style.display = "none";
+                confirmBtn.textContent = "保存";
+            }
+        }
+
+        const close = () => {
+            if (dialogOverlay.parentNode) dialogOverlay.parentNode.removeChild(dialogOverlay);
+        };
+
+        cancelBtn.addEventListener("click", close);
+        input.addEventListener("input", updateWarn);
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") confirmBtn.click();
+            if (e.key === "Escape") close();
+        });
+        confirmBtn.addEventListener("click", async () => {
+            const name = input.value.trim();
+            if (!name) {
+                input.focus();
+                return;
+            }
+            const ok = await doSavePreset(name);
+            if (ok) close();
+        });
+
+        box.appendChild(title);
+        box.appendChild(input);
+        box.appendChild(warn);
+        btnRow.appendChild(cancelBtn);
+        btnRow.appendChild(confirmBtn);
+        box.appendChild(btnRow);
+        dialogOverlay.appendChild(box);
+        document.body.appendChild(dialogOverlay);
+        input.focus();
+        input.select();
+        updateWarn();
+    }
+
+    saveBtn.addEventListener("click", () => {
+        if (!hasNode) {
+            showStatus("请先在画布中放置 Lora Data Preview 节点", true);
+            return;
+        }
+        openSavePresetDialog();
     });
 
     // 删除预设
@@ -682,6 +799,10 @@ export function createPresetsModal(node, onImport = null) {
 
     // 导出到本地文件（先经后端补全 sha256，再下载，避免丢失哈希）
     exportBtn.addEventListener("click", async () => {
+        if (!hasNode) {
+            showStatus("请先在画布中放置 Lora Data Preview 节点", true);
+            return;
+        }
         const data = getCurrentData();
         if (data.length === 0) {
             showStatus("当前没有 LoRA 配置可导出", true);
@@ -718,6 +839,10 @@ export function createPresetsModal(node, onImport = null) {
 
     // 从本地文件导入
     importFileBtn.addEventListener("click", () => {
+        if (!hasNode) {
+            showStatus("请先在画布中放置 Lora Data Preview 节点", true);
+            return;
+        }
         const input = document.createElement("input");
         input.type = "file";
         input.accept = ".json";

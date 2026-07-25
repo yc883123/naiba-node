@@ -1,7 +1,7 @@
 """
 List LoRA Loader 节点 - 读取visual lora loader输出的preset json，加载LoRA
 UI设计参考：LoRA Loader (List Index)
-输入：MODEL, CLIP, LoRA组合列表（纯连接端口，无文本框）
+输入：MODEL, [CLIP(可选)], LoRA组合列表（纯连接端口，无文本框）
 输出：MODEL, CLIP, LORA_NAMES（lora名字数组，供 civitai info reader / custom data reader 使用）
 """
 
@@ -22,11 +22,13 @@ class ListLoRALoader:
         return {
             "required": {
                 "model": ("MODEL", {"tooltip": "输入的扩散模型"}),
-                "clip": ("CLIP", {"tooltip": "输入的CLIP模型"}),
                 "lora_list": ("STRING", {
                     "forceInput": True,
                     "tooltip": "LoRA组合列表（连接 visual lora loader 的 preset_json 输出）"
                 }),
+            },
+            "optional": {
+                "clip": ("CLIP", {"tooltip": "输入的CLIP模型（可选，不连接则只加载模型侧的LoRA）"}),
             },
         }
 

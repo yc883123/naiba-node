@@ -5,6 +5,7 @@
 
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
+import { createPresetsModal } from "./naiba_preset_utils.js";
 
 // ========== 颜色常量 ==========
 const COLORS = {
@@ -76,6 +77,32 @@ function createLoraDataPreviewModal(node, loraList) {
     const title = document.createElement("div");
     title.textContent = "Lora Data Preview - Civitai 同步";
     title.style.cssText = `color:${COLORS.text};font-size:16px;font-weight:600;`;
+
+    // 预设管理按钮（标题与「网格」切换之间）
+    const presetBtn = document.createElement("button");
+    presetBtn.textContent = "预设管理";
+    presetBtn.title = "打开 LoRA 预设管理（列出 / 加载 / 保存 / 删除 / 重命名 / 导出 / 导入）";
+    presetBtn.style.cssText = `
+        padding:6px 12px;background:${COLORS.accent};
+        color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;
+        margin-left:14px;
+    `;
+    presetBtn.addEventListener("mouseenter", () => {
+        presetBtn.style.background = COLORS.accentHover;
+    });
+    presetBtn.addEventListener("mouseleave", () => {
+        presetBtn.style.background = COLORS.accent;
+    });
+    presetBtn.addEventListener("click", () => {
+        // 节点入口使用真实节点；工具栏入口（node=null）优先查找画布首个 LoraDataPreview 节点
+        let target = node;
+        if (!target && app.graph && app.graph._nodes) {
+            target = app.graph._nodes.find((n) => n.type === "LoraDataPreview") || null;
+        }
+        createPresetsModal(target, node ? () => {
+            if (typeof node._updateLoraDataPreview === "function") node._updateLoraDataPreview();
+        } : null);
+    });
 
     const headerRight = document.createElement("div");
     headerRight.style.cssText = "display:flex;align-items:center;gap:12px;";
@@ -184,7 +211,12 @@ function createLoraDataPreviewModal(node, loraList) {
     });
     closeBtn.addEventListener("click", () => closeModal());
 
-    header.appendChild(title);
+    // 左侧组：标题 + 预设管理按钮
+    const headerLeft = document.createElement("div");
+    headerLeft.style.cssText = "display:flex;align-items:center;";
+    headerLeft.appendChild(title);
+    headerLeft.appendChild(presetBtn);
+    header.appendChild(headerLeft);
     headerRight.appendChild(batchSyncBtn);
     headerRight.appendChild(cacheSha256Btn);
     headerRight.appendChild(cacheSha256Badge);
