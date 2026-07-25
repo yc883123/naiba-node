@@ -249,6 +249,25 @@ function createVisualLoraModal(node, loraList) {
 
     folderNav.appendChild(currentPath);
 
+    // 当前目录真实路径解析（junction/symlink -> 真实物理路径），缓存避免重复请求
+    const realPathCache = {};
+    const setCurrentPathText = (virtualPath) => {
+        currentPath.textContent = virtualPath;
+        currentPath.title = virtualPath;
+        if (Object.prototype.hasOwnProperty.call(realPathCache, virtualPath)) {
+            if (realPathCache[virtualPath]) currentPath.textContent = realPathCache[virtualPath];
+            return;
+        }
+        fetch(`/naiba/lora/realpath?path=${encodeURIComponent(virtualPath)}`)
+            .then(r => r.json())
+            .then(d => {
+                const rp = d && d.real_path;
+                realPathCache[virtualPath] = rp || null;
+                if (rp) { currentPath.textContent = rp; currentPath.title = virtualPath; }
+            })
+            .catch(() => { realPathCache[virtualPath] = null; });
+    };
+
     // 预设按钮
     const presetBtn = document.createElement("button");
     presetBtn.textContent = "预设";
@@ -536,7 +555,7 @@ function createVisualLoraModal(node, loraList) {
         } else {
             // 恢复当前文件夹视图
             filteredLoras = getLorasInFolder(currentFolder);
-            currentPath.textContent = currentFolder;
+            setCurrentPathText(currentFolder);
         }
         renderLoraList();
     });
@@ -637,7 +656,7 @@ function createVisualLoraModal(node, loraList) {
             `;
             rootItem.addEventListener("click", () => {
                 currentFolder = "/";
-                currentPath.textContent = "/";
+                setCurrentPathText("/");
                 filteredLoras = getLorasInFolder("/");
                 renderFolderTree();
                 renderLoraList();
@@ -696,7 +715,7 @@ function createVisualLoraModal(node, loraList) {
             
             folderElement.addEventListener("click", () => {
                 currentFolder = fullPath;
-                currentPath.textContent = fullPath;
+                setCurrentPathText(fullPath);
                 filteredLoras = getLorasInFolder(fullPath);
                 renderFolderTree();
                 renderLoraList();

@@ -879,6 +879,36 @@ async def get_cache_status(request):
 
 
 # ============================================================
+# API 路由：真实路径解析（junction/symlink -> 真实物理路径）
+# ============================================================
+@PromptServer.instance.routes.get('/naiba/lora/realpath')
+async def lora_realpath_handler(request):
+    """将前端虚拟路径解析为真实物理路径，用于跨盘 junction/symlink 时显示真实所在盘。"""
+    path = request.query.get('path', '')
+    try:
+        lora_dirs = folder_paths.get_folder_paths("loras")
+        if not lora_dirs:
+            return web.json_response({"real_path": None})
+        # 根目录：返回各 lora 根目录的真实路径
+        if not path or path == "/" or path == "\\":
+            roots_real = [os.path.realpath(d) for d in lora_dirs]
+            real = "; ".join(roots_real) if len(roots_real) > 1 else roots_real[0]
+            return web.json_response({"real_path": real})
+        # 安全校验：禁止路径遍历与绝对路径
+        if ".." in path or os.path.isabs(path):
+            return web.json_response({"real_path": None})
+        rel = path.lstrip("/\\").replace("/", os.sep).replace("\\", os.sep)
+        for root in lora_dirs:
+            real_root = os.path.realpath(root)
+            candidate = os.path.realpath(os.path.join(root, rel))
+            if (candidate == real_root or candidate.startswith(real_root + os.sep)) and os.path.exists(candidate):
+                return web.json_response({"real_path": candidate})
+        return web.json_response({"real_path": None})
+    except Exception:
+        return web.json_response({"real_path": None})
+
+
+# ============================================================
 # API 路由：Civitai 同步
 # ============================================================
 @PromptServer.instance.routes.get('/naiba/lora/civitai-sync')

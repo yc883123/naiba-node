@@ -387,8 +387,27 @@ function createLoraDataPreviewModal(node, loraList) {
     currentPath.style.cssText = `color:${COLORS.accent};font-weight:500;`;
     currentPath.textContent = "/";
     pathBar.appendChild(pathLabel);
-    pathBar.appendChild(currentPath);
-    modal.appendChild(pathBar);
+        pathBar.appendChild(currentPath);
+        modal.appendChild(pathBar);
+
+        // 当前目录真实路径解析（junction/symlink -> 真实物理路径），缓存避免重复请求
+        const realPathCache = {};
+        const setCurrentPathText = (virtualPath) => {
+            currentPath.textContent = virtualPath;
+            currentPath.title = virtualPath;
+            if (Object.prototype.hasOwnProperty.call(realPathCache, virtualPath)) {
+                if (realPathCache[virtualPath]) currentPath.textContent = realPathCache[virtualPath];
+                return;
+            }
+            fetch(`/naiba/lora/realpath?path=${encodeURIComponent(virtualPath)}`)
+                .then(r => r.json())
+                .then(d => {
+                    const rp = d && d.real_path;
+                    realPathCache[virtualPath] = rp || null;
+                    if (rp) { currentPath.textContent = rp; currentPath.title = virtualPath; }
+                })
+                .catch(() => { realPathCache[virtualPath] = null; });
+        };
 
     // ========== 内容区域 ==========
     const content = document.createElement("div");
@@ -521,7 +540,7 @@ function createLoraDataPreviewModal(node, loraList) {
                 loraList.push(...newList);
                 folderStructure = buildFolderStructure(loraList);
                 currentFolder = "/";
-                currentPath.textContent = "/";
+                setCurrentPathText("/");
                 statusDisplay.textContent = `共 ${loraList.length} 个LoRA文件`;
                 renderFolderTree();
                 renderLoraList();
@@ -714,7 +733,7 @@ function createLoraDataPreviewModal(node, loraList) {
         `;
         rootItem.addEventListener("click", () => {
             currentFolder = "/";
-            currentPath.textContent = "/";
+            setCurrentPathText("/");
             renderFolderTree();
             renderLoraList();
         });
@@ -744,7 +763,7 @@ function createLoraDataPreviewModal(node, loraList) {
             folderElement.appendChild(folderText);
             folderElement.addEventListener("click", () => {
                 currentFolder = fullPath;
-                currentPath.textContent = fullPath;
+                setCurrentPathText(fullPath);
                 renderFolderTree();
                 renderLoraList();
             });

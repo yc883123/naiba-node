@@ -54,10 +54,18 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+*.bak
 
 # 忽略 sha256 匹配节点的本地缓存（查询结果 + 预览图）
 .sha256_previews/
 .sha256_query_cache.json
+naiba_sha256_cache.json
+
+# 忽略 Anima 节点的用户私有数据（自定义标签、收藏、备份）
+# anima_prompts.json 是节点运行必需数据，需上传
+anima_custom_tags.json
+anima_favorites.json
+anima_prompts_backup.json
 
 # 忽略监控进程PID文件
 .watcher.pid
