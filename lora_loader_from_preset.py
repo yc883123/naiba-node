@@ -42,7 +42,7 @@ class ListLoRALoader:
     )
     SEARCH_ALIASES = ["naiba", "preset lora", "json lora", "lora from json", "lora list", "list lora", "list lora loader"]
 
-    def load_loras_from_preset(self, model, clip, lora_list):
+    def load_loras_from_preset(self, model, lora_list, clip=None):
         """
         读取JSON配置，依次应用所有启用的LoRA
 
@@ -82,6 +82,10 @@ class ListLoRALoader:
             # 获取权重
             strength_model = float(lora_config.get("strength_model", 1.0))
             strength_clip = float(lora_config.get("strength_clip", 1.0))
+
+            # 如果CLIP未传入（为None），则只加载模型侧，强制strength_clip为0
+            if clip is None:
+                strength_clip = 0
 
             # 如果权重都为0则跳过
             if strength_model == 0 and strength_clip == 0:

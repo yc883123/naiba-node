@@ -1,5 +1,12 @@
 # 更新日志
 
+## v3.8.0 (2026-07-26)
+
+### Bug 修复
+- **List LoRA Loader `clip` 真正可选化（运行时修复）**：v3.5.3 仅把 `clip` 声明进了 `optional`，但 `load_loras_from_preset(self, model, clip, lora_list)` 形参无默认值，导致未连接 CLIP 时 ComfyUI 调用缺少该参数直接报错，CLIP 实际仍非可选。现把 `clip` 移至形参末尾并加默认值 `clip=None`，未连接时正常只加载模型侧 LoRA；同时 `clip is None` 时强制 `strength_clip = 0`，行为与 Multi LoRA Loader 对齐
+
+---
+
 ## v3.5.3 (2026-07-25)
 
 ### 新增功能
