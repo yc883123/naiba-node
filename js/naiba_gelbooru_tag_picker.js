@@ -77,6 +77,62 @@ let toolbarEl = null;
 let searchInputEl = null;
 let listFilter = "";
 
+// ========== 中文候选下拉（输入中文→弹英文候选） ==========
+let cnSuggestEl = null;         // 当前下拉 DOM
+let cnSuggestSeq = 0;           // 竞态序列号，丢弃过期响应
+let cnSuggestTimer = null;      // 防抖定时器
+const CJK_RE = /[\u4e00-\u9fff\u3400-\u4dbf]/;
+
+function hideCnSuggest() {
+    if (cnSuggestEl && cnSuggestEl.parentNode) cnSuggestEl.parentNode.removeChild(cnSuggestEl);
+    cnSuggestEl = null;
+}
+
+function showCnSuggest(items, inputEl) {
+    hideCnSuggest();
+    if (!items || !items.length) return;
+    const box = el("div", { class: "tp-cn-suggest" });
+    items.forEach((it) => {
+        const name = it.tag || it.name || "";
+        if (!name) return;
+        const item = el("div", { class: "tp-cn-suggest-item", "data-tag": name },
+            el("span", { class: "tp-cn-name" }, name),
+            el("span", { class: "tp-cn-meta" }, `${String(it.category || "").toUpperCase()} · ${it.post_count || 0}`)
+        );
+        item.addEventListener("mousedown", (e) => {
+            e.preventDefault();  // 先于 input blur，避免候选先消失
+            const cat = state.currentTab;
+            inputEl.value = name;
+            state.tabState[cat].query = name;
+            state.tabState[cat].page = 1;
+            hideCnSuggest();
+            doSearch(cat);
+        });
+        box.appendChild(item);
+    });
+    if (toolbarEl) toolbarEl.appendChild(box);
+    cnSuggestEl = box;
+}
+
+function onCnInput(inputEl, path) {
+    const v = (inputEl.value || "").trim();
+    if (cnSuggestTimer) { clearTimeout(cnSuggestTimer); cnSuggestTimer = null; }
+    if (!v || !CJK_RE.test(v)) { hideCnSuggest(); return; }
+    const seq = ++cnSuggestSeq;
+    cnSuggestTimer = setTimeout(async () => {
+        try {
+            const data = await apiGetJson(`${path}?q=${encodeURIComponent(v)}&limit=10`);
+            if (seq !== cnSuggestSeq) return;
+            showCnSuggest(data.items || [], inputEl);
+        } catch (e) { /* 静默，保持搜索栏稳定 */ }
+    }, 250);
+}
+
+// 点击下拉外部时关闭（仅注册一次，JS 仅加载一次）
+document.addEventListener("mousedown", (e) => {
+    if (cnSuggestEl && !cnSuggestEl.contains(e.target)) hideCnSuggest();
+});
+
 // ========== 工具 ==========
 function el(tag, props = {}, ...children) {
     const e = document.createElement(tag);
@@ -659,6 +715,7 @@ function updateTabStyle() {
 }
 function switchTab(cat) {
     state.currentTab = cat;
+    hideCnSuggest();
     updateTabStyle();
     if (searchInputEl && (cat === "blacklist" || cat === "favorites")) searchInputEl.value = listFilter;
     renderMain();
@@ -930,6 +987,7 @@ function createTagPickerModal(node) {
         }
     } }, "搜索");
     searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") searchBtn.click(); });
+    searchInput.addEventListener("input", () => onCnInput(searchInput, "/naiba/gelbooru/cn_translate"));
     const defaultBtn = el("button", { class: "tp-btn small", title: "清空搜索，恢复默认标签列表", onclick: () => {
         const cat = state.currentTab;
         if (cat === "ip_char") {
@@ -995,6 +1053,7 @@ function createTagPickerModal(node) {
     switchTab(TABS.includes(state.currentTab) ? state.currentTab : "artist");
 }
 function closeModal() {
+    hideCnSuggest();
     if (nodeRef) { nodeRef._gbSetGacha = null; nodeRef._gbClearSelection = null; }
     if (currentModal) { currentModal.remove(); currentModal = null; }
     mainScroll = null; pagerBar = null; resultPanel = null; tabEls = {}; gachaPanelEl = null; toolbarEl = null; searchInputEl = null;
@@ -1015,9 +1074,15 @@ function injectStyle() {
 .tp-tabs{display:flex;gap:2px;padding:8px 16px 0;background:${COLORS.headerBg};flex-wrap:wrap;}
 .tp-tab{padding:7px 16px;border-radius:4px 4px 0 0;cursor:pointer;font-size:13px;color:${COLORS.textDim};transition:.15s;}
 .tp-tab:hover{color:${COLORS.text};}
-.tp-toolbar{display:flex;align-items:center;gap:8px;padding:10px 16px;background:${COLORS.headerBg};border-top:1px solid ${COLORS.border};border-bottom:1px solid ${COLORS.border};flex-wrap:wrap;}
+.tp-toolbar{display:flex;align-items:center;gap:8px;padding:10px 16px;background:${COLORS.headerBg};border-top:1px solid ${COLORS.border};border-bottom:1px solid ${COLORS.border};flex-wrap:wrap;position:relative;}
 .tp-search{flex:1;min-width:160px;padding:7px 10px;background:${COLORS.inputBg};border:1px solid ${COLORS.border};border-radius:5px;color:${COLORS.text};font-size:12px;}
 .tp-search:focus{outline:none;border-color:${COLORS.accent};}
+.tp-cn-suggest{position:absolute;top:100%;left:16px;right:16px;margin-top:4px;max-height:240px;overflow-y:auto;background:rgba(15,24,48,.97);border:1px solid ${COLORS.border};border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.5);z-index:60;backdrop-filter:blur(6px);}
+.tp-cn-suggest-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.05);}
+.tp-cn-suggest-item:last-child{border-bottom:none;}
+.tp-cn-suggest-item:hover{background:rgba(79,209,255,.14);}
+.tp-cn-name{color:${COLORS.text};font-size:12px;font-weight:500;}
+.tp-cn-meta{color:${COLORS.textDim};font-size:11px;white-space:nowrap;}
 .tp-perpage{display:flex;align-items:center;gap:6px;color:${COLORS.textDim};font-size:12px;}
 .tp-body{display:flex;flex-direction:row;flex:1;min-height:0;}
 .tp-left{display:flex;flex-direction:column;flex:1;min-width:0;}

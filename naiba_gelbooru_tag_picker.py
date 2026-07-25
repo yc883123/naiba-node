@@ -565,6 +565,29 @@ def search_tags(query, category="", limit=100, page=1, api_key=None, user_id=Non
         _DISK_CACHE.set_json(cache_key, {"items": items, "total": len(items)})
     return result
 
+# ----------------------------- 中文反查（autocomplete2 别名匹配） -----------------------------
+def search_cn_tags(query, limit=10):
+    """G站中文反查：autocomplete2 直接传中文 term，命中别名即返回英文 value。
+
+    返回 [{"tag","category","post_count"}]。仅当 query 含 CJK 时由前端调用。
+    用户实测「碧蓝」经 autocomplete2 已返回英文，故无需另建字典。
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
+    cache_key = "cn|" + q
+    if _DISK_CACHE is not None:
+        cached = _DISK_CACHE.get_json(cache_key)
+        if cached is not None:
+            return cached.get("items", [])
+    rows = _autocomplete_search(q, max(1, min(int(limit), 20)), None)
+    items = _rows_to_items(rows, "tag") if rows else []
+    # 过滤极少数未解析成英文的候选项（仍含中文），避免无意义弹出
+    items = [it for it in items if not re.search(r"[\u4e00-\u9fff\u3400-\u4dbf]", it.get("tag", ""))]
+    if _DISK_CACHE is not None:
+        _DISK_CACHE.set_json(cache_key, {"items": items})
+    return items
+
 # ----------------------------- 扭蛋取样 -----------------------------
 def get_random_tags_from_category(category, n, blacklist=None, api_key=None, user_id=None):
     """从 Gelbooru 随机页聚集候选池（最多 2 页），过滤黑名单、去重，sample(min(n, 可用))。
@@ -1040,6 +1063,22 @@ def register_routes():
         ak, uid = _cred_params(request)
         res = await _run_in_exec(search_tags, q, category, limit, page, ak, uid)
         return web.json_response(res)
+
+    @PromptServer.instance.routes.get("/naiba/gelbooru/cn_translate")
+    async def gelbooru_cn_translate(request):
+        """中文反查英文候选：仅当 query 含 CJK 时调用 search_cn_tags。"""
+        q = (request.query.get("q", "") or "").strip()
+        if not q:
+            return web.json_response({"items": []})
+        if not any('\u4e00' <= ch <= '\u9fff' or '\u3400' <= ch <= '\u4dbf' for ch in q):
+            return web.json_response({"items": []})
+        _consume_cache_params(request)
+        try:
+            limit = int(request.query.get("limit", "10"))
+        except Exception:
+            limit = 10
+        items = await _run_in_exec(search_cn_tags, q, limit)
+        return web.json_response({"items": items})
 
     @PromptServer.instance.routes.get("/naiba/gelbooru/preview")
     async def gelbooru_preview(request):

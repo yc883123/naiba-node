@@ -368,6 +368,52 @@ def search_tags(query, category="", limit=100, page=1):
     
     return result
 
+# ----------------------------- 中文反查（other_names 别名索引） -----------------------------
+def search_cn_tags(query, limit=10):
+    """D站中文反查：利用 tags 的 other_names 字段匹配中文别名，返回英文标签候选。
+
+    返回 [{"tag","category","post_count"}]。仅当 query 含 CJK 时由前端调用。
+    复刻 Danbooru 原站 autocomplete 行为：输入中文弹出对应英文标签候选。
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
+    cache_key = "cn|" + q
+    if _DISK_CACHE is not None:
+        cached = _DISK_CACHE.get_json(cache_key)
+        if cached is not None:
+            return cached.get("items", [])
+    params = {
+        "limit": max(1, min(int(limit), 20)),
+        "search[order]": "count",
+        "search[hide_empty]": "yes",
+        "search[post_count_gteq]": "1",
+        "search[other_names_match]": q + ("*" if not q.endswith("*") else ""),
+    }
+    url = BASE + "/tags.json?" + urllib.parse.urlencode(params)
+    raw = _fetch_url(url)
+    items = []
+    if raw:
+        try:
+            arr = json.loads(raw.decode("utf-8"))
+        except Exception:
+            arr = []
+        if isinstance(arr, list):
+            for it in arr:
+                tag = it.get("name")
+                if not tag:
+                    continue
+                cid = it.get("category", 0)
+                cname = CATEGORY_NAME_BY_ID.get(cid, "tag")
+                items.append({
+                    "tag": tag,
+                    "category": cname,
+                    "post_count": it.get("post_count", 0),
+                })
+    if _DISK_CACHE is not None:
+        _DISK_CACHE.set_json(cache_key, {"items": items})
+    return items
+
 # ----------------------------- 扭蛋取样（先过滤后采样，无重试死循环） -----------------------------
 def get_random_tags_from_category(category, n, blacklist=None):
     """从 Danbooru 随机页聚集候选池（最多 2 页），一次性过滤黑名单、去重，sample(min(n, 可用))。"""
@@ -733,6 +779,22 @@ def register_routes():
         _consume_cache_params(request)
         res = await _run_in_exec(search_tags, q, category, limit, page)
         return web.json_response(res)
+
+    @PromptServer.instance.routes.get("/naiba/tag/cn_translate")
+    async def tag_cn_translate(request):
+        """中文反查英文候选：仅当 query 含 CJK 时调用 search_cn_tags。"""
+        q = (request.query.get("q", "") or "").strip()
+        if not q:
+            return web.json_response({"items": []})
+        if not any('\u4e00' <= ch <= '\u9fff' or '\u3400' <= ch <= '\u4dbf' for ch in q):
+            return web.json_response({"items": []})
+        _consume_cache_params(request)
+        try:
+            limit = int(request.query.get("limit", "10"))
+        except Exception:
+            limit = 10
+        items = await _run_in_exec(search_cn_tags, q, limit)
+        return web.json_response({"items": items})
 
     @PromptServer.instance.routes.get("/naiba/tag/preview")
     async def tag_preview(request):
