@@ -915,6 +915,11 @@
       "sha256": "7c50ee822a95fe898ee68e9eb432452de1718de7887a6ccbc23d38872eee7609",
       "size": 21319240,
       "mtime": 1782023160.4877043
+    },
+    "anima/semi-realisticV3.5.safetensors": {
+      "sha256": "79b001b33e9c2fd76aeabe5d9a3e9692c8e51127801396c58f548d2c909dc9a1",
+      "size": 138777384,
+      "mtime": 1784984358.9015856
     }
   }
 }

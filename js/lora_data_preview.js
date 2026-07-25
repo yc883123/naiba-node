@@ -610,6 +610,28 @@ function createLoraDataPreviewModal(node, loraList) {
 
     // 视图/文件夹/类别状态
     let currentView = "grid";      // "grid" 或 "list"
+
+    // ===== 性能优化：分页 + 懒加载状态 =====
+    let currentPage = 0;
+    const PAGE_SIZE = 80;
+    let loraObserver = null; // IntersectionObserver 实例，仅可视区加载封面
+    const debounce = (fn, delay) => { let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); }; };
+
+    // 懒加载观察器：卡片封面进入可视区（含提前量）才真正设置 img.src
+    const ensureLoraObserver = () => {
+        if (loraObserver) return loraObserver;
+        loraObserver = new IntersectionObserver((entries, obs) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const img = entry.target;
+                    const src = img.dataset.src;
+                    if (src) img.src = src;
+                    obs.unobserve(img);
+                }
+            });
+        }, { root: mainContent, rootMargin: "300px" });
+        return loraObserver;
+    };
     let currentFolder = "/";       // 当前文件夹
     let folderStructure = buildFolderStructure(loraList);
     
@@ -733,6 +755,7 @@ function createLoraDataPreviewModal(node, loraList) {
 
     // ========== 关闭模态框 ==========
     function closeModal() {
+        if (loraObserver) { loraObserver.disconnect(); loraObserver = null; }
         document.body.removeChild(overlay);
         currentModal = null;
         document.removeEventListener("keydown", escHandler);
@@ -822,19 +845,13 @@ function createLoraDataPreviewModal(node, loraList) {
     };
     document.addEventListener("keydown", escHandler);
 
-    // ========== 搜索功能 ==========
-    searchInput.addEventListener("input", () => {
-        const searchTerm = searchInput.value.toLowerCase();
-        if (searchTerm) {
-            filteredLoras = loraList.filter(lora => 
-                lora.toLowerCase().includes(searchTerm)
-            );
-        } else {
-            filteredLoras = [...loraList];
-        }
+    // ========== 搜索功能（带防抖，避免逐字重建列表）==========
+    searchInput.addEventListener("input", debounce(() => {
+        currentScope = "all";
+        currentPage = 0; // 搜索即切换数据集，页码归零
         updateStatusDisplay();
         renderLoraList();
-    });
+    }, 200));
 
     // ========== 渲染LoRA列表 ==========
     function renderLoraList() {
@@ -862,6 +879,33 @@ function createLoraDataPreviewModal(node, loraList) {
         if (searchTerm) {
             displayLoras = displayLoras.filter(lora => lora.toLowerCase().includes(searchTerm));
         }
+
+        // ===== 分页切片（性能优化：每页只渲染 PAGE_SIZE 个）=====
+        const totalPages = Math.max(1, Math.ceil(displayLoras.length / PAGE_SIZE));
+        if (currentPage < 0) currentPage = 0;
+        if (currentPage >= totalPages) currentPage = totalPages - 1;
+        const pageLoras = displayLoras.slice(currentPage * PAGE_SIZE, currentPage * PAGE_SIZE + PAGE_SIZE);
+
+        // 分页页码条
+        const appendPageBar = () => {
+            if (totalPages <= 1) return;
+            const bar = document.createElement("div");
+            bar.style.cssText = `display:flex;align-items:center;justify-content:center;gap:8px;padding:14px;flex-wrap:wrap;color:${COLORS.textDim};font-size:12px;`;
+            const mk = (label, page, disabled) => {
+                const b = document.createElement("button");
+                b.textContent = label;
+                b.disabled = disabled;
+                b.style.cssText = `padding:4px 12px;border-radius:4px;cursor:${disabled ? 'default' : 'pointer'};border:1px solid ${COLORS.border};background:${disabled ? COLORS.inputBg : COLORS.headerBg};color:${disabled ? COLORS.textDim : COLORS.text};font-size:12px;`;
+                if (!disabled) b.addEventListener("click", () => { currentPage = page; renderLoraList(); });
+                return b;
+            };
+            bar.appendChild(mk("上一页", currentPage - 1, currentPage <= 0));
+            const info = document.createElement("span");
+            info.textContent = `第 ${currentPage + 1} / ${totalPages} 页 · 共 ${displayLoras.length} 个`;
+            bar.appendChild(info);
+            bar.appendChild(mk("下一页", currentPage + 1, currentPage >= totalPages - 1));
+            mainContent.appendChild(bar);
+        };
 
         if (displayLoras.length === 0) {
             const emptyMsg = document.createElement("div");
@@ -900,7 +944,7 @@ function createLoraDataPreviewModal(node, loraList) {
         if (currentView === "list") {
             const list = document.createElement("div");
             list.style.cssText = "display:flex;flex-direction:column;gap:4px;padding:8px;";
-            displayLoras.forEach(lora => {
+            pageLoras.forEach(lora => {
                 const isSelected = selectedLoras.has(lora);
                 const isFavorited = favoriteLoras.has(lora);
                 const item = document.createElement("div");
@@ -943,13 +987,19 @@ function createLoraDataPreviewModal(node, loraList) {
                 item.appendChild(favBtn);
                 item.appendChild(btnWrap);
                 item.addEventListener("click", () => {
-                    if (selectedLoras.has(lora)) selectedLoras.delete(lora);
-                    else selectedLoras.add(lora);
-                    renderLoraList();
+                    const nowSelected = !selectedLoras.has(lora);
+                    if (nowSelected) selectedLoras.add(lora);
+                    else selectedLoras.delete(lora);
+                    // 局部更新：只改当前项边框 + 计数
+                    item.style.border = nowSelected
+                        ? `2px solid ${COLORS.accent}`
+                        : "1px solid transparent";
+                    if (applyBtn) applyBtn.textContent = `应用选中 (${selectedLoras.size})`;
                 });
                 list.appendChild(item);
             });
             mainContent.appendChild(list);
+            appendPageBar();
             return;
         }
 
@@ -960,7 +1010,7 @@ function createLoraDataPreviewModal(node, loraList) {
             gap:12px;padding:8px;
         `;
 
-        displayLoras.forEach(lora => {
+        pageLoras.forEach(lora => {
             const isSelected = selectedLoras.has(lora);
             const isFavorited = favoriteLoras.has(lora);
             const card = document.createElement("div");
@@ -985,12 +1035,22 @@ function createLoraDataPreviewModal(node, loraList) {
 
             // 卡片点击事件 - 切换选中状态（支持多选）
             card.addEventListener("click", () => {
-                if (selectedLoras.has(lora)) {
-                    selectedLoras.delete(lora);
-                } else {
+                const nowSelected = !selectedLoras.has(lora);
+                if (nowSelected) {
                     selectedLoras.add(lora);
+                } else {
+                    selectedLoras.delete(lora);
                 }
-                renderLoraList(); // 重新渲染以更新选中状态
+                // 局部更新：只改当前卡片边框 + 计数，不再整页重建
+                if (nowSelected) {
+                    card.style.border = `1px solid ${COLORS.success}`;
+                    card.style.boxShadow = `0 0 0 2px ${COLORS.success}40`;
+                } else {
+                    const bordered = favoriteLoras.has(lora);
+                    card.style.border = `1px solid ${bordered ? COLORS.favoriteBorder : COLORS.cardBorder}`;
+                    card.style.boxShadow = bordered ? `0 0 0 2px ${COLORS.favoriteBorder}40` : '';
+                }
+                if (applyBtn) applyBtn.textContent = `应用选中 (${selectedLoras.size})`;
             });
 
             // 图片预览区域
@@ -1034,81 +1094,20 @@ function createLoraDataPreviewModal(node, loraList) {
                 width:100%;height:100%;object-fit:cover;
             `;
 
-            // 加载元数据
-            let hasLoadedMetadata = false;
-            let metadataCache = null;
-
-            previewImg.onerror = async () => {
-                if (!hasLoadedMetadata) {
-                    hasLoadedMetadata = true;
-                    preview.innerHTML = `<div style="color:${COLORS.textDim};font-size:11px;">正在加载...</div>`;
-                    // 重新添加收藏按钮
-                    preview.appendChild(favBtn);
-                    
-                    try {
-                        // 获取元数据（10秒超时）
-                        const metaController = new AbortController();
-                        const metaTimeoutId = setTimeout(() => metaController.abort(), 10000);
-                        const metadataResponse = await fetch(`/naiba/lora/metadata?name=${encodeURIComponent(lora)}`, { signal: metaController.signal });
-                        clearTimeout(metaTimeoutId);
-                        const metadataResult = await metadataResponse.json();
-                        
-                        if (metadataResult.success && metadataResult.metadata) {
-                            metadataCache = metadataResult.metadata;
-                            
-                            // 如果有预览图，显示它
-                            if (metadataResult.has_local_preview) {
-                                const previewUrl = `/naiba/lora/preview?name=${encodeURIComponent(lora)}&t=${modalTimestamp}`;
-                                previewImg.src = previewUrl;
-                                return;
-                            }
-                            
-                            // 显示元数据摘要
-                            showMetadataPreview(preview, metadataResult.metadata);
-                            preview.appendChild(favBtn);
-                        } else {
-                            preview.innerHTML = `<div style="color:${COLORS.textDim};font-size:11px;">无预览图</div>`;
-                            preview.appendChild(favBtn);
-                        }
-                    } catch (error) {
-                        if (error.name === 'AbortError') {
-                            preview.innerHTML = `<div style="color:${COLORS.textDim};font-size:11px;">加载超时</div>`;
-                        } else {
-                            console.warn("[LoraDataPreview] 加载元数据失败:", error);
-                            preview.innerHTML = `<div style="color:${COLORS.textDim};font-size:11px;">加载失败</div>`;
-                        }
-                        preview.appendChild(favBtn);
-                    }
-                } else {
-                    preview.innerHTML = `<div style="color:${COLORS.textDim};font-size:11px;">无预览图</div>`;
-                    preview.appendChild(favBtn);
-                }
+            // 封面加载失败：仅显示占位，不再自动请求元数据（性能优化）
+            previewImg.onerror = () => {
+                previewImg.style.display = 'none';
+                const ph = document.createElement("div");
+                ph.style.cssText = `color:${COLORS.textDim};font-size:11px;`;
+                ph.textContent = "无预览图";
+                preview.appendChild(ph);
             };
 
-            // 显示元数据预览
-            function showMetadataPreview(container, metadata) {
-                let html = `<div style="padding:8px;text-align:left;">`;
-                
-                if (metadata.model_name) {
-                    html += `<div style="color:${COLORS.text};font-size:12px;font-weight:500;margin-bottom:4px;">${metadata.model_name}</div>`;
-                }
-                
-                if (metadata.version_name) {
-                    html += `<div style="color:${COLORS.textDim};font-size:11px;margin-bottom:4px;">${metadata.version_name}</div>`;
-                }
-                
-                const triggerWords = metadata.trigger_words || metadata.trained_words || [];
-                if (triggerWords.length > 0) {
-                    html += `<div style="color:${COLORS.accent};font-size:10px;margin-top:4px;">触发词: ${triggerWords.slice(0, 3).join(', ')}</div>`;
-                }
-                
-                html += `</div>`;
-                container.innerHTML = html;
-            }
-
-            // 预览图：优先使用自定义预览图，Civitai预览图作为fallback
+            // 预览图：仅记录地址，进入可视区才真正加载（性能优化）
             const previewUrl = `/naiba/lora/preview?name=${encodeURIComponent(lora)}&t=${modalTimestamp}`;
-            previewImg.src = previewUrl;
+            previewImg.dataset.src = previewUrl;
+            ensureLoraObserver();
+            loraObserver.observe(previewImg);
             preview.appendChild(previewImg);
 
             // LoRA名称
@@ -1185,6 +1184,7 @@ function createLoraDataPreviewModal(node, loraList) {
         });
 
         mainContent.appendChild(grid);
+        appendPageBar();
     }
 
     // ========== Civitai校验视图 ==========
