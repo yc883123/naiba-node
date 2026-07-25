@@ -7,6 +7,7 @@ import base64
 import threading
 import hashlib
 import asyncio
+import re
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -368,12 +369,63 @@ def search_tags(query, category="", limit=100, page=1):
     
     return result
 
-# ----------------------------- 中文反查（other_names 别名索引） -----------------------------
-def search_cn_tags(query, limit=10):
-    """D站中文反查：利用 tags 的 other_names 字段匹配中文别名，返回英文标签候选。
+# ----------------------------- 中文反查（翻译 + Danbooru 英文搜索） -----------------------------
+_GTX_URL = "https://translate.googleapis.com/translate_a/single"
+_MYMEMORY_URL = "https://api.mymemory.translated.net/get"
 
-    返回 [{"tag","category","post_count"}]。仅当 query 含 CJK 时由前端调用。
-    复刻 Danbooru 原站 autocomplete 行为：输入中文弹出对应英文标签候选。
+def _translate_gtx(text):
+    """Google 免 key 翻译端点（client=gtx），中文 -> 英文。失败返回空串。"""
+    url = _GTX_URL + "?" + urllib.parse.urlencode(
+        {"client": "gtx", "q": text, "sl": "zh-CN", "tl": "en", "dt": "t"})
+    raw = _fetch_url(url, timeout=10)
+    if not raw:
+        return ""
+    try:
+        arr = json.loads(raw.decode("utf-8"))
+        return "".join(seg[0] for seg in arr[0] if seg and seg[0])
+    except Exception:
+        return ""
+
+def _translate_mymemory(text):
+    """兜底翻译源（MyMemory，无需 key）。失败返回空串。"""
+    url = _MYMEMORY_URL + "?" + urllib.parse.urlencode({"q": text, "langpair": "zh|en"})
+    raw = _fetch_url(url, timeout=10)
+    if not raw:
+        return ""
+    try:
+        obj = json.loads(raw.decode("utf-8"))
+        return (obj.get("responseData") or {}).get("translatedText", "") or ""
+    except Exception:
+        return ""
+
+def _translate_zh_en(text):
+    """中文 -> 英文：优先 Google gtx，失败兜底 MyMemory；带磁盘缓存。"""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    cache_key = "tr|" + text
+    if _DISK_CACHE is not None:
+        c = _DISK_CACHE.get_json(cache_key)
+        if c is not None:
+            return c.get("text", "")
+    translated = _translate_gtx(text) or _translate_mymemory(text)
+    if _DISK_CACHE is not None:
+        _DISK_CACHE.set_json(cache_key, {"text": translated})
+    return translated
+
+# 翻译结果中的低信息量词，避免拿去 Danbooru 搜出无关标签
+_STOPWORDS = {"the", "a", "an", "of", "and", "or", "to", "is", "are",
+              "with", "for", "in", "on", "at", "by", "from", "that", "this"}
+
+def search_cn_tags(query, limit=10):
+    """D站中文反查：先将中文翻译为英文，再用英文词去 Danbooru 做 name_matches 搜索，
+    返回英文标签候选。
+
+    注意：经实测 Danbooru tags API 的 other_names 别名索引对中文完全失效（会忽略过滤、
+    返回热门标签，如 1girl），因此改走「翻译 -> 英文搜索」路线，复刻原站「输入中文弹出
+    对应英文候选」的体验。仅当 query 含 CJK 时由前端调用。
+
+    返回 [{"tag","category","post_count"}]，且首条为翻译结果（空格转下划线，可直接搜索）。
     """
     q = (query or "").strip()
     if not q:
@@ -383,17 +435,32 @@ def search_cn_tags(query, limit=10):
         cached = _DISK_CACHE.get_json(cache_key)
         if cached is not None:
             return cached.get("items", [])
-    params = {
-        "limit": max(1, min(int(limit), 20)),
-        "search[order]": "count",
-        "search[hide_empty]": "yes",
-        "search[post_count_gteq]": "1",
-        "search[other_names_match]": q + ("*" if not q.endswith("*") else ""),
-    }
-    url = BASE + "/tags.json?" + urllib.parse.urlencode(params)
-    raw = _fetch_url(url)
+
+    # 1) 中文 -> 英文
+    en = _translate_zh_en(q).strip()
+    # 2) 拆词并过滤停用词/数字
+    words = []
+    for w in re.split(r"[\s,.;:()\[\]/]+", en.lower()):
+        w = w.strip(" .,")
+        if w and w not in _STOPWORDS and not re.fullmatch(r"\d+", w):
+            words.append(w)
+
+    # 3) 用每个英文词去 Danbooru 搜 name_matches=<词>*
     items = []
-    if raw:
+    seen = set()
+    per = max(3, min(int(limit), 10))
+    for w in words[:4]:
+        params = {
+            "limit": per,
+            "search[order]": "count",
+            "search[hide_empty]": "yes",
+            "search[post_count_gteq]": "1",
+            "search[name_matches]": w + "*",
+        }
+        url = BASE + "/tags.json?" + urllib.parse.urlencode(params)
+        raw = _fetch_url(url)
+        if not raw:
+            continue
         try:
             arr = json.loads(raw.decode("utf-8"))
         except Exception:
@@ -401,15 +468,28 @@ def search_cn_tags(query, limit=10):
         if isinstance(arr, list):
             for it in arr:
                 tag = it.get("name")
-                if not tag:
+                if not tag or tag in seen:
                     continue
+                seen.add(tag)
                 cid = it.get("category", 0)
-                cname = CATEGORY_NAME_BY_ID.get(cid, "tag")
                 items.append({
                     "tag": tag,
-                    "category": cname,
+                    "category": CATEGORY_NAME_BY_ID.get(cid, "tag"),
                     "post_count": it.get("post_count", 0),
                 })
+        if len(items) >= int(limit):
+            break
+
+    # 4) 按热度排序，取前 limit 条
+    items.sort(key=lambda x: x.get("post_count", 0), reverse=True)
+    items = items[:max(1, int(limit))]
+
+    # 5) 首条插入翻译结果（空格转下划线），便于直接点击搜索（如 blue hair -> blue_hair）
+    if en:
+        tr_tag = en.lower().replace(" ", "_").replace("-", "_").strip("_")
+        if tr_tag and tr_tag not in seen:
+            items.insert(0, {"tag": tr_tag, "category": "translation", "post_count": 0})
+
     if _DISK_CACHE is not None:
         _DISK_CACHE.set_json(cache_key, {"items": items})
     return items
