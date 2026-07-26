@@ -61,6 +61,8 @@ function showLoraFloatPreview(name) {
         wrap._img.src = `/naiba/lora/preview?name=${encodeURIComponent(name)}`;
     }
     wrap.style.display = "block";
+    // 若图片已在缓存中立即定位，避免等下一帧才出现/错位
+    if (wrap._img.complete) placeLoraFloatPreview(_lastPreviewEvent);
 }
 
 function placeLoraFloatPreview(e) {
@@ -85,6 +87,20 @@ function placeLoraFloatPreview(e) {
     wrap.style.top = y + "px";
 }
 
+// 用 requestAnimationFrame 节流高频 mousemove 定位，避免频繁强制重排导致卡顿
+let _placeRaf = null;
+function requestPlacePreview() {
+    if (_placeRaf) return;
+    _placeRaf = requestAnimationFrame(() => {
+        _placeRaf = null;
+        placeLoraFloatPreview(_lastPreviewEvent);
+    });
+}
+function movePreview(e) {
+    if (e) _lastPreviewEvent = { clientX: e.clientX, clientY: e.clientY };
+    requestPlacePreview();
+}
+
 // 悬停延迟计时器：悬停一小段时间后才显示预览，避免快速划过时闪现
 let _previewShowTimer = null;
 
@@ -98,12 +114,13 @@ function cancelScheduledPreview() {
 function scheduleLoraFloatPreview(name, e, delay = 320) {
     if (!name) return;
     cancelScheduledPreview();
-    // 记录触发时的坐标，延迟结束后按此坐标定位
-    const cx = e.clientX, cy = e.clientY;
+    // 记录触发时的坐标（mousemove 期间会被持续刷新为最新位置）
+    _lastPreviewEvent = { clientX: e.clientX, clientY: e.clientY };
     _previewShowTimer = setTimeout(() => {
         _previewShowTimer = null;
         showLoraFloatPreview(name);
-        placeLoraFloatPreview({ clientX: cx, clientY: cy });
+        // 用最新坐标（非进入时的旧 cx/cy），避免延迟期间移动后初次显示错位
+        placeLoraFloatPreview(_lastPreviewEvent);
     }, delay);
 }
 
@@ -284,7 +301,7 @@ function createFilterableSelect(options, selected, onChange, node) {
             if (fullPath !== currentValue) optEl.style.background = "rgba(108,92,231,0.15)";
             if (fullPath && node._previewEnabled) scheduleLoraFloatPreview(fullPath, e);
         });
-        optEl.addEventListener("mousemove", (e) => { if (fullPath) placeLoraFloatPreview(e); });
+        optEl.addEventListener("mousemove", (e) => { if (fullPath) movePreview(e); });
         optEl.addEventListener("mouseleave", () => {
             if (fullPath !== currentValue) optEl.style.background = "transparent";
             cancelScheduledPreview();
@@ -476,7 +493,7 @@ function createFilterableSelect(options, selected, onChange, node) {
                     }
                 });
                 optEl.addEventListener("mousemove", (e) => { 
-                    if (opt) placeLoraFloatPreview(e); 
+                    if (opt) movePreview(e); 
                 });
                 optEl.addEventListener("mouseleave", () => { 
                     if (opt !== currentValue) optEl.style.background = "transparent";
@@ -934,7 +951,7 @@ app.registerExtension({
                         scheduleLoraFloatPreview(entry.name, e);
                     }
                 });
-                nameSelect.el.addEventListener("mousemove", (e) => { placeLoraFloatPreview(e); });
+                nameSelect.el.addEventListener("mousemove", (e) => { movePreview(e); });
                 nameSelect.el.addEventListener("mouseleave", () => { hideLoraFloatPreview(); });
 
                 const mkLabel = (t) => {

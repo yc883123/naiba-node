@@ -121,11 +121,11 @@ function scheduleLoraFloatPreview(name, e, delay = 320) {
     if (!name) return;
     cancelScheduledPreview();
     _lastPreviewEvent = { clientX: e.clientX, clientY: e.clientY };
-    const cx = e.clientX, cy = e.clientY;
     _previewShowTimer = setTimeout(() => {
         _previewShowTimer = null;
         showLoraFloatPreview(name);
-        placeLoraFloatPreview({ clientX: cx, clientY: cy });
+        // 用最新坐标而非进入时的旧位置，避免延迟期间移动后初次显示错位
+        placeLoraFloatPreview(_lastPreviewEvent);
     }, delay);
 }
 
