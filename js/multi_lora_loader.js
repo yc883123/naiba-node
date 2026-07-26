@@ -282,17 +282,19 @@ function createFilterableSelect(options, selected, onChange, node) {
         return optEl;
     }
 
-    // 创建文件夹选项（悬停时向右飞出子菜单，从文件夹项中心右侧展开）
-    function makeFolderGroup(dirNode, depth) {
+    // 创建文件夹树节点：左侧目录树（点击 ▸ 展开子目录），悬停时向右飞出该目录的直接 LORA
+    function makeFolderGroup(dirNode, depth, isRoot) {
+        isRoot = !!isRoot;
         const group = document.createElement("div");
         group.style.cssText = "display:flex;flex-direction:column;";
         const header = document.createElement("div");
-        header.style.cssText = `padding:6px 8px;cursor:pointer;font-size:12px;color:${C.accent};display:flex;align-items:center;gap:4px;background:rgba(108,92,231,0.08);border-radius:4px;transition:background 0.1s;`;
+        const indent = 8 + depth * 16;
+        header.style.cssText = `padding:6px 8px 6px ${indent}px;cursor:pointer;font-size:12px;color:${C.accent};display:flex;align-items:center;gap:4px;background:rgba(108,92,231,0.08);border-radius:4px;transition:background 0.1s;`;
         const tri = document.createElement("span");
-        tri.textContent = "▸";
-        tri.style.cssText = "font-size:10px;transition:transform 0.15s;display:inline-block;";
+        tri.textContent = isRoot ? "" : "▸";
+        tri.style.cssText = "font-size:10px;transition:transform 0.15s;display:inline-block;width:10px;text-align:center;";
         const label = document.createElement("span");
-        label.textContent = dirNode.name + " /";
+        label.textContent = isRoot ? "📁 根目录" : (dirNode.name + " /");
         header.appendChild(tri);
         header.appendChild(label);
         const count = document.createElement("span");
@@ -301,7 +303,7 @@ function createFilterableSelect(options, selected, onChange, node) {
         header.appendChild(count);
         group.appendChild(header);
 
-        // 飞出子菜单面板（fixed，悬停时显示在文件夹右侧）
+        // 飞出面板：显示本目录的直接 LORA（鼠标移到目录上才展开）
         const flyout = document.createElement("div");
         flyout.style.cssText = `
             position:fixed;z-index:10003;display:none;overflow-y:auto;flex-direction:column;
@@ -318,7 +320,6 @@ function createFilterableSelect(options, selected, onChange, node) {
             if (built) return;
             built = true;
             for (const f of dirNode.files) flyout.appendChild(makeFileOption(f.fullPath, 0));
-            for (const d of dirNode.dirs.values()) flyout.appendChild(makeFolderGroup(d, 0));
         };
         const positionFlyout = () => {
             const rect = header.getBoundingClientRect();
@@ -339,7 +340,6 @@ function createFilterableSelect(options, selected, onChange, node) {
             if (!expanded) {
                 expanded = true;
                 flyout.style.display = "flex";
-                tri.style.transform = "rotate(90deg)";
                 header.style.background = "rgba(108,92,231,0.2)";
                 positionFlyout();
             }
@@ -348,7 +348,6 @@ function createFilterableSelect(options, selected, onChange, node) {
             if (expanded) {
                 expanded = false;
                 flyout.style.display = "none";
-                tri.style.transform = "rotate(0deg)";
                 header.style.background = "rgba(108,92,231,0.08)";
             }
         };
@@ -360,12 +359,37 @@ function createFilterableSelect(options, selected, onChange, node) {
         header.addEventListener("mouseleave", scheduleCollapse);
         flyout.addEventListener("mouseenter", () => { if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; } });
         flyout.addEventListener("mouseleave", scheduleCollapse);
-
-        // 记录以便主下拉关闭时一并销毁飞出菜单，避免残留
         folderFlyouts.push({
             collapse,
             destroy: () => { if (flyout.parentNode) flyout.parentNode.removeChild(flyout); }
         });
+
+        // 左侧目录树：点击 ▸ 展开/收起子目录（根目录不渲染子目录树，子目录单独成行）
+        const childrenWrap = document.createElement("div");
+        childrenWrap.style.cssText = "display:none;flex-direction:column;";
+        let treeBuilt = false;
+        let treeExpanded = false;
+        const buildTreeChildren = () => {
+            if (treeBuilt) return;
+            treeBuilt = true;
+            for (const d of dirNode.dirs.values()) childrenWrap.appendChild(makeFolderGroup(d, depth + 1, false));
+        };
+        if (!isRoot) {
+            const toggleTree = () => {
+                buildTreeChildren();
+                if (treeExpanded) {
+                    treeExpanded = false;
+                    childrenWrap.style.display = "none";
+                    tri.style.transform = "rotate(0deg)";
+                } else {
+                    treeExpanded = true;
+                    childrenWrap.style.display = "flex";
+                    tri.style.transform = "rotate(90deg)";
+                }
+            };
+            header.addEventListener("click", (e) => { e.stopPropagation(); toggleTree(); });
+        }
+        group.appendChild(childrenWrap);
 
         return group;
     }
@@ -404,9 +428,10 @@ function createFilterableSelect(options, selected, onChange, node) {
         optionsContainer.appendChild(emptyOpt);
         
         if (!lowerFilter) {
-            // 树形展示：根目录文件直接显示，子目录折叠为文件夹（悬停展开）
-            for (const f of loraTree.files) optionsContainer.appendChild(makeFileOption(f.fullPath, 0));
-            for (const d of loraTree.dirs.values()) optionsContainer.appendChild(makeFolderGroup(d, 0));
+            // 左侧目录树：根目录行 + 各子目录（点击展开子目录，悬停向右飞出该目录 LORA）
+            const rootNode = { name: "根目录", dirs: new Map(), files: loraTree.files };
+            optionsContainer.appendChild(makeFolderGroup(rootNode, 0, true));
+            for (const d of loraTree.dirs.values()) optionsContainer.appendChild(makeFolderGroup(d, 0, false));
             if (loraTree.files.length === 0 && loraTree.dirs.size === 0) {
                 const none = document.createElement("div");
                 none.textContent = "No LoRA available";
