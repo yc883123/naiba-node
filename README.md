@@ -691,6 +691,13 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 #### Bug 修复
 - **List LoRA Loader `clip` 真正可选化（运行时修复）**：v3.5.3 仅把 `clip` 声明进了 `optional`，但 `load_loras_from_preset(self, model, clip, lora_list)` 形参无默认值，导致未连接 CLIP 时 ComfyUI 调用缺少该参数直接报错，CLIP 实际仍非可选。现把 `clip` 移至形参末尾并加默认值 `clip=None`，未连接时正常只加载模型侧 LoRA；同时 `clip is None` 时强制 `strength_clip = 0`，行为与 Multi LoRA Loader 对齐
 
+- **LoRA 悬停预览图定位修复（卡顿 + 越界 + 无预览不显示）**：
+  - 预览图异步加载完成（高度确定）后按最新鼠标坐标重定位，并增加四周边界自适应（优先光标下方，空间不足翻到上方，再不足夹到顶部/左侧），修复偶发跑到屏幕最下方的问题
+  - 用 `requestAnimationFrame` 节流 `mousemove` 定位，消除高频重排导致的 UI 卡顿
+  - `img.onerror` 路径也调用定位，使「无预览图」占位框跟随鼠标显示（之前不显示或显示错位）
+  - 修复延迟显示时仍使用进入 hover 时的旧坐标、导致初次显示错位的隐藏问题
+  - 上述修复在 `multi_lora_loader.js` 与 `multi_lora_loader_only_model.js` 两个前端文件同步落地
+
 ---
 
 ### v3.5.3 (2026-07-25)
