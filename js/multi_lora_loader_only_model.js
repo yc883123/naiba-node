@@ -178,6 +178,39 @@ function createRemoveButton(onClick) {
     return btn;
 }
 
+// ========== Lora 目录树（按文件夹分级显示） ==========
+function buildLoraTree(names) {
+    const root = { dirs: new Map(), files: [] };
+    for (const name of names) {
+        if (!name) continue;
+        const parts = name.split(/[/\\]/);
+        if (parts.length === 1) {
+            root.files.push({ name: parts[0], fullPath: name, isDir: false });
+        } else {
+            let cur = root;
+            for (let i = 0; i < parts.length - 1; i++) {
+                const seg = parts[i];
+                if (!cur.dirs.has(seg)) cur.dirs.set(seg, { dirs: new Map(), files: [], name: seg });
+                cur = cur.dirs.get(seg);
+            }
+            cur.files.push({ name: parts[parts.length - 1], fullPath: name, isDir: false });
+        }
+    }
+    const sortNode = (n) => {
+        n.files.sort((a, b) => a.name.localeCompare(b.name));
+        n.dirs = new Map([...n.dirs.entries()].sort((a, b) => a[0].localeCompare(b[0])));
+        for (const d of n.dirs.values()) sortNode(d);
+    };
+    sortNode(root);
+    return root;
+}
+
+function countTreeItems(node) {
+    let c = node.files.length;
+    for (const d of node.dirs.values()) c += countTreeItems(d);
+    return c;
+}
+
 function createFilterableSelect(options, selected, onChange, node) {
     const container = document.createElement("div");
     container.style.cssText = `
@@ -187,7 +220,7 @@ function createFilterableSelect(options, selected, onChange, node) {
     // 文本输入框用于过滤
     const filterInput = document.createElement("input");
     filterInput.type = "text";
-    filterInput.placeholder = "-- Select or filter LoRA --";
+    filterInput.placeholder = "Select or filter LoRA";
     filterInput.style.cssText = `
         width:100%;background:${C.inputBg};border:1px solid ${C.inputBorder};
         border-radius:4px;color:${C.text};padding:5px 6px;font-size:12px;
@@ -215,6 +248,123 @@ function createFilterableSelect(options, selected, onChange, node) {
     
     let currentValue = selected || "";
     let isOpen = false;
+    const loraTree = buildLoraTree(options);
+    const folderFlyouts = [];
+
+    // 创建单个文件选项（可嵌套缩进）
+    function makeFileOption(fullPath, depth) {
+        const optEl = document.createElement("div");
+        const fname = fullPath.split(/[/\\]/).pop();
+        optEl.textContent = fname;
+        const indent = 8 + depth * 14;
+        optEl.title = fullPath;
+        optEl.style.cssText = `padding:6px 8px 6px ${indent}px;cursor:pointer;font-size:12px;color:${C.text};transition:background 0.1s;${fullPath === currentValue ? `background:rgba(108,92,231,0.2);` : ""}`;
+        optEl.addEventListener("mouseenter", (e) => {
+            if (fullPath !== currentValue) optEl.style.background = "rgba(108,92,231,0.15)";
+            if (fullPath && node._previewEnabled) scheduleLoraFloatPreview(fullPath, e);
+        });
+        optEl.addEventListener("mousemove", (e) => { if (fullPath) placeLoraFloatPreview(e); });
+        optEl.addEventListener("mouseleave", () => {
+            if (fullPath !== currentValue) optEl.style.background = "transparent";
+            cancelScheduledPreview();
+            hideLoraFloatPreview();
+        });
+        optEl.addEventListener("click", () => {
+            currentValue = fullPath;
+            updateDisplay();
+            onChange(fullPath);
+            closeDropdown();
+        });
+        return optEl;
+    }
+
+    // 创建文件夹选项（悬停时向右飞出子菜单，从文件夹项中心右侧展开）
+    function makeFolderGroup(dirNode, depth) {
+        const group = document.createElement("div");
+        group.style.cssText = "display:flex;flex-direction:column;";
+        const header = document.createElement("div");
+        header.style.cssText = `padding:6px 8px;cursor:pointer;font-size:12px;color:${C.accent};display:flex;align-items:center;gap:4px;background:rgba(108,92,231,0.08);border-radius:4px;transition:background 0.1s;`;
+        const tri = document.createElement("span");
+        tri.textContent = "▸";
+        tri.style.cssText = "font-size:10px;transition:transform 0.15s;display:inline-block;";
+        const label = document.createElement("span");
+        label.textContent = dirNode.name + " /";
+        header.appendChild(tri);
+        header.appendChild(label);
+        const count = document.createElement("span");
+        count.textContent = `(${countTreeItems(dirNode)})`;
+        count.style.cssText = `color:${C.textDim};font-size:10px;margin-left:auto;`;
+        header.appendChild(count);
+        group.appendChild(header);
+
+        // 飞出子菜单面板（fixed，悬停时显示在文件夹右侧）
+        const flyout = document.createElement("div");
+        flyout.style.cssText = `
+            position:fixed;z-index:10003;display:none;overflow-y:auto;flex-direction:column;
+            background:${C.inputBg};border:1px solid ${C.inputBorder};
+            box-shadow:0 8px 30px rgba(0,0,0,0.5);border-radius:6px;
+            box-sizing:border-box;padding:4px;min-width:260px;
+        `;
+        document.body.appendChild(flyout);
+
+        let built = false;
+        let expanded = false;
+        let closeTimer = null;
+        const buildChildren = () => {
+            if (built) return;
+            built = true;
+            for (const f of dirNode.files) flyout.appendChild(makeFileOption(f.fullPath, 0));
+            for (const d of dirNode.dirs.values()) flyout.appendChild(makeFolderGroup(d, 0));
+        };
+        const positionFlyout = () => {
+            const rect = header.getBoundingClientRect();
+            const w = 300;
+            let left = rect.right + 4;
+            if (left + w > window.innerWidth - 4) left = Math.max(4, rect.left - w - 4);
+            flyout.style.width = w + "px";
+            flyout.style.maxHeight = (window.innerHeight - 10) + "px";
+            const h = flyout.offsetHeight;
+            let top = rect.top + rect.height / 2 - h / 2;
+            top = Math.max(4, Math.min(top, window.innerHeight - h - 4));
+            flyout.style.left = left + "px";
+            flyout.style.top = top + "px";
+        };
+        const expand = () => {
+            if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+            buildChildren();
+            if (!expanded) {
+                expanded = true;
+                flyout.style.display = "flex";
+                tri.style.transform = "rotate(90deg)";
+                header.style.background = "rgba(108,92,231,0.2)";
+                positionFlyout();
+            }
+        };
+        const collapse = () => {
+            if (expanded) {
+                expanded = false;
+                flyout.style.display = "none";
+                tri.style.transform = "rotate(0deg)";
+                header.style.background = "rgba(108,92,231,0.08)";
+            }
+        };
+        const scheduleCollapse = () => {
+            if (closeTimer) clearTimeout(closeTimer);
+            closeTimer = setTimeout(collapse, 180);
+        };
+        header.addEventListener("mouseenter", expand);
+        header.addEventListener("mouseleave", scheduleCollapse);
+        flyout.addEventListener("mouseenter", () => { if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; } });
+        flyout.addEventListener("mouseleave", scheduleCollapse);
+
+        // 记录以便主下拉关闭时一并销毁飞出菜单，避免残留
+        folderFlyouts.push({
+            collapse,
+            destroy: () => { if (flyout.parentNode) flyout.parentNode.removeChild(flyout); }
+        });
+
+        return group;
+    }
     
     // 更新显示文本
     const updateDisplay = () => {
@@ -223,7 +373,7 @@ function createFilterableSelect(options, selected, onChange, node) {
             filterInput.style.color = C.text;
         } else {
             filterInput.value = "";
-            filterInput.style.color = C.textDim;
+            filterInput.style.color = C.accent;
         }
     };
     
@@ -249,51 +399,61 @@ function createFilterableSelect(options, selected, onChange, node) {
         });
         optionsContainer.appendChild(emptyOpt);
         
-        // 添加过滤后的选项
-        const filteredOptions = options.filter(opt => 
-            opt.toLowerCase().includes(lowerFilter)
-        );
-        
-        for (const opt of filteredOptions) {
-            const optEl = document.createElement("div");
-            optEl.textContent = opt;
-            optEl.style.cssText = `
-                padding:6px 8px;cursor:pointer;font-size:12px;
-                color:${C.text};transition:background 0.1s;
-                ${opt === currentValue ? `background:rgba(108,92,231,0.2);` : ""}
-            `;
-            optEl.addEventListener("mouseenter", (e) => { 
-                if (opt !== currentValue) optEl.style.background = "rgba(108,92,231,0.15)";
-                if (opt && node._previewEnabled) {
-                    scheduleLoraFloatPreview(opt, e);
-                }
-            });
-            optEl.addEventListener("mousemove", (e) => { 
-                if (opt) placeLoraFloatPreview(e); 
-            });
-            optEl.addEventListener("mouseleave", () => { 
-                if (opt !== currentValue) optEl.style.background = "transparent";
-                cancelScheduledPreview();
-                hideLoraFloatPreview();
-            });
-            optEl.addEventListener("click", () => {
-                currentValue = opt;
-                updateDisplay();
-                onChange(opt);
-                closeDropdown();
-            });
-            optionsContainer.appendChild(optEl);
-        }
-        
-        // 如果没有匹配项，显示提示
-        if (filteredOptions.length === 0 && filterText) {
-            const noMatch = document.createElement("div");
-            noMatch.textContent = "No matching LoRA found";
-            noMatch.style.cssText = `
-                padding:6px 8px;font-size:12px;color:${C.textDim};
-                font-style:italic;
-            `;
-            optionsContainer.appendChild(noMatch);
+        if (!lowerFilter) {
+            // 树形展示：根目录文件直接显示，子目录折叠为文件夹（悬停展开）
+            for (const f of loraTree.files) optionsContainer.appendChild(makeFileOption(f.fullPath, 0));
+            for (const d of loraTree.dirs.values()) optionsContainer.appendChild(makeFolderGroup(d, 0));
+            if (loraTree.files.length === 0 && loraTree.dirs.size === 0) {
+                const none = document.createElement("div");
+                none.textContent = "No LoRA available";
+                none.style.cssText = "padding:6px 8px;font-size:12px;color:${C.textDim};font-style:italic;";
+                optionsContainer.appendChild(none);
+            }
+        } else {
+            // 过滤模式：扁平显示匹配项（带完整相对路径，便于区分同名文件）
+            const filteredOptions = options.filter(opt =>
+                opt.toLowerCase().includes(lowerFilter)
+            );
+            for (const opt of filteredOptions) {
+                const optEl = document.createElement("div");
+                optEl.textContent = opt;
+                optEl.title = opt;
+                optEl.style.cssText = `
+                    padding:6px 8px;cursor:pointer;font-size:12px;
+                    color:${C.text};transition:background 0.1s;
+                    ${opt === currentValue ? `background:rgba(108,92,231,0.2);` : ""}
+                `;
+                optEl.addEventListener("mouseenter", (e) => { 
+                    if (opt !== currentValue) optEl.style.background = "rgba(108,92,231,0.15)";
+                    if (opt && node._previewEnabled) {
+                        scheduleLoraFloatPreview(opt, e);
+                    }
+                });
+                optEl.addEventListener("mousemove", (e) => { 
+                    if (opt) placeLoraFloatPreview(e); 
+                });
+                optEl.addEventListener("mouseleave", () => { 
+                    if (opt !== currentValue) optEl.style.background = "transparent";
+                    cancelScheduledPreview();
+                    hideLoraFloatPreview();
+                });
+                optEl.addEventListener("click", () => {
+                    currentValue = opt;
+                    updateDisplay();
+                    onChange(opt);
+                    closeDropdown();
+                });
+                optionsContainer.appendChild(optEl);
+            }
+            if (filteredOptions.length === 0) {
+                const noMatch = document.createElement("div");
+                noMatch.textContent = "No matching LoRA found";
+                noMatch.style.cssText = `
+                    padding:6px 8px;font-size:12px;color:${C.textDim};
+                    font-style:italic;
+                `;
+                optionsContainer.appendChild(noMatch);
+            }
         }
         
         // 如果有选中项但不在列表中（缺失的LoRA）
@@ -357,6 +517,9 @@ function createFilterableSelect(options, selected, onChange, node) {
         isOpen = false;
         dropdown.style.display = "none";
         hideLoraFloatPreview(); // 避免浮层残留
+        // 销毁所有飞出子菜单，避免残留
+        for (const f of folderFlyouts) { f.collapse(); f.destroy(); }
+        folderFlyouts.length = 0;
         updateDisplay(); // 恢复显示当前值
     };
     
