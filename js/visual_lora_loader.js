@@ -1455,6 +1455,29 @@ app.registerExtension({
 
             buttonRow.appendChild(previewContainer);
 
+            // 创建预设按钮（调取预设）
+            const presetBtn = document.createElement("button");
+            presetBtn.textContent = "预设";
+            presetBtn.title = "调取预设";
+            presetBtn.style.cssText = `
+                padding:10px 16px;margin:8px 0;
+                background:${COLORS.accent};color:white;
+                border:none;border-radius:6px;cursor:pointer;
+                font-size:13px;font-weight:500;
+                transition:background 0.2s;
+            `;
+            presetBtn.addEventListener("mouseenter", () => {
+                presetBtn.style.background = COLORS.accentHover;
+            });
+            presetBtn.addEventListener("mouseleave", () => {
+                presetBtn.style.background = COLORS.accent;
+            });
+            presetBtn.addEventListener("click", () => {
+                createPresetsModal(node);
+            });
+
+            buttonRow.appendChild(presetBtn);
+
             buttonRow.appendChild(clearBtn);
 
             // 创建显示区域，显示已选择的LoRA信息
