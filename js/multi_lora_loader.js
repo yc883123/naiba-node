@@ -23,6 +23,7 @@ const C = {
 // ========== 模块级单例浮动预览（卡片与下拉选项共用） ==========
 // 仅创建一次 DOM 浮层，悬停切换时只改 img.src（浏览器按 URL 缓存），避免重复建DOM与多浮层叠加
 let _loraFloatPreview = null;
+let _lastPreviewEvent = { clientX: 0, clientY: 0 };
 function getPreviewEl() {
     if (!_loraFloatPreview) {
         const wrap = document.createElement("div");
@@ -39,8 +40,12 @@ function getPreviewEl() {
         ph.style.cssText = `display:none;padding:12px;color:${C.textDim};font-size:11px;text-align:center;`;
         wrap.appendChild(img);
         wrap.appendChild(ph);
-        img.onerror = () => { img.style.display = "none"; ph.style.display = "block"; };
-        img.onload = () => { img.style.display = "block"; ph.style.display = "none"; };
+        img.onerror = () => { img.style.display = "none"; ph.style.display = "block"; placeLoraFloatPreview(_lastPreviewEvent); };
+        img.onload = () => {
+            img.style.display = "block"; ph.style.display = "none";
+            // 图片加载完成后高度才确定，需用最后鼠标位置重新定位，避免被顶到屏幕外
+            placeLoraFloatPreview(_lastPreviewEvent);
+        };
         wrap._img = img;
         document.body.appendChild(wrap);
         _loraFloatPreview = wrap;
@@ -61,9 +66,21 @@ function showLoraFloatPreview(name) {
 function placeLoraFloatPreview(e) {
     const wrap = _loraFloatPreview;
     if (!wrap || wrap.style.display === "none") return;
+    if (e) _lastPreviewEvent = { clientX: e.clientX, clientY: e.clientY };
+    const px = _lastPreviewEvent.clientX;
+    const py = _lastPreviewEvent.clientY;
     const rect = wrap.getBoundingClientRect();
-    const x = Math.min(e.clientX + 16, window.innerWidth - rect.width - 8);
-    const y = Math.min(e.clientY + 16, window.innerHeight - rect.height - 8);
+    const w = rect.width || 160;
+    const h = rect.height || 0;
+    // 水平：优先右侧，空间不足翻左侧
+    let x = px + 16;
+    if (x + w > window.innerWidth - 8) x = px - w - 16;
+    x = Math.max(4, Math.min(x, window.innerWidth - w - 8));
+    // 垂直：优先下方，空间不足翻上方，再不足夹到顶部（避免被顶到屏幕最下方被裁切）
+    let y = py + 16;
+    if (y + h > window.innerHeight - 8) y = py - h - 16;
+    if (y < 4) y = 4;
+    if (y + h > window.innerHeight - 8) y = Math.max(4, window.innerHeight - h - 8);
     wrap.style.left = x + "px";
     wrap.style.top = y + "px";
 }

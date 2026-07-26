@@ -23,6 +23,7 @@ const C = {
 
 // ========== 模块级单例浮动预览（卡片与下拉选项共用） ==========
 let _loraFloatPreview = null;
+let _lastPreviewEvent = { clientX: 0, clientY: 0 };
 function getPreviewEl() {
     if (!_loraFloatPreview) {
         const wrap = document.createElement("div");
@@ -39,8 +40,12 @@ function getPreviewEl() {
         ph.style.cssText = `display:none;padding:12px;color:${C.textDim};font-size:11px;text-align:center;`;
         wrap.appendChild(img);
         wrap.appendChild(ph);
-        img.onerror = () => { img.style.display = "none"; ph.style.display = "block"; };
-        img.onload = () => { img.style.display = "block"; ph.style.display = "none"; };
+        img.onerror = () => { img.style.display = "none"; ph.style.display = "block"; placeLoraFloatPreview(_lastPreviewEvent); };
+        img.onload = () => {
+            img.style.display = "block"; ph.style.display = "none";
+            // 图片加载完成后高度才确定，需用最后鼠标位置重新定位，避免被顶到屏幕外
+            placeLoraFloatPreview(_lastPreviewEvent);
+        };
         wrap._img = img;
         document.body.appendChild(wrap);
         _loraFloatPreview = wrap;
@@ -56,16 +61,44 @@ function showLoraFloatPreview(name) {
         wrap._img.src = `/naiba/lora/preview?name=${encodeURIComponent(name)}`;
     }
     wrap.style.display = "block";
+    // 若图片已在缓存中立即定位，避免等下一帧才出现/错位
+    if (wrap._img.complete) placeLoraFloatPreview(_lastPreviewEvent);
 }
 
 function placeLoraFloatPreview(e) {
     const wrap = _loraFloatPreview;
     if (!wrap || wrap.style.display === "none") return;
+    if (e) _lastPreviewEvent = { clientX: e.clientX, clientY: e.clientY };
+    const px = _lastPreviewEvent.clientX;
+    const py = _lastPreviewEvent.clientY;
     const rect = wrap.getBoundingClientRect();
-    const x = Math.min(e.clientX + 16, window.innerWidth - rect.width - 8);
-    const y = Math.min(e.clientY + 16, window.innerHeight - rect.height - 8);
+    const w = rect.width || 160;
+    const h = rect.height || 0;
+    // 水平：优先右侧，空间不足翻左侧
+    let x = px + 16;
+    if (x + w > window.innerWidth - 8) x = px - w - 16;
+    x = Math.max(4, Math.min(x, window.innerWidth - w - 8));
+    // 垂直：优先下方，空间不足翻上方，再不足夹到顶部（避免被顶到屏幕最下方被裁切）
+    let y = py + 16;
+    if (y + h > window.innerHeight - 8) y = py - h - 16;
+    if (y < 4) y = 4;
+    if (y + h > window.innerHeight - 8) y = Math.max(4, window.innerHeight - h - 8);
     wrap.style.left = x + "px";
     wrap.style.top = y + "px";
+}
+
+// 用 requestAnimationFrame 节流高频 mousemove 定位，避免频繁强制重排导致卡顿
+let _placeRaf = null;
+function requestPlacePreview() {
+    if (_placeRaf) return;
+    _placeRaf = requestAnimationFrame(() => {
+        _placeRaf = null;
+        placeLoraFloatPreview(_lastPreviewEvent);
+    });
+}
+function movePreview(e) {
+    if (e) _lastPreviewEvent = { clientX: e.clientX, clientY: e.clientY };
+    requestPlacePreview();
 }
 
 function hideLoraFloatPreview() {
@@ -87,6 +120,7 @@ function cancelScheduledPreview() {
 function scheduleLoraFloatPreview(name, e, delay = 320) {
     if (!name) return;
     cancelScheduledPreview();
+    _lastPreviewEvent = { clientX: e.clientX, clientY: e.clientY };
     const cx = e.clientX, cy = e.clientY;
     _previewShowTimer = setTimeout(() => {
         _previewShowTimer = null;
@@ -263,7 +297,7 @@ function createFilterableSelect(options, selected, onChange, node) {
             if (fullPath !== currentValue) optEl.style.background = "rgba(108,92,231,0.15)";
             if (fullPath && node._previewEnabled) scheduleLoraFloatPreview(fullPath, e);
         });
-        optEl.addEventListener("mousemove", (e) => { if (fullPath) placeLoraFloatPreview(e); });
+        optEl.addEventListener("mousemove", (e) => { if (fullPath) movePreview(e); });
         optEl.addEventListener("mouseleave", () => {
             if (fullPath !== currentValue) optEl.style.background = "transparent";
             cancelScheduledPreview();
@@ -455,7 +489,7 @@ function createFilterableSelect(options, selected, onChange, node) {
                     }
                 });
                 optEl.addEventListener("mousemove", (e) => { 
-                    if (opt) placeLoraFloatPreview(e); 
+                    if (opt) movePreview(e); 
                 });
                 optEl.addEventListener("mouseleave", () => { 
                     if (opt !== currentValue) optEl.style.background = "transparent";
@@ -911,7 +945,7 @@ app.registerExtension({
                         scheduleLoraFloatPreview(entry.name, e);
                     }
                 });
-                nameSelect.el.addEventListener("mousemove", (e) => { placeLoraFloatPreview(e); });
+                nameSelect.el.addEventListener("mousemove", (e) => { movePreview(e); });
                 nameSelect.el.addEventListener("mouseleave", () => {
                     cancelScheduledPreview();
                     hideLoraFloatPreview();
