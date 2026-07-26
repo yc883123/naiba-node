@@ -28,7 +28,7 @@ function getPreviewEl() {
     if (!_loraFloatPreview) {
         const wrap = document.createElement("div");
         wrap.style.cssText = `
-            position:fixed;z-index:10002;pointer-events:none;display:none;
+            position:fixed;z-index:10004;pointer-events:none;display:none;
             width:160px;border-radius:6px;overflow:hidden;
             background:rgba(15,23,41,0.95);border:1px solid ${C.accent};
             box-shadow:0 6px 24px rgba(0,0,0,0.6);
