@@ -288,6 +288,58 @@ function createFilterableSelect(options, selected, onChange, node) {
     let isOpen = false;
     const loraTree = buildLoraTree(options);
     const folderFlyouts = [];
+    const FOLDER_HOVER_DELAY = 160;
+    let activeFolderFlyout = null;
+
+    // 快速划过搜索结果时不立即高亮，并按帧合并最终状态，避免多行拖影。
+    const HOVER_INTENT_DELAY = 50;
+    let activeHoverOption = null;
+    let candidateHoverOption = null;
+    let pendingHighlightOption = null;
+    let hoverIntentTimer = null;
+    let hoverRaf = null;
+    const commitOptionHighlight = (optionEl) => {
+        pendingHighlightOption = optionEl;
+        if (hoverRaf !== null) return;
+        hoverRaf = requestAnimationFrame(() => {
+            hoverRaf = null;
+            if (activeHoverOption && activeHoverOption !== pendingHighlightOption) {
+                activeHoverOption.style.background = "transparent";
+            }
+            activeHoverOption = pendingHighlightOption;
+            if (activeHoverOption) {
+                activeHoverOption.style.background = "rgba(108,92,231,0.15)";
+            }
+        });
+    };
+    const requestOptionHighlight = (optionEl) => {
+        candidateHoverOption = optionEl;
+        if (hoverIntentTimer !== null) clearTimeout(hoverIntentTimer);
+        hoverIntentTimer = setTimeout(() => {
+            hoverIntentTimer = null;
+            if (candidateHoverOption === optionEl) commitOptionHighlight(optionEl);
+        }, HOVER_INTENT_DELAY);
+    };
+    const clearOptionHighlight = (optionEl = null) => {
+        if (!optionEl || candidateHoverOption === optionEl) {
+            candidateHoverOption = null;
+            if (hoverIntentTimer !== null) clearTimeout(hoverIntentTimer);
+            hoverIntentTimer = null;
+        }
+        if (!optionEl || activeHoverOption === optionEl || pendingHighlightOption === optionEl) {
+            commitOptionHighlight(null);
+        }
+    };
+    const resetOptionHighlight = () => {
+        if (hoverIntentTimer !== null) clearTimeout(hoverIntentTimer);
+        hoverIntentTimer = null;
+        if (hoverRaf !== null) cancelAnimationFrame(hoverRaf);
+        hoverRaf = null;
+        if (activeHoverOption) activeHoverOption.style.background = "transparent";
+        activeHoverOption = null;
+        candidateHoverOption = null;
+        pendingHighlightOption = null;
+    };
 
     // 创建单个文件选项（可嵌套缩进）
     function makeFileOption(fullPath, depth) {
@@ -296,14 +348,14 @@ function createFilterableSelect(options, selected, onChange, node) {
         optEl.textContent = fname;
         const indent = 8 + depth * 14;
         optEl.title = fullPath;
-        optEl.style.cssText = `padding:6px 8px 6px ${indent}px;cursor:pointer;font-size:12px;color:${C.text};transition:background 0.1s;${fullPath === currentValue ? `background:rgba(108,92,231,0.2);` : ""}`;
+        optEl.style.cssText = `padding:6px 8px 6px ${indent}px;cursor:pointer;font-size:12px;color:${C.text};${fullPath === currentValue ? `background:rgba(108,92,231,0.2);` : ""}`;
         optEl.addEventListener("mouseenter", (e) => {
-            if (fullPath !== currentValue) optEl.style.background = "rgba(108,92,231,0.15)";
+            if (fullPath !== currentValue) requestOptionHighlight(optEl);
             if (fullPath && node._previewEnabled) scheduleLoraFloatPreview(fullPath, e);
         });
         optEl.addEventListener("mousemove", (e) => { if (fullPath) movePreview(e); });
         optEl.addEventListener("mouseleave", () => {
-            if (fullPath !== currentValue) optEl.style.background = "transparent";
+            if (fullPath !== currentValue) clearOptionHighlight(optEl);
             cancelScheduledPreview();
             hideLoraFloatPreview();
         });
@@ -323,7 +375,7 @@ function createFilterableSelect(options, selected, onChange, node) {
         group.style.cssText = "display:flex;flex-direction:column;";
         const header = document.createElement("div");
         const indent = 8 + depth * 16;
-        header.style.cssText = `padding:6px 8px 6px ${indent}px;cursor:pointer;font-size:12px;color:${C.accent};display:flex;align-items:center;gap:4px;background:rgba(108,92,231,0.08);border-radius:4px;transition:background 0.1s;`;
+        header.style.cssText = `padding:6px 8px 6px ${indent}px;cursor:pointer;font-size:12px;color:${C.accent};display:flex;align-items:center;gap:4px;background:rgba(108,92,231,0.08);border-radius:4px;`;
         const tri = document.createElement("span");
         tri.textContent = isRoot ? "" : "▸";
         tri.style.cssText = "font-size:10px;transition:transform 0.15s;display:inline-block;width:10px;text-align:center;";
@@ -349,7 +401,9 @@ function createFilterableSelect(options, selected, onChange, node) {
 
         let built = false;
         let expanded = false;
+        let openTimer = null;
         let closeTimer = null;
+        let flyoutController = null;
         const buildChildren = () => {
             if (built) return;
             built = true;
@@ -369,7 +423,11 @@ function createFilterableSelect(options, selected, onChange, node) {
             flyout.style.top = top + "px";
         };
         const expand = () => {
+            if (openTimer) { clearTimeout(openTimer); openTimer = null; }
             if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+            if (activeFolderFlyout && activeFolderFlyout !== flyoutController) {
+                activeFolderFlyout.collapse();
+            }
             buildChildren();
             if (!expanded) {
                 expanded = true;
@@ -377,26 +435,41 @@ function createFilterableSelect(options, selected, onChange, node) {
                 header.style.background = "rgba(108,92,231,0.2)";
                 positionFlyout();
             }
+            activeFolderFlyout = flyoutController;
         };
         const collapse = () => {
+            if (openTimer) { clearTimeout(openTimer); openTimer = null; }
+            if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
             if (expanded) {
                 expanded = false;
                 flyout.style.display = "none";
                 header.style.background = "rgba(108,92,231,0.08)";
             }
+            if (activeFolderFlyout === flyoutController) activeFolderFlyout = null;
+        };
+        const scheduleExpand = () => {
+            if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+            if (expanded || openTimer) return;
+            openTimer = setTimeout(expand, FOLDER_HOVER_DELAY);
         };
         const scheduleCollapse = () => {
+            if (openTimer) { clearTimeout(openTimer); openTimer = null; }
+            if (!expanded) return;
             if (closeTimer) clearTimeout(closeTimer);
             closeTimer = setTimeout(collapse, 180);
         };
-        header.addEventListener("mouseenter", expand);
+        header.addEventListener("mouseenter", scheduleExpand);
         header.addEventListener("mouseleave", scheduleCollapse);
         flyout.addEventListener("mouseenter", () => { if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; } });
         flyout.addEventListener("mouseleave", scheduleCollapse);
-        folderFlyouts.push({
+        flyoutController = {
             collapse,
-            destroy: () => { if (flyout.parentNode) flyout.parentNode.removeChild(flyout); }
-        });
+            destroy: () => {
+                collapse();
+                if (flyout.parentNode) flyout.parentNode.removeChild(flyout);
+            }
+        };
+        folderFlyouts.push(flyoutController);
 
         // 左侧目录树：点击 ▸ 展开/收起子目录（根目录不渲染子目录树，子目录单独成行）
         const childrenWrap = document.createElement("div");
@@ -427,6 +500,12 @@ function createFilterableSelect(options, selected, onChange, node) {
 
         return group;
     }
+
+    const destroyFolderFlyouts = () => {
+        for (const flyout of folderFlyouts) flyout.destroy();
+        folderFlyouts.length = 0;
+        activeFolderFlyout = null;
+    };
     
     // 更新显示文本
     const updateDisplay = () => {
@@ -441,6 +520,8 @@ function createFilterableSelect(options, selected, onChange, node) {
     
     // 过滤并显示选项
     const filterOptions = (filterText) => {
+        resetOptionHighlight();
+        destroyFolderFlyouts();
         optionsContainer.innerHTML = "";
         const lowerFilter = filterText.toLowerCase();
         
@@ -483,11 +564,11 @@ function createFilterableSelect(options, selected, onChange, node) {
                 optEl.title = opt;
                 optEl.style.cssText = `
                     padding:6px 8px;cursor:pointer;font-size:12px;
-                    color:${C.text};transition:background 0.1s;
+                    color:${C.text};
                     ${opt === currentValue ? `background:rgba(108,92,231,0.2);` : ""}
                 `;
                 optEl.addEventListener("mouseenter", (e) => { 
-                    if (opt !== currentValue) optEl.style.background = "rgba(108,92,231,0.15)";
+                    if (opt !== currentValue) requestOptionHighlight(optEl);
                     if (opt && node._previewEnabled) {
                         scheduleLoraFloatPreview(opt, e);
                     }
@@ -496,7 +577,7 @@ function createFilterableSelect(options, selected, onChange, node) {
                     if (opt) movePreview(e); 
                 });
                 optEl.addEventListener("mouseleave", () => { 
-                    if (opt !== currentValue) optEl.style.background = "transparent";
+                    if (opt !== currentValue) clearOptionHighlight(optEl);
                     hideLoraFloatPreview();
                 });
                 optEl.addEventListener("click", () => {
@@ -577,11 +658,11 @@ function createFilterableSelect(options, selected, onChange, node) {
     const closeDropdown = () => {
         if (!isOpen) return;
         isOpen = false;
+        resetOptionHighlight();
         dropdown.style.display = "none";
         hideLoraFloatPreview(); // 避免浮层残留
         // 销毁所有飞出子菜单，避免残留
-        for (const f of folderFlyouts) { f.collapse(); f.destroy(); }
-        folderFlyouts.length = 0;
+        destroyFolderFlyouts();
         updateDisplay(); // 恢复显示当前值
     };
     
