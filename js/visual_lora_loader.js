@@ -1602,27 +1602,40 @@ app.registerExtension({
                 cleanupDrag();
             };
 
-            const positionInsertionLine = (clientY) => {
+            const positionInsertionLine = (viewportTop) => {
                 if (!dragState) return;
                 const areaRect = displayArea.getBoundingClientRect();
-                const viewportTop = Math.max(areaRect.top + 1, Math.min(clientY, areaRect.bottom - 1));
-                dragState.insertionLine.style.top = `${viewportTop - areaRect.top + displayArea.scrollTop}px`;
+                const clampedTop = Math.max(areaRect.top + 1, Math.min(viewportTop, areaRect.bottom - 1));
+                const horizontalInset = Math.min(8, areaRect.width / 4);
+                dragState.insertionLine.style.left = `${areaRect.left + horizontalInset}px`;
+                dragState.insertionLine.style.width = `${Math.max(0, areaRect.width - horizontalInset * 2)}px`;
+                dragState.insertionLine.style.top = `${clampedTop - 1}px`;
             };
 
             const updateDropTarget = (clientY) => {
                 if (!dragState) return;
-                const rows = Array.from(displayArea.querySelectorAll("[data-lora-row-index]"))
-                    .filter((row) => Number(row.dataset.loraRowIndex) !== dragState.sourceIndex);
-                let insertIndex = rows.length;
-                for (let i = 0; i < rows.length; i++) {
-                    const rect = rows[i].getBoundingClientRect();
-                    if (clientY < rect.top + rect.height / 2) {
-                        insertIndex = i;
-                        break;
-                    }
+                const rows = Array.from(displayArea.querySelectorAll("[data-lora-row-index]"));
+                if (rows.length === 0) return;
+
+                const rects = rows.map((row) => row.getBoundingClientRect());
+                const gaps = [{ gapIndex: 0, viewportTop: rects[0].top }];
+                for (let i = 1; i < rects.length; i++) {
+                    gaps.push({
+                        gapIndex: i,
+                        viewportTop: (rects[i - 1].bottom + rects[i].top) / 2,
+                    });
                 }
-                dragState.insertIndex = insertIndex;
-                positionInsertionLine(clientY);
+                gaps.push({ gapIndex: rects.length, viewportTop: rects[rects.length - 1].bottom });
+
+                const target = gaps.reduce((nearest, gap) =>
+                    Math.abs(gap.viewportTop - clientY) < Math.abs(nearest.viewportTop - clientY)
+                        ? gap
+                        : nearest
+                );
+                dragState.insertIndex = target.gapIndex > dragState.sourceIndex
+                    ? target.gapIndex - 1
+                    : target.gapIndex;
+                positionInsertionLine(target.viewportTop);
             };
 
             const runAutoScroll = () => {
@@ -1671,6 +1684,7 @@ app.registerExtension({
                 if (!dragState || event.pointerId !== dragState.pointerId) return;
                 event.preventDefault();
                 event.stopPropagation();
+                updateDropTarget(event.clientY);
                 finishDrag(true);
             }
 
@@ -1700,11 +1714,11 @@ app.registerExtension({
                 const handle = event.currentTarget;
                 const insertionLine = document.createElement("div");
                 insertionLine.style.cssText = `
-                    position:absolute;left:8px;right:8px;height:2px;
+                    position:fixed;height:2px;
                     background:${COLORS.accent};border-radius:1px;
-                    pointer-events:none;z-index:3;
+                    pointer-events:none;z-index:100000;
                 `;
-                displayArea.appendChild(insertionLine);
+                document.body.appendChild(insertionLine);
                 dragState = {
                     pointerId: event.pointerId,
                     sourceIndex: index,
