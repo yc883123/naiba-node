@@ -1365,7 +1365,7 @@ app.registerExtension({
 
             // 创建按钮行
             const buttonRow = document.createElement("div");
-            buttonRow.style.cssText = "display:flex;gap:8px;width:100%;";
+            buttonRow.style.cssText = "display:flex;gap:8px;width:100%;min-width:0;flex:0 0 auto;";
 
             // 创建打开弹窗的按钮
             const openBtn = document.createElement("button");
@@ -1405,9 +1405,10 @@ app.registerExtension({
             });
             clearBtn.addEventListener("click", () => {
                 // 清除所有选择
-                const loraDataWidget = node.widgets?.find((w) => w.name === "lora_data");
-                if (loraDataWidget) {
-                    loraDataWidget.value = "[]";
+                if (node._commitVisualLoraData) node._commitVisualLoraData([]);
+                else {
+                    const loraDataWidget = node.widgets?.find((w) => w.name === "lora_data");
+                    if (loraDataWidget) loraDataWidget.value = "[]";
                 }
                 // 同步清空弹窗内的选中状态（若弹窗已打开）
                 if (node._visualSelectedLoras) {
@@ -1480,35 +1481,271 @@ app.registerExtension({
 
             buttonRow.appendChild(clearBtn);
 
+            // 已选择 LoRA 搜索
+            const searchBar = document.createElement("div");
+            searchBar.style.cssText = `
+                display:flex;align-items:center;gap:6px;width:100%;
+                flex:0 0 auto;min-width:0;box-sizing:border-box;
+            `;
+
+            const searchInput = document.createElement("input");
+            searchInput.type = "text";
+            searchInput.placeholder = "搜索已选择的 LoRA";
+            searchInput.style.cssText = `
+                flex:1;min-width:0;height:28px;padding:4px 8px;
+                background:${COLORS.inputBg};border:1px solid ${COLORS.border};
+                border-radius:4px;color:${COLORS.text};font-size:11px;
+                box-sizing:border-box;
+            `;
+
+            const searchCount = document.createElement("span");
+            searchCount.style.cssText = `color:${COLORS.textDim};font-size:10px;white-space:nowrap;`;
+
+            const dragDisabledHint = document.createElement("span");
+            dragDisabledHint.textContent = "搜索时不可排序";
+            dragDisabledHint.style.cssText = `color:${COLORS.favorite};font-size:10px;white-space:nowrap;display:none;`;
+
+            const clearSearchBtn = document.createElement("button");
+            clearSearchBtn.type = "button";
+            clearSearchBtn.textContent = "清空";
+            clearSearchBtn.title = "清空搜索（Esc）";
+            clearSearchBtn.style.cssText = `
+                height:28px;padding:0 8px;background:transparent;
+                border:1px solid ${COLORS.border};border-radius:4px;
+                color:${COLORS.textDim};font-size:10px;cursor:pointer;
+            `;
+
+            searchBar.appendChild(searchInput);
+            searchBar.appendChild(searchCount);
+            searchBar.appendChild(dragDisabledHint);
+            searchBar.appendChild(clearSearchBtn);
+
             // 创建显示区域，显示已选择的LoRA信息
             const displayArea = document.createElement("div");
             displayArea.style.cssText = `
-                width:100%;padding:8px;margin:4px 0;
+                position:relative;width:100%;padding:8px;margin:0;
                 background:${COLORS.inputBg};border:1px solid ${COLORS.border};
                 border-radius:4px;font-size:12px;color:${COLORS.text};
-                min-height:40px;overflow-y:auto;box-sizing:border-box;
-                overflow-x:hidden;flex-shrink:1;
+                min-height:40px;overflow-y:auto;overflow-x:hidden;
+                flex:1 1 auto;box-sizing:border-box;overscroll-behavior:contain;
             `;
             displayArea.innerHTML = "<div style='color:#888;'>未选择任何LoRA</div>";
 
-            // 写回 lora_data
-            const writeBackLoraData = (data) => {
-                const w = node.widgets?.find((x) => x.name === "lora_data");
-                if (w) w.value = JSON.stringify(data);
+            let loraData = [];
+            let dragState = null;
+            let autoScrollFrame = null;
+            let autoScrollVelocity = 0;
+            let layoutFrame = null;
+            let initTimer = null;
+
+            const readLoraData = () => {
+                const widget = node.widgets?.find((w) => w.name === "lora_data");
+                if (!widget) return [];
+                try {
+                    const data = JSON.parse(widget.value || "[]");
+                    return Array.isArray(data) ? data : [];
+                } catch {
+                    return [];
+                }
+            };
+
+            const normalizedSearch = () => searchInput.value.trim().toLocaleLowerCase().replace(/\\/g, "/");
+            const isSearchActive = () => normalizedSearch().length > 0;
+
+            const markWorkflowChanged = (widget) => {
+                widget.callback?.(widget.value, app.canvas, node);
+                node.graph?.change?.();
+                node.setDirtyCanvas?.(true, true);
+                node.graph?.setDirtyCanvas(true, true);
+            };
+
+            const commitLoraData = (data, rerender = true) => {
+                const widget = node.widgets?.find((w) => w.name === "lora_data");
+                if (!widget) return false;
+
+                loraData = data;
+                const value = JSON.stringify(data);
+                const changed = widget.value !== value;
+                if (changed) {
+                    widget.value = value;
+                    markWorkflowChanged(widget);
+                }
+                if (rerender) renderDisplayArea(false);
+                return changed;
+            };
+
+            const stopAutoScroll = () => {
+                autoScrollVelocity = 0;
+                if (autoScrollFrame !== null) cancelAnimationFrame(autoScrollFrame);
+                autoScrollFrame = null;
+            };
+
+            const cleanupDrag = () => {
+                if (!dragState) return null;
+                const state = dragState;
+                dragState = null;
+                stopAutoScroll();
+                state.handle.removeEventListener("pointermove", onDragPointerMove);
+                state.handle.removeEventListener("pointerup", onDragPointerUp);
+                state.handle.removeEventListener("pointercancel", onDragPointerCancel);
+                state.handle.removeEventListener("lostpointercapture", onLostPointerCapture);
+                document.removeEventListener("keydown", onDragKeyDown, true);
+                state.row.style.opacity = state.rowOpacity;
+                state.insertionLine.remove();
+                if (state.handle.hasPointerCapture?.(state.pointerId)) {
+                    state.handle.releasePointerCapture(state.pointerId);
+                }
+                return state;
+            };
+
+            const cancelDrag = () => {
+                cleanupDrag();
+            };
+
+            const positionInsertionLine = (insertIndex, rows) => {
+                if (!dragState || rows.length === 0) return;
+                const areaRect = displayArea.getBoundingClientRect();
+                const anchor = insertIndex < rows.length ? rows[insertIndex] : rows[rows.length - 1];
+                const anchorRect = anchor.getBoundingClientRect();
+                const viewportTop = insertIndex < rows.length ? anchorRect.top : anchorRect.bottom;
+                dragState.insertionLine.style.top = `${viewportTop - areaRect.top + displayArea.scrollTop}px`;
+            };
+
+            const updateDropTarget = (clientY) => {
+                if (!dragState) return;
+                const rows = Array.from(displayArea.querySelectorAll("[data-lora-row-index]"))
+                    .filter((row) => Number(row.dataset.loraRowIndex) !== dragState.sourceIndex);
+                let insertIndex = rows.length;
+                for (let i = 0; i < rows.length; i++) {
+                    const rect = rows[i].getBoundingClientRect();
+                    if (clientY < rect.top + rect.height / 2) {
+                        insertIndex = i;
+                        break;
+                    }
+                }
+                dragState.insertIndex = insertIndex;
+                positionInsertionLine(insertIndex, rows);
+            };
+
+            const runAutoScroll = () => {
+                autoScrollFrame = null;
+                if (!dragState || autoScrollVelocity === 0) return;
+                const previousScrollTop = displayArea.scrollTop;
+                displayArea.scrollTop += autoScrollVelocity;
+                if (displayArea.scrollTop !== previousScrollTop) {
+                    updateDropTarget(dragState.clientY);
+                    autoScrollFrame = requestAnimationFrame(runAutoScroll);
+                }
+            };
+
+            const updateAutoScroll = (clientY) => {
+                const rect = displayArea.getBoundingClientRect();
+                const edgeSize = Math.min(44, rect.height / 3);
+                if (clientY < rect.top + edgeSize) {
+                    autoScrollVelocity = -Math.min(16, Math.max(2, (rect.top + edgeSize - clientY) / 3));
+                } else if (clientY > rect.bottom - edgeSize) {
+                    autoScrollVelocity = Math.min(16, Math.max(2, (clientY - (rect.bottom - edgeSize)) / 3));
+                } else {
+                    stopAutoScroll();
+                    return;
+                }
+                if (autoScrollFrame === null) autoScrollFrame = requestAnimationFrame(runAutoScroll);
+            };
+
+            function onDragPointerMove(event) {
+                if (!dragState || event.pointerId !== dragState.pointerId) return;
+                event.preventDefault();
+                event.stopPropagation();
+                dragState.clientY = event.clientY;
+                updateDropTarget(event.clientY);
+                updateAutoScroll(event.clientY);
+            }
+
+            function finishDrag(commit) {
+                const state = cleanupDrag();
+                if (!state || !commit || state.insertIndex === state.sourceIndex) return;
+                const [moved] = loraData.splice(state.sourceIndex, 1);
+                loraData.splice(state.insertIndex, 0, moved);
+                commitLoraData(loraData, true);
+            }
+
+            function onDragPointerUp(event) {
+                if (!dragState || event.pointerId !== dragState.pointerId) return;
+                event.preventDefault();
+                event.stopPropagation();
+                finishDrag(true);
+            }
+
+            function onDragPointerCancel(event) {
+                if (!dragState || event.pointerId !== dragState.pointerId) return;
+                finishDrag(false);
+            }
+
+            function onLostPointerCapture(event) {
+                if (!dragState || event.pointerId !== dragState.pointerId) return;
+                finishDrag(false);
+            }
+
+            function onDragKeyDown(event) {
+                if (event.key !== "Escape" || !dragState) return;
+                event.preventDefault();
+                event.stopPropagation();
+                finishDrag(false);
+            }
+
+            const startDrag = (event, index, row) => {
+                if (event.button !== 0 || event.isPrimary === false || isSearchActive() || loraData.length < 2) return;
+                event.preventDefault();
+                event.stopPropagation();
+                cancelDrag();
+
+                const handle = event.currentTarget;
+                const insertionLine = document.createElement("div");
+                insertionLine.style.cssText = `
+                    position:absolute;left:8px;right:8px;height:2px;
+                    background:${COLORS.accent};border-radius:1px;
+                    pointer-events:none;z-index:3;
+                `;
+                displayArea.appendChild(insertionLine);
+                dragState = {
+                    pointerId: event.pointerId,
+                    sourceIndex: index,
+                    insertIndex: index,
+                    clientY: event.clientY,
+                    row,
+                    rowOpacity: row.style.opacity,
+                    handle,
+                    insertionLine,
+                };
+                row.style.opacity = "0.55";
+                handle.addEventListener("pointermove", onDragPointerMove);
+                handle.addEventListener("pointerup", onDragPointerUp);
+                handle.addEventListener("pointercancel", onDragPointerCancel);
+                handle.addEventListener("lostpointercapture", onLostPointerCapture);
+                document.addEventListener("keydown", onDragKeyDown, true);
+                handle.setPointerCapture(event.pointerId);
+                updateDropTarget(event.clientY);
             };
 
             // 更新显示区域的函数 - 可编辑的 M/C 权重与启用开关，写回 lora_data
-            const renderDisplayArea = () => {
-                const loraDataWidget = node.widgets?.find((w) => w.name === "lora_data");
-                if (!loraDataWidget) return;
+            const renderDisplayArea = (reloadData = true) => {
+                cancelDrag();
+                if (reloadData) loraData = readLoraData();
 
-                let data = [];
-                try { data = JSON.parse(loraDataWidget.value || "[]"); }
-                catch { data = []; }
+                const searchTerm = normalizedSearch();
+                const entries = loraData.map((lora, index) => ({ lora, index }));
+                const visibleEntries = searchTerm
+                    ? entries.filter(({ lora }) => String(lora?.name || "").toLocaleLowerCase().replace(/\\/g, "/").includes(searchTerm))
+                    : entries;
 
                 displayArea.innerHTML = "";
+                searchCount.textContent = `${visibleEntries.length} / ${loraData.length}`;
+                dragDisabledHint.style.display = searchTerm ? "inline" : "none";
+                clearSearchBtn.disabled = searchInput.value.length === 0;
+                clearSearchBtn.style.opacity = clearSearchBtn.disabled ? "0.45" : "1";
+                clearSearchBtn.style.cursor = clearSearchBtn.disabled ? "default" : "pointer";
 
-                if (data.length === 0) {
+                if (loraData.length === 0) {
                     const empty = document.createElement("div");
                     empty.style.cssText = "color:#888;font-size:12px;";
                     empty.textContent = "未选择任何LoRA";
@@ -1516,14 +1753,18 @@ app.registerExtension({
                     return;
                 }
 
-                const header = document.createElement("div");
-                header.style.cssText = `margin-bottom:6px;font-weight:600;font-size:12px;color:${COLORS.text};`;
-                header.textContent = `已选择 ${data.length} 个LoRA`;
-                displayArea.appendChild(header);
+                if (visibleEntries.length === 0) {
+                    const empty = document.createElement("div");
+                    empty.style.cssText = "color:#888;font-size:12px;text-align:center;padding:12px 4px;";
+                    empty.textContent = "没有匹配的 LoRA";
+                    displayArea.appendChild(empty);
+                    return;
+                }
 
-                data.forEach((lora, index) => {
+                visibleEntries.forEach(({ lora, index }) => {
                     const isEnabled = lora.enabled !== false;
                     const row = document.createElement("div");
+                    row.dataset.loraRowIndex = String(index);
                     row.style.cssText = `
                         display:flex;align-items:center;gap:6px;
                         padding:4px 6px;margin:3px 0;border-radius:4px;
@@ -1532,8 +1773,21 @@ app.registerExtension({
                         ${!isEnabled ? "opacity:0.55;" : ""}
                     `;
 
+                    const dragHandle = document.createElement("div");
+                    const dragEnabled = !searchTerm && loraData.length > 1;
+                    dragHandle.textContent = "⋮⋮";
+                    dragHandle.title = dragEnabled ? "拖拽排序" : (searchTerm ? "清空搜索后可排序" : "至少需要两个 LoRA");
+                    dragHandle.style.cssText = `
+                        flex:0 0 auto;width:12px;color:${COLORS.textDim};font-size:12px;
+                        line-height:18px;text-align:center;user-select:none;touch-action:none;
+                        cursor:${dragEnabled ? "grab" : "not-allowed"};opacity:${dragEnabled ? "1" : "0.35"};
+                    `;
+                    dragHandle.addEventListener("pointerdown", (event) => startDrag(event, index, row));
+                    row.appendChild(dragHandle);
+
                     const name = document.createElement("div");
                     name.textContent = (lora.name || "").split('/').pop().split('\\').pop();
+                    name.title = lora.name || "";
                     name.style.cssText = `
                         flex:1;min-width:0;color:${isEnabled ? COLORS.text : COLORS.disabled};
                         font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
@@ -1576,6 +1830,7 @@ app.registerExtension({
                         inp.addEventListener("change", apply);
                         inp.addEventListener("wheel", (e) => {
                             e.preventDefault();
+                            e.stopPropagation();
                             const dir = e.deltaY < 0 ? 1 : -1;
                             let v = parseFloat(inp.value);
                             if (isNaN(v)) v = 0;
@@ -1590,10 +1845,12 @@ app.registerExtension({
                     };
 
                     row.appendChild(mkNum("M", lora.strength_model ?? 1.0, (v) => {
-                        data[index].strength_model = v; writeBackLoraData(data); triggerResize();
+                        lora.strength_model = v;
+                        commitLoraData(loraData, false);
                     }));
                     row.appendChild(mkNum("C", lora.strength_clip ?? 1.0, (v) => {
-                        data[index].strength_clip = v; writeBackLoraData(data); triggerResize();
+                        lora.strength_clip = v;
+                        commitLoraData(loraData, false);
                     }));
 
                     // 启用开关（无圆点的高亮 div）
@@ -1616,10 +1873,8 @@ app.registerExtension({
                     };
                     paintToggle(isEnabled);
                     toggle.addEventListener("click", () => {
-                        data[index].enabled = !data[index].enabled;
-                        writeBackLoraData(data);
-                        renderDisplayArea();
-                        triggerResize();
+                        lora.enabled = !isEnabled;
+                        commitLoraData(loraData, true);
                     });
                     row.appendChild(toggle);
 
@@ -1627,133 +1882,101 @@ app.registerExtension({
                 });
             };
 
+            const clearSearch = () => {
+                if (!searchInput.value) return;
+                searchInput.value = "";
+                renderDisplayArea(false);
+                searchInput.focus();
+            };
+
+            searchInput.addEventListener("input", () => renderDisplayArea(false));
+            searchInput.addEventListener("keydown", (event) => {
+                if (event.key !== "Escape" || !searchInput.value) return;
+                event.preventDefault();
+                event.stopPropagation();
+                clearSearch();
+            });
+            clearSearchBtn.addEventListener("click", clearSearch);
+            displayArea.addEventListener("wheel", (event) => {
+                event.stopPropagation();
+                if (!dragState) return;
+                event.preventDefault();
+                displayArea.scrollTop += event.deltaY;
+                updateDropTarget(dragState.clientY);
+            }, { passive: false });
+
             // 将renderDisplayArea附加到节点对象上，以便在模态框中调用
-            node._updateVisualLoraDisplay = renderDisplayArea;
+            node._updateVisualLoraDisplay = () => renderDisplayArea(true);
+            node._commitVisualLoraData = (data) => commitLoraData(data, true);
 
             // 创建容器
             const container = document.createElement("div");
-            container.style.cssText = "display:flex;flex-direction:column;gap:4px;width:100%;box-sizing:border-box;overflow:hidden;";
+            container.style.cssText = "display:flex;flex-direction:column;gap:4px;width:100%;height:100%;min-height:0;box-sizing:border-box;overflow:hidden;";
             container.appendChild(buttonRow);
+            container.appendChild(searchBar);
             container.appendChild(displayArea);
 
-            // 节点尺寸自适应
-            node.onResize = function () {
-                let [w, h] = node.size;
-                
-                // 更新容器宽度以适应节点宽度
-                const nodePadding = 10;
-                const containerWidth = Math.max(200, w - nodePadding * 2);
-                container.style.width = containerWidth + "px";
-                container.style.maxWidth = containerWidth + "px";
-                
-                // 计算其他widget的总高度
-                let otherWidgetsHeight = 0;
-                if (node.widgets) {
-                    for (const widget of node.widgets) {
-                        if (widget.name === "visual_lora_container") continue;
-                        otherWidgetsHeight += (widget.computeSize ? widget.computeSize(w)[1] : 26) + 4;
-                    }
-                }
-                
-                // 节点标题栏高度估计（ComfyUI默认）
-                const titleBarHeight = 30;
-                // 节点内边距
-                const nodeInnerPadding = 10;
-                
-                // 计算可用高度：节点高度 - 标题栏 - 其他widgets - 节点内边距
-                const availableHeight = h - titleBarHeight - otherWidgetsHeight - nodeInnerPadding;
-                const containerHeight = Math.max(120, Math.min(availableHeight, 500));
-                container.style.height = containerHeight + "px";
-                
-                // 动态计算buttonRow的实际高度
-                const buttonRowHeight = buttonRow.offsetHeight || 60;
-                const buttonRowMargin = 16; // buttonRow的margin 8px * 2
-                const containerGap = 4;      // 容器gap
-                const containerPadding = 16; // 容器padding 8px * 2
-                const containerBorder = 2;   // 容器border 1px * 2
-                
-                // 计算displayArea的可用高度
-                const displayAreaPadding = 16; // displayArea的padding 8px * 2
-                const displayAreaBorder = 2;   // displayArea的border 1px * 2
-                const displayAreaMargin = 8;   // displayArea的margin 4px * 2
-                
-                const contentHeight = containerHeight - containerPadding - containerBorder;
-                const maxDisplayHeight = Math.max(40, 
-                    contentHeight - buttonRowHeight - buttonRowMargin - containerGap - displayAreaPadding - displayAreaBorder - displayAreaMargin
-                );
-                displayArea.style.maxHeight = maxDisplayHeight + "px";
-            };
-
-            // 触发节点重绘 - 附加到节点对象上
-            const triggerResize = () => {
-                setTimeout(() => {
-                    // 计算内容所需的高度
-                    const buttonRowHeight = buttonRow.offsetHeight || 60;
-                    const buttonRowMargin = 16;
-                    const containerGap = 4;
-                    const containerPadding = 16;
-                    const containerBorder = 2;
-                    const displayAreaPadding = 16;
-                    const displayAreaBorder = 2;
-                    const displayAreaMargin = 8;
-                    
-                    // 获取displayArea的内容高度
-                    const displayContentHeight = displayArea.scrollHeight;
-                    
-                    // 计算容器所需高度
-                    const containerContentHeight = buttonRowHeight + buttonRowMargin + containerGap + 
-                        displayContentHeight + displayAreaPadding + displayAreaBorder + displayAreaMargin;
-                    const containerTotalHeight = containerContentHeight + containerPadding + containerBorder;
-                    
-                    // 计算其他widgets的高度
-                    let otherWidgetsHeight = 0;
-                    if (node.widgets) {
-                        for (const widget of node.widgets) {
-                            if (widget.name === "visual_lora_container") continue;
-                            otherWidgetsHeight += (widget.computeSize ? widget.computeSize(node.size[0])[1] : 26) + 4;
-                        }
-                    }
-                    
-                    // 节点标题栏高度和内边距
-                    const titleBarHeight = 30;
-                    const nodeInnerPadding = 10;
-                    
-                    // 计算节点所需总高度
-                    const requiredNodeHeight = titleBarHeight + otherWidgetsHeight + nodeInnerPadding + containerTotalHeight;
-                    
-                    // 限制在合理范围内
-                    const minHeight = 120;
-                    const maxHeight = 600;
-                    const newHeight = Math.max(minHeight, Math.min(requiredNodeHeight, maxHeight));
-                    
-                    // 更新节点高度（保持宽度不变）
-                    const [currentWidth] = node.size;
-                    node.size = [currentWidth, newHeight];
-                    
-                    // 触发重绘
-                    node.onResize?.();
-                    node.graph?.setDirtyCanvas(true, true);
-                }, 100); // 增加延迟确保DOM已更新
-            };
-            node._triggerVisualLoraResize = triggerResize;
-
             // 注册DOM控件
-            node.addDOMWidget("visual_lora_container", "VISUAL_LORA_CONTAINER", container, {
+            const minWidgetHeight = 132;
+            const domWidget = node.addDOMWidget("visual_lora_container", "VISUAL_LORA_CONTAINER", container, {
                 getValue() { return ""; },
                 setValue() {},
+                getMinHeight() { return minWidgetHeight; },
+                getMaxHeight() { return Math.max(minWidgetHeight, node.size?.[1] || minWidgetHeight); },
             });
 
+            const widgetElement = domWidget.element || container;
+            const syncWidgetLayout = () => {
+                layoutFrame = null;
+                for (const element of [widgetElement, container]) {
+                    element.style.width = "100%";
+                    element.style.height = "100%";
+                    element.style.minHeight = "0";
+                    element.style.maxHeight = "100%";
+                    element.style.overflow = "hidden";
+                    element.style.boxSizing = "border-box";
+                }
+            };
+
+            const scheduleLayoutSync = () => {
+                if (layoutFrame !== null) cancelAnimationFrame(layoutFrame);
+                layoutFrame = requestAnimationFrame(syncWidgetLayout);
+                node.setDirtyCanvas?.(true, true);
+                node.graph?.setDirtyCanvas(true, true);
+            };
+
+            const origOnResize = node.onResize;
+            node.onResize = function () {
+                const result = origOnResize?.apply(this, arguments);
+                scheduleLayoutSync();
+                return result;
+            };
+
+            const origOnRemoved = node.onRemoved;
+            node.onRemoved = function () {
+                cancelDrag();
+                if (layoutFrame !== null) cancelAnimationFrame(layoutFrame);
+                layoutFrame = null;
+                if (initTimer !== null) clearTimeout(initTimer);
+                initTimer = null;
+                hideVisualLoraFloatPreview();
+                return origOnRemoved?.apply(this, arguments);
+            };
+
+            node._triggerVisualLoraResize = scheduleLayoutSync;
+
             node.minWidth = 250;
-            node.minHeight = 100;
+            node.minHeight = Math.max(node.minHeight || 0, 180);
 
             // ========== 初始化恢复数据 ==========
-            setTimeout(() => {
+            initTimer = setTimeout(() => {
+                initTimer = null;
                 if (node._visualLoraUIInitialized) return;
                 node._visualLoraUIInitialized = true;
 
                 node._deserializeVisualLoraData();
-                renderDisplayArea();
-                triggerResize();
+                renderDisplayArea(true);
+                scheduleLayoutSync();
             }, 150);
         };
     },
