@@ -1602,12 +1602,10 @@ app.registerExtension({
                 cleanupDrag();
             };
 
-            const positionInsertionLine = (insertIndex, rows) => {
-                if (!dragState || rows.length === 0) return;
+            const positionInsertionLine = (clientY) => {
+                if (!dragState) return;
                 const areaRect = displayArea.getBoundingClientRect();
-                const anchor = insertIndex < rows.length ? rows[insertIndex] : rows[rows.length - 1];
-                const anchorRect = anchor.getBoundingClientRect();
-                const viewportTop = insertIndex < rows.length ? anchorRect.top : anchorRect.bottom;
+                const viewportTop = Math.max(areaRect.top + 1, Math.min(clientY, areaRect.bottom - 1));
                 dragState.insertionLine.style.top = `${viewportTop - areaRect.top + displayArea.scrollTop}px`;
             };
 
@@ -1624,7 +1622,7 @@ app.registerExtension({
                     }
                 }
                 dragState.insertIndex = insertIndex;
-                positionInsertionLine(insertIndex, rows);
+                positionInsertionLine(clientY);
             };
 
             const runAutoScroll = () => {
