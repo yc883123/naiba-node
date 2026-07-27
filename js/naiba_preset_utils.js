@@ -120,8 +120,8 @@ export function createPresetsModal(node, onImport = null) {
     `;
 
     const title = document.createElement("div");
-    title.textContent = "LoRA 预设管理";
-    title.style.cssText = `color:${COLORS.text};font-size:14px;font-weight:600;`;
+    title.textContent = "LoRA 预设管理（支持图片拖拽上传）";
+    title.style.cssText = `color:${COLORS.text};font-size:14px;font-weight:600;line-height:1.4;`;
 
     const closeBtn = document.createElement("div");
     closeBtn.textContent = "\u2715";
@@ -185,11 +185,6 @@ export function createPresetsModal(node, onImport = null) {
     statusMsg.style.cssText = `color:${COLORS.textDim};font-size:11px;text-align:center;min-height:16px;`;
     content.appendChild(statusMsg);
 
-    // 封面状态提示
-    const coverStatus = document.createElement("div");
-    coverStatus.style.cssText = `color:${COLORS.textDim};font-size:11px;text-align:center;min-height:14px;`;
-    content.appendChild(coverStatus);
-
     // ========== 按钮区域 ==========
     const btnGroup = document.createElement("div");
     btnGroup.style.cssText = `display:flex;flex-wrap:wrap;gap:6px;`;
@@ -226,13 +221,10 @@ export function createPresetsModal(node, onImport = null) {
     btnGroup.appendChild(renameBtn);
     content.appendChild(btnGroup);
 
-    const setCoverBtn = createBtn("设置封面", "#ff9f43", "#ffb366");
-
     const btnGroup2 = document.createElement("div");
     btnGroup2.style.cssText = `display:flex;gap:6px;`;
     btnGroup2.appendChild(exportBtn);
     btnGroup2.appendChild(importFileBtn);
-    btnGroup2.appendChild(setCoverBtn);
     content.appendChild(btnGroup2);
 
     modal.appendChild(content);
@@ -242,7 +234,7 @@ export function createPresetsModal(node, onImport = null) {
     // ========== 内部状态 ==========
     let selectedPreset = null;
     let presetItems = [];
-    let stagedCoverFile = null; // 待保存时上传的封面文件
+    let coverTargetItem = null;
 
     // ========== 关闭模态框 ==========
     function closeModal() {
@@ -302,6 +294,45 @@ export function createPresetsModal(node, onImport = null) {
         fd.append("file", file);
         const resp = await api.fetchApi("/naiba/presets/upload-image", { method: "POST", body: fd });
         return resp.json();
+    }
+
+    const SUPPORTED_COVER_EXTENSIONS = /\.(png|jpe?g|webp|gif)$/i;
+
+    function isSupportedCoverFile(file) {
+        if (!file) return false;
+        return ["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)
+            || SUPPORTED_COVER_EXTENSIONS.test(file.name || "");
+    }
+
+    async function applyCoverFile(name, file, item = null) {
+        if (!isSupportedCoverFile(file)) {
+            showStatus("请选择 PNG、JPG、WEBP 或 GIF 图片", true);
+            return;
+        }
+        if (item?._coverUploading) return;
+
+        if (item) {
+            item._coverUploading = true;
+            item._setDropActive(false);
+            item._setCoverBusy(true);
+        }
+
+        try {
+            const result = await uploadCover(name, file);
+            if (!result.success) {
+                showStatus(result.error || "封面上传失败", true);
+                return;
+            }
+            item?._refreshCover();
+            showStatus("封面已更新: " + name);
+        } catch (err) {
+            showStatus("封面上传失败: " + err.message, true);
+        } finally {
+            if (item) {
+                item._coverUploading = false;
+                item._setCoverBusy(false);
+            }
+        }
     }
 
     // ========== 获取当前节点数据 ==========
@@ -392,16 +423,90 @@ export function createPresetsModal(node, onImport = null) {
                 cover.style.cssText = `
                     width:100%;aspect-ratio:1/1;background:${COLORS.inputBg};
                     border-radius:4px;overflow:hidden;display:flex;align-items:center;
-                    justify-content:center;
+                    justify-content:center;position:relative;
                 `;
                 const coverImg = document.createElement("img");
                 coverImg.style.cssText = "width:100%;height:100%;object-fit:contain;display:block;";
-                coverImg.src = `/naiba/presets/image?name=${encodeURIComponent(name)}`;
+                coverImg.draggable = false;
+                const coverPlaceholder = document.createElement("div");
+                coverPlaceholder.textContent = "无封面";
+                coverPlaceholder.style.cssText = `
+                    color:${COLORS.textDim};font-size:11px;text-align:center;padding:4px;
+                    display:none;align-items:center;justify-content:center;
+                    position:absolute;inset:0;
+                `;
+                const dropHint = document.createElement("div");
+                dropHint.textContent = "松开设置封面";
+                dropHint.style.cssText = `
+                    position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+                    padding:8px;text-align:center;color:#fff;font-size:12px;font-weight:600;
+                    background:rgba(108,92,231,0.82);pointer-events:none;
+                `;
+                const coverAction = document.createElement("div");
+                coverAction.textContent = "↑ 更换封面";
+                coverAction.title = "选择封面图片";
+                coverAction.tabIndex = 0;
+                coverAction.setAttribute("role", "button");
+                coverAction.style.cssText = `
+                    position:absolute;left:0;right:0;bottom:0;display:none;
+                    align-items:center;justify-content:center;padding:7px 6px;
+                    color:#fff;font-size:11px;background:rgba(0,0,0,0.72);
+                    cursor:pointer;
+                `;
+                coverImg.onload = () => {
+                    coverImg.style.display = "block";
+                    coverPlaceholder.style.display = "none";
+                    coverAction.textContent = "↑ 更换封面";
+                };
                 coverImg.onerror = () => {
-                    cover.innerHTML = `<div style="color:${COLORS.textDim};font-size:11px;text-align:center;padding:4px;">无封面</div>`;
+                    coverImg.style.display = "none";
+                    coverPlaceholder.style.display = "flex";
+                    coverAction.textContent = "＋ 添加封面";
                 };
                 cover.appendChild(coverImg);
+                cover.appendChild(coverPlaceholder);
+                cover.appendChild(coverAction);
+                cover.appendChild(dropHint);
                 item._coverImg = coverImg;
+                item._refreshCover = () => {
+                    coverImg.style.display = "block";
+                    coverPlaceholder.style.display = "none";
+                    coverImg.src = `/naiba/presets/image?name=${encodeURIComponent(item._name)}&t=${Date.now()}`;
+                };
+                item._setDropActive = (active) => {
+                    item._dropActive = active;
+                    coverAction.style.display = active ? "none" : coverAction.style.display;
+                    dropHint.style.display = active ? "flex" : "none";
+                    item.style.background = active
+                        ? COLORS.listItemHover
+                        : (item._selected ? COLORS.listItemActive : COLORS.listItemBg);
+                    item.style.borderColor = active
+                        ? COLORS.accent
+                        : (item._selected ? COLORS.accent : "transparent");
+                };
+                item._setCoverBusy = (busy) => {
+                    dropHint.textContent = busy ? "正在上传..." : "松开设置封面";
+                    dropHint.style.display = busy ? "flex" : "none";
+                    coverAction.style.display = busy ? "none" : coverAction.style.display;
+                };
+                item._refreshCover();
+                cover.title = "可拖入图片设置封面";
+                cover.addEventListener("mouseenter", () => {
+                    if (!item._dropActive && !item._coverUploading) coverAction.style.display = "flex";
+                });
+                cover.addEventListener("mouseleave", () => {
+                    coverAction.style.display = "none";
+                });
+                const chooseCover = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    coverTargetItem = item;
+                    coverFileInput.click();
+                };
+                coverAction.addEventListener("click", chooseCover);
+                coverAction.addEventListener("keydown", (e) => {
+                    if (e.key === "Enter" || e.key === " ") chooseCover(e);
+                });
                 item.appendChild(cover);
 
                 // 名称（单行省略）
@@ -416,12 +521,12 @@ export function createPresetsModal(node, onImport = null) {
                 item.appendChild(nameEl);
 
                 item.addEventListener("mouseenter", () => {
-                    if (item._selected) return;
+                    if (item._selected || item._dropActive) return;
                     item.style.background = COLORS.listItemHover;
                     item.style.borderColor = COLORS.border;
                 });
                 item.addEventListener("mouseleave", () => {
-                    if (item._selected) return;
+                    if (item._selected || item._dropActive) return;
                     item.style.background = COLORS.listItemBg;
                     item.style.borderColor = "transparent";
                 });
@@ -447,9 +552,38 @@ export function createPresetsModal(node, onImport = null) {
                     selectedPreset = item._name;
                 });
 
+                // 将本地图片拖到某个预设格子，直接替换该预设的封面。
+                let dragDepth = 0;
+                item.addEventListener("dragenter", (e) => {
+                    e.preventDefault();
+                    dragDepth += 1;
+                    if (!item._coverUploading) item._setDropActive(true);
+                });
+                item.addEventListener("dragover", (e) => {
+                    e.preventDefault();
+                    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+                });
+                item.addEventListener("dragleave", () => {
+                    dragDepth = Math.max(0, dragDepth - 1);
+                    if (dragDepth === 0 && !item._coverUploading) item._setDropActive(false);
+                });
+                item.addEventListener("drop", async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dragDepth = 0;
+                    const files = Array.from(e.dataTransfer?.files || []);
+                    const file = files.find(isSupportedCoverFile);
+                    if (!file) {
+                        item._setDropActive(false);
+                        showStatus("请拖入 PNG、JPG、WEBP 或 GIF 图片", true);
+                        return;
+                    }
+                    await applyCoverFile(item._name, file, item);
+                });
+
                 // 双击重命名
                 item.addEventListener("dblclick", () => {
-                    startRename(item, name);
+                    startRename(item, item._name);
                 });
 
                 presetItems.push(item);
@@ -512,9 +646,7 @@ export function createPresetsModal(node, onImport = null) {
                         selectedPreset = newName;
                     }
                     // 刷新封面（文件名已变更，加时间戳避免缓存）
-                    if (item._coverImg) {
-                        item._coverImg.src = `/naiba/presets/image?name=${encodeURIComponent(newName)}&t=${Date.now()}`;
-                    }
+                    item._refreshCover?.();
                 }
             } catch (e) {
                 showStatus("重命名失败: " + e.message, true);
@@ -533,37 +665,20 @@ export function createPresetsModal(node, onImport = null) {
 
     // ========== 按钮事件 ==========
 
-    // 封面文件输入（隐藏）
+    // 仅由卡片封面上的“添加/更换封面”操作触发。
     const coverFileInput = document.createElement("input");
     coverFileInput.type = "file";
-    coverFileInput.accept = "image/*";
+    coverFileInput.accept = ".png,.jpg,.jpeg,.webp,.gif";
     coverFileInput.style.display = "none";
     content.appendChild(coverFileInput);
 
-    setCoverBtn.addEventListener("click", () => { coverFileInput.click(); });
     coverFileInput.addEventListener("change", async (e) => {
         const file = e.target.files[0];
-        if (!file) return;
+        const item = coverTargetItem;
+        coverTargetItem = null;
         coverFileInput.value = "";
-        if (selectedPreset) {
-            // 直接应用到已选预设
-            try {
-                const r = await uploadCover(selectedPreset, file);
-                if (r.success) {
-                    showStatus("封面已更新: " + selectedPreset);
-                    await loadPresetList();
-                } else {
-                    showStatus(r.error || "封面上传失败", true);
-                }
-            } catch (err) {
-                showStatus("封面上传失败: " + err.message, true);
-            }
-        } else {
-            // 暂存，保存预设时一并上传
-            stagedCoverFile = file;
-            coverStatus.textContent = `已选择封面: ${file.name}（保存时应用）`;
-            coverStatus.style.color = COLORS.accent;
-        }
+        if (!file || !item) return;
+        await applyCoverFile(item._name, file, item);
     });
 
     // 导入预设
@@ -608,7 +723,7 @@ export function createPresetsModal(node, onImport = null) {
     });
 
     // ========== 保存预设（自定义对话框：预填已选预设名 + 覆盖二次确认） ==========
-    async function doSavePreset(trimmedName) {
+    async function doSavePreset(trimmedName, coverFile = null) {
         const data = getCurrentData();
         if (data.length === 0) {
             showStatus("当前没有 LoRA 配置可保存", true);
@@ -616,20 +731,6 @@ export function createPresetsModal(node, onImport = null) {
         }
 
         try {
-            // 若有暂存封面，先上传
-            if (stagedCoverFile) {
-                try {
-                    const up = await uploadCover(trimmedName, stagedCoverFile);
-                    if (!up.success) {
-                        showStatus("封面上传失败: " + (up.error || "未知错误"), true);
-                    }
-                } catch (coverErr) {
-                    showStatus("封面上传失败: " + coverErr.message, true);
-                }
-                stagedCoverFile = null;
-                coverStatus.textContent = "";
-            }
-
             showShaProgress();
             try {
                 const resp = await api.fetchApi("/naiba/presets/save", {
@@ -642,8 +743,22 @@ export function createPresetsModal(node, onImport = null) {
                     showStatus(result.error, true);
                     return false;
                 } else {
-                    showStatus("预设保存成功");
+                    let coverError = "";
+                    if (coverFile) {
+                        try {
+                            const uploadResult = await uploadCover(trimmedName, coverFile);
+                            if (!uploadResult.success) {
+                                coverError = uploadResult.error || "未知错误";
+                            }
+                        } catch (error) {
+                            coverError = error.message;
+                        }
+                    }
                     await loadPresetList();
+                    showStatus(
+                        coverError ? `预设已保存，但封面上传失败: ${coverError}` : "预设保存成功",
+                        !!coverError,
+                    );
                     return true;
                 }
             } finally {
@@ -668,7 +783,7 @@ export function createPresetsModal(node, onImport = null) {
         const box = document.createElement("div");
         box.style.cssText = `
             background:${COLORS.modalBg};border:1px solid ${COLORS.border};border-radius:6px;
-            padding:16px;width:320px;box-shadow:0 4px 20px rgba(0,0,0,0.4);
+            padding:16px;width:min(360px,calc(100vw - 48px));box-shadow:0 4px 20px rgba(0,0,0,0.4);
         `;
 
         const title = document.createElement("div");
@@ -686,6 +801,94 @@ export function createPresetsModal(node, onImport = null) {
 
         const warn = document.createElement("div");
         warn.style.cssText = `color:${COLORS.warn};font-size:12px;margin-top:8px;display:none;`;
+
+        let dialogCoverFile = null;
+        let dialogCoverUrl = "";
+        let coverDragDepth = 0;
+
+        const coverPicker = document.createElement("div");
+        coverPicker.tabIndex = 0;
+        coverPicker.style.cssText = `
+            min-height:72px;margin-top:10px;padding:8px;box-sizing:border-box;
+            display:flex;align-items:center;justify-content:center;gap:10px;
+            border:1px dashed ${COLORS.border};border-radius:4px;background:${COLORS.inputBg};
+            color:${COLORS.textDim};font-size:12px;cursor:pointer;transition:all 0.15s;
+        `;
+
+        const coverPreview = document.createElement("img");
+        coverPreview.style.cssText = `
+            width:56px;height:56px;object-fit:contain;display:none;flex-shrink:0;border-radius:3px;
+        `;
+        const coverPickerText = document.createElement("span");
+        coverPickerText.textContent = "选择封面（可选）";
+        coverPickerText.style.cssText = `min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`;
+
+        const dialogCoverInput = document.createElement("input");
+        dialogCoverInput.type = "file";
+        dialogCoverInput.accept = ".png,.jpg,.jpeg,.webp,.gif";
+        dialogCoverInput.style.display = "none";
+
+        const coverError = document.createElement("div");
+        coverError.style.cssText = `color:${COLORS.danger};font-size:11px;margin-top:6px;display:none;`;
+
+        function selectDialogCover(file) {
+            if (!isSupportedCoverFile(file)) {
+                coverError.textContent = "请选择 PNG、JPG、WEBP 或 GIF 图片";
+                coverError.style.display = "block";
+                return;
+            }
+            coverError.style.display = "none";
+            dialogCoverFile = file;
+            if (dialogCoverUrl) URL.revokeObjectURL(dialogCoverUrl);
+            dialogCoverUrl = URL.createObjectURL(file);
+            coverPreview.src = dialogCoverUrl;
+            coverPreview.style.display = "block";
+            coverPickerText.textContent = file.name;
+        }
+
+        coverPicker.appendChild(coverPreview);
+        coverPicker.appendChild(coverPickerText);
+        coverPicker.addEventListener("click", () => dialogCoverInput.click());
+        coverPicker.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                dialogCoverInput.click();
+            }
+        });
+        dialogCoverInput.addEventListener("change", (e) => {
+            const file = e.target.files[0];
+            dialogCoverInput.value = "";
+            if (file) selectDialogCover(file);
+        });
+        coverPicker.addEventListener("dragenter", (e) => {
+            e.preventDefault();
+            coverDragDepth += 1;
+            coverPicker.style.borderColor = COLORS.accent;
+            coverPicker.style.color = COLORS.text;
+            coverPickerText.textContent = "松开选择封面";
+        });
+        coverPicker.addEventListener("dragover", (e) => {
+            e.preventDefault();
+            if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+        });
+        coverPicker.addEventListener("dragleave", () => {
+            coverDragDepth = Math.max(0, coverDragDepth - 1);
+            if (coverDragDepth === 0) {
+                coverPicker.style.borderColor = COLORS.border;
+                coverPicker.style.color = COLORS.textDim;
+                coverPickerText.textContent = dialogCoverFile?.name || "选择封面（可选）";
+            }
+        });
+        coverPicker.addEventListener("drop", (e) => {
+            e.preventDefault();
+            coverDragDepth = 0;
+            coverPicker.style.borderColor = COLORS.border;
+            coverPicker.style.color = COLORS.textDim;
+            const files = Array.from(e.dataTransfer?.files || []);
+            const file = files.find(isSupportedCoverFile);
+            if (file) selectDialogCover(file);
+            else selectDialogCover(null);
+        });
 
         const btnRow = document.createElement("div");
         btnRow.style.cssText = `display:flex;justify-content:flex-end;gap:8px;margin-top:14px;`;
@@ -717,6 +920,7 @@ export function createPresetsModal(node, onImport = null) {
         }
 
         const close = () => {
+            if (dialogCoverUrl) URL.revokeObjectURL(dialogCoverUrl);
             if (dialogOverlay.parentNode) dialogOverlay.parentNode.removeChild(dialogOverlay);
         };
 
@@ -732,12 +936,15 @@ export function createPresetsModal(node, onImport = null) {
                 input.focus();
                 return;
             }
-            const ok = await doSavePreset(name);
+            const ok = await doSavePreset(name, dialogCoverFile);
             if (ok) close();
         });
 
         box.appendChild(title);
         box.appendChild(input);
+        box.appendChild(coverPicker);
+        box.appendChild(dialogCoverInput);
+        box.appendChild(coverError);
         box.appendChild(warn);
         btnRow.appendChild(cancelBtn);
         btnRow.appendChild(confirmBtn);

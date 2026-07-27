@@ -650,8 +650,16 @@ async def upload_preset_image_handler(request):
             ext = '.webp'
 
         image_path = os.path.join(PRESETS_IMAGES_DIR, f"{preset_name}{ext}")
-        with open(image_path, 'wb') as f:
+        temp_path = f"{image_path}.tmp-{os.getpid()}-{time.time_ns()}"
+        with open(temp_path, 'wb') as f:
             f.write(image_data)
+        os.replace(temp_path, image_path)
+
+        # 更换图片格式时清理旧扩展名，避免读取接口继续命中旧封面。
+        for filename in os.listdir(PRESETS_IMAGES_DIR):
+            old_path = os.path.join(PRESETS_IMAGES_DIR, filename)
+            if old_path != image_path and os.path.splitext(filename)[0] == preset_name:
+                os.remove(old_path)
 
         return web.json_response({"success": True, "filename": f"{preset_name}{ext}"})
     except Exception as e:
