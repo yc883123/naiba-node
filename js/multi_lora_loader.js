@@ -288,7 +288,9 @@ function createFilterableSelect(options, selected, onChange, node) {
     let isOpen = false;
     const loraTree = buildLoraTree(options);
     const folderFlyouts = [];
-    const FOLDER_HOVER_DELAY = 160;
+    const FOLDER_INITIAL_HOVER_DELAY = 80;
+    const FOLDER_SWITCH_HOVER_DELAY = 45;
+    const FOLDER_CLOSE_DELAY = 120;
     let activeFolderFlyout = null;
 
     // 快速划过搜索结果时不立即高亮，并按帧合并最终状态，避免多行拖影。
@@ -450,13 +452,16 @@ function createFilterableSelect(options, selected, onChange, node) {
         const scheduleExpand = () => {
             if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
             if (expanded || openTimer) return;
-            openTimer = setTimeout(expand, FOLDER_HOVER_DELAY);
+            const delay = activeFolderFlyout
+                ? FOLDER_SWITCH_HOVER_DELAY
+                : FOLDER_INITIAL_HOVER_DELAY;
+            openTimer = setTimeout(expand, delay);
         };
         const scheduleCollapse = () => {
             if (openTimer) { clearTimeout(openTimer); openTimer = null; }
             if (!expanded) return;
             if (closeTimer) clearTimeout(closeTimer);
-            closeTimer = setTimeout(collapse, 180);
+            closeTimer = setTimeout(collapse, FOLDER_CLOSE_DELAY);
         };
         header.addEventListener("mouseenter", scheduleExpand);
         header.addEventListener("mouseleave", scheduleCollapse);
