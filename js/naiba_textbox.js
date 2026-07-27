@@ -8,11 +8,23 @@ app.registerExtension({
     beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name !== "NaibaTextbox") return;
 
+        const onNodeCreated = nodeType.prototype.onNodeCreated;
+        nodeType.prototype.onNodeCreated = function () {
+            onNodeCreated?.apply(this, arguments);
+
+            const overrideWidget = this.widgets?.find(
+                (widget) => widget.name === "allow_passthrough_override"
+            );
+            if (overrideWidget) {
+                overrideWidget.label = "允许透传覆盖";
+            }
+        };
+
         const onExecuted = nodeType.prototype.onExecuted;
         nodeType.prototype.onExecuted = function (message) {
             onExecuted?.apply(this, arguments);
 
-            if (!message || !message.text) return;
+            if (!message || !("text" in message) || message.text == null) return;
 
             const text = Array.isArray(message.text)
                 ? message.text.join("")
@@ -25,6 +37,7 @@ app.registerExtension({
             }
 
             this.onResize?.(this.size);
+            app.graph?.setDirtyCanvas(true, true);
         };
     },
 });
