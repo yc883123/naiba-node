@@ -866,7 +866,6 @@ function createLoraDataPreviewModal(node, loraList) {
 
     // ========== 搜索功能（带防抖，避免逐字重建列表）==========
     searchInput.addEventListener("input", debounce(() => {
-        currentScope = "all";
         currentPage = 0; // 搜索即切换数据集，页码归零
         updateStatusDisplay();
         renderLoraList();
