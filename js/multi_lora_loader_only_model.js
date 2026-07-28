@@ -512,10 +512,13 @@ function createFilterableSelect(options, selected, onChange, node) {
     const updateDisplay = () => {
         if (currentValue) {
             filterInput.value = currentValue;
-            filterInput.style.color = C.text;
+            const missing = !options.includes(currentValue);
+            filterInput.style.color = missing ? C.danger : C.text;
+            filterInput.title = missing ? `本地未匹配: ${currentValue}` : currentValue;
         } else {
             filterInput.value = "";
             filterInput.style.color = C.accent;
+            filterInput.title = "";
         }
     };
     
@@ -772,6 +775,7 @@ app.registerExtension({
             // 序列化（仅模型强度，无CLIP强度）
             node._serializeLoraData = function () {
                 const data = node._loraEntries.map((e) => ({
+                    ...e.source,
                     name: e.name,
                     strength_model: e.strengthModel,
                     enabled: e.enabled,
@@ -998,6 +1002,7 @@ app.registerExtension({
             node._createLoraEntryDOM = function (data) {
                 const d = data || { name: "", strength_model: 1.0, enabled: true };
                 const entry = {
+                    source: { ...d },
                     name: d.name,
                     strengthModel: d.strength_model,
                     enabled: d.enabled,

@@ -496,33 +496,28 @@ def resolve_preset_items(items):
     if not isinstance(items, list):
         return items
     from . import sha256_cache
-    # sha256(小写) -> 本地真实相对路径，用于改名匹配
-    cache = sha256_cache.build_sha_index()
+    from .lora_preset_paths import resolve_preset_paths
 
-    resolved = []
-    for item in items:
-        if not isinstance(item, dict):
-            resolved.append(item)
-            continue
-        name = item.get("name", "") or ""
-        sha = (item.get("sha256") or "").strip().lower()
-        new_name = name
+    candidate_index = sha256_cache.build_sha_candidates_index()
+    candidate_states = {}
 
-        # 1) 优先按 sha256 重定位到本地真实相对路径（支持改名/换目录匹配）
-        if sha and sha in cache:
-            new_name = cache[sha]
-        else:
-            # 2) 归一化 name（与导出/校验规则一致）：反斜杠->正斜杠，剥离前导斜杠
-            norm = name.replace("\\", "/").lstrip("/")
-            if norm and norm != name and _lora_exists(norm):
-                new_name = norm
-            elif name and _lora_exists(name):
-                new_name = name  # 原名即可定位，保底
+    def candidate_state(name):
+        if name in candidate_states:
+            return candidate_states[name]
+        try:
+            full_path = folder_paths.get_full_path("loras", name)
+        except Exception:
+            full_path = None
+        state = (
+            sha256_cache.check_entry_state(name, full_path)
+            if full_path else "missing"
+        )
+        candidate_states[name] = state
+        return state
 
-        new_item = dict(item)
-        new_item["name"] = new_name
-        resolved.append(new_item)
-    return resolved
+    return resolve_preset_paths(
+        items, candidate_index, candidate_state, _lora_exists
+    )
 
 
 @PromptServer.instance.routes.post('/naiba/presets/resolve')
@@ -1304,6 +1299,23 @@ async def batch_sync_handler(request):
 # ============================================================
 # API 路由：查询全局 sha256 缓存状态
 # ============================================================
+def _get_sha256_cache_status(sha256_cache):
+    try:
+        local_loras = folder_paths.get_filename_list("loras")
+    except Exception:
+        local_loras = []
+
+    local_entries = []
+    for raw_name in local_loras:
+        name = str(raw_name).replace("\\", "/")
+        try:
+            full_path = folder_paths.get_full_path("loras", name)
+        except Exception:
+            full_path = None
+        local_entries.append((name, full_path))
+    return sha256_cache.summarize_local_entries(local_entries)
+
+
 @PromptServer.instance.routes.get('/naiba/lora/sha256-cache')
 async def sha256_cache_status_handler(request):
     """
@@ -1318,28 +1330,16 @@ async def sha256_cache_status_handler(request):
         from . import sha256_cache
 
         include_map = request.query.get('include_map', '') in ('1', 'true', 'yes')
-        cache = sha256_cache.get_all()
-        cached_count = len(cache)
-
-        try:
-            local_loras = folder_paths.get_filename_list("loras")
-        except Exception:
-            local_loras = []
-        # 统一分隔符后比较
-        local_norm = [str(n).replace("\\", "/") for n in local_loras]
-        total = len(local_norm)
-        missing = [n for n in local_norm if n not in cache]
-
-        resp = {
-            "success": True,
-            "cached_count": cached_count,
-            "total_loras": total,
-            "missing_count": len(missing),
-            "all_cached": (total > 0 and len(missing) == 0),
-        }
+        status = _get_sha256_cache_status(sha256_cache)
+        resp = {"success": True, **{
+            key: value for key, value in status.items()
+            if key not in ("missing", "stale", "orphaned")
+        }}
         if include_map:
-            resp["cache"] = cache
-            resp["missing"] = missing[:200]
+            resp["cache"] = sha256_cache.get_all()
+            resp["missing"] = status["missing"][:200]
+            resp["stale"] = status["stale"][:200]
+            resp["orphaned"] = status["orphaned"][:200]
         return web.json_response(resp)
     except Exception as e:
         print(f"[Naiba] sha256-cache status error: {e}")
@@ -1464,24 +1464,24 @@ async def cache_sha256_only_handler(request):
         await _asyncio.sleep(0)
 
         # 收尾：返回缓存概览
-        cache = sha256_cache.get_all()
-        local_norm = [str(n).replace("\\", "/")
-                      for n in folder_paths.get_filename_list("loras")]
-        total = len(local_norm)
-        missing = [n for n in local_norm if n not in cache]
-        results["cached_count"] = len(cache)
-        results["missing_count"] = len(missing)
-        results["all_cached"] = (total > 0 and len(missing) == 0)
+        cache_status = _get_sha256_cache_status(sha256_cache)
+        results.update({
+            key: value for key, value in cache_status.items()
+            if key not in ("missing", "stale", "orphaned")
+        })
 
         await send_sse("complete", {
             "results": results,
-            "cached_count": len(cache),
-            "missing_count": len(missing),
+            "cached_count": cache_status["cached_count"],
+            "total_loras": cache_status["total_loras"],
+            "missing_count": cache_status["missing_count"],
+            "stale_count": cache_status["stale_count"],
+            "orphaned_count": cache_status["orphaned_count"],
             "all_cached": results["all_cached"],
             "message": (
                 f"SHA256 缓存完成：新增/更新 {results['cached']} 个，"
                 f"跳过 {results['skipped']} 个，失败 {results['failed']} 个；"
-                f"当前已缓存共 {len(cache)} 个"
+                f"当前有效缓存 {cache_status['cached_count']}/{cache_status['total_loras']} 个"
             ),
         })
 
@@ -1500,12 +1500,14 @@ async def cache_sha256_only_handler(request):
 async def verify_preset_handler(request):
     """
     上传预设校验聚合接口（SSE 流式，实时回传进度）：
-      1) 按预设条目中的 sha256 与本地全局缓存 / 磁盘匹配，判断本地是否存在；
-      2) 对去重后的唯一 sha256 实时查询 Civitai，判断是否上站；
+      1) 按预设条目中的 sha256 查询本地全局缓存，只用 size/mtime 检查缓存状态；
+      2) 对所有条目中去重后的唯一 sha256 实时查询 Civitai，判断是否上站；
     事件流格式（每行 data: {json}\\n\\n）:
       {"type":"progress","stage":"init","done":0,"total":N,"msg":"..."}
       {"type":"progress","stage":"civitai","done":k,"total":N,"msg":"已查询 Civitai k/N"}
-      {"type":"done","success":true,"green":[...],"gray":[...],"not_found":[...],"no_sha256":[...],"summary":{...}}
+      {"type":"done","success":true,"green":[...],"gray":[...],"not_found":[...],
+       "no_sha256":[...],"relocations":[...],"ambiguous":[...],"stale_cache":[...],
+       "path_summary":{...},"summary":{...}}
       {"type":"error","message":"..."}
     四分类：
       green      本地存在且 C 站上也有（含 civitai_info，可显示绿色卡片）
@@ -1514,6 +1516,7 @@ async def verify_preset_handler(request):
       no_sha256  预设条目本身没有 sha256（置底「预设内无sha256」）
     请求体：{"lora_list":[{"name","sha256"?,"strength_model","strength_clip","enabled"}...], "api_key":""}
     """
+    client = None
     try:
         body = await request.json()
         lora_list = body.get("lora_list", [])
@@ -1523,34 +1526,37 @@ async def verify_preset_handler(request):
 
         from . import sha256_cache
         from .civitai_utils import CivitaiClient, build_civitai_version_info
+        from .lora_preset_paths import classify_preset_paths, normalize_sha256
 
-        # 全局缓存：sha256(小写) -> 相对名，用于本地存在性匹配
-        cache = sha256_cache.get_all()
-        sha_to_name = {}
-        for n, info in cache.items():
-            if isinstance(info, dict) and info.get("sha256"):
-                sha_to_name[info["sha256"].lower()] = n
+        candidate_index = sha256_cache.build_sha_candidates_index()
+        candidate_states = {}
 
-        def is_local(name, sha):
-            norm = (name or "").replace("\\", "/").lstrip("/")
-            if norm:
-                try:
-                    fp = folder_paths.get_full_path("loras", norm)
-                except Exception:
-                    fp = None
-                if fp and os.path.exists(fp):
-                    return True, norm
-            if sha:
-                key = sha.lower()
-                if key in sha_to_name:
-                    return True, sha_to_name[key]
-            return False, None
+        def candidate_state(name):
+            if name in candidate_states:
+                return candidate_states[name]
+            try:
+                full_path = folder_paths.get_full_path("loras", name)
+            except Exception:
+                full_path = None
+            state = (
+                sha256_cache.check_entry_state(name, full_path)
+                if full_path else "missing"
+            )
+            candidate_states[name] = state
+            return state
 
-        # 收集需查 Civitai 的唯一 sha256（去重，仅限有 sha256 的条目）
+        path_report = classify_preset_paths(
+            lora_list, candidate_index, candidate_state
+        )
+        local_candidates = path_report.pop("local_candidates")
+
+        # 禁用只控制工作流是否加载，不应让预设校验漏掉该条目。
         unique_shas = []
         seen = set()
         for item in lora_list:
-            sha = (item.get("sha256") or "").strip().lower()
+            if not isinstance(item, dict):
+                continue
+            sha = normalize_sha256(item.get("sha256"))
             if sha and sha not in seen:
                 seen.add(sha)
                 unique_shas.append(sha)
@@ -1581,7 +1587,6 @@ async def verify_preset_handler(request):
         })
 
         sha_info_map = {}
-        client = None
         if unique_shas:
             client = CivitaiClient(api_key=api_key)
             sem = asyncio.Semaphore(6)
@@ -1614,10 +1619,13 @@ async def verify_preset_handler(request):
 
         # 分类
         green, gray, not_found, no_sha256 = [], [], [], []
-        for item in lora_list:
+        for preset_index, item in enumerate(lora_list):
+            if not isinstance(item, dict):
+                continue
             name = item.get("name", "")
-            sha = (item.get("sha256") or "").strip().lower()
+            sha = normalize_sha256(item.get("sha256"))
             entry = {
+                "preset_index": preset_index,
                 "name": name,
                 "sha256": sha or None,
                 "strength_model": item.get("strength_model", 1.0),
@@ -1627,10 +1635,14 @@ async def verify_preset_handler(request):
             if not sha:
                 no_sha256.append(entry)
                 continue
-            local, local_name = is_local(name, sha)
+            candidates = local_candidates.get(preset_index, [])
+            local = bool(candidates)
             info = sha_info_map.get(sha)
             if local:
-                entry["local_name"] = local_name
+                if len(candidates) == 1:
+                    entry["local_name"] = candidates[0]
+                else:
+                    entry["local_candidates"] = candidates
                 entry["civitai_found"] = info is not None
                 entry["civitai_info"] = info
                 green.append(entry)
@@ -1648,8 +1660,9 @@ async def verify_preset_handler(request):
             "gray": gray,
             "not_found": not_found,
             "no_sha256": no_sha256,
+            **path_report,
             "summary": {
-                "total": len(lora_list),
+                "total": sum(1 for item in lora_list if isinstance(item, dict)),
                 "green": len(green),
                 "gray": len(gray),
                 "not_found": len(not_found),

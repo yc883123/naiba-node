@@ -2,6 +2,31 @@
 
 自定义ComfyUI节点集合，包含WAN模型优化、Multi LoRA Loader、Multi LoRA Loader (only model)、Visual LoRA Loader、List LoRA Loader、Lora Testing Converter、Save Text File、Lora Data Preview、Civitai Info Reader、Custom Data Reader、Power LoRA Config Reader、**Naiba Tag Picker（Danbooru 标签画廊/扭蛋）**和**Naiba Gelbooru Tag Picker（Gelbooru 标签画廊/扭蛋）**功能。
 
+## v3.6.0 更新亮点（2026-07-28）
+
+本次更新聚焦 **LoRA 预设路径智能校正** 与 **加载器健壮性**。
+
+### 预设校验 → 一键生成本地路径 JSON（Lora Data Preview）
+- 上传预设校验后新增「本地路径更新」面板：自动列出可重定位项（按 SHA256 唯一匹配）、需手动选择项（一个 SHA256 对应多个本地 LoRA）、缓存失效项。
+- 支持勾选 / 全选唯一匹配 / 清除，一键下载 `原名（本地）.json`，把预设内路径替换为本地实际路径。
+- 校验现在覆盖全部条目（含禁用项），结果中标注「预设中禁用」。
+
+### SHA256 缓存状态增强
+- 新增 `check_entry_state()`：仅用 size/mtime 判断缓存条目 `current/stale/missing`，绝不读取 LoRA 内容（之前的 `cache_invalid` 会误读文件）。
+- 新增 `summarize_local_entries()`：统计有效 / 失效 / 孤儿缓存数量；缓存状态接口新增 `stale_count`、`orphaned_count`。
+- 一个 SHA256 现已支持对应多个本地文件名（`build_sha_candidates_index`），此前只保留第一个。
+
+### 4 个 LoRA 加载器统一重构
+- 抽离共享工具到新模块 `lora_load_utils.py`（解析 / SHA256 回退 / 兼容预检）与 `lora_preset_paths.py`（预设路径智能重定位）。
+- 严格 JSON 解析：无效 JSON 明确报错，不再静默当空预设。
+- SHA256 回退定位：预设 `name` 缺失时按缓存 SHA256 唯一回退本地路径。
+- 兼容性预检：加载前确认 LoRA 至少能应用到某个非零权重目标，否则报错而非静默跳过。
+- 失败聚合：全部加载失败汇总为 `RuntimeError` 带明细，不再静默 `print` + 跳过；输出仅含成功应用的 LoRA。
+
+### 前端体验
+- 预设导入后正确触发节点重绘、预览刷新与 `setDirtyCanvas`（naiba_preset_utils.js）。
+- Visual / Multi LoRA Loader 列表现高亮「本地未匹配」的 LoRA（红色边框），并禁用其悬停预览。
+
 ## 节点列表
 
 ### 1. Naiba Wan Block Swap (WAN模型Block Swap节点)

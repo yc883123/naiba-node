@@ -1258,6 +1258,7 @@ function createVisualLoraModal(node, loraList) {
         const data = [];
         selectedLoras.forEach((config, name) => {
             data.push({
+                ...config,
                 name: name,
                 strength_model: config.strength_model,
                 strength_clip: config.strength_clip,
@@ -1333,6 +1334,8 @@ app.registerExtension({
         } catch (e) {
             console.warn("[VisualLoraLoader] Cannot fetch Lora list:", e);
         }
+        const normalizeLoraPath = (value) => String(value || "").replace(/\\/g, "/").replace(/^\/+/, "").toLocaleLowerCase();
+        const availableLoraPaths = new Set(loraList.map(normalizeLoraPath));
 
         const origOnNodeCreated = nodeType.prototype.onNodeCreated;
 
@@ -1775,14 +1778,15 @@ app.registerExtension({
 
                 visibleEntries.forEach(({ lora, index }) => {
                     const isEnabled = lora.enabled !== false;
+                    const isMissing = !!lora.name && !availableLoraPaths.has(normalizeLoraPath(lora.name));
                     const row = document.createElement("div");
                     row.dataset.loraRowIndex = String(index);
                     row.style.cssText = `
                         display:flex;align-items:center;gap:6px;
                         padding:4px 6px;margin:3px 0;border-radius:4px;
-                        background:${isEnabled ? COLORS.listItemBg : "rgba(22,33,62,0.4)"};
-                        border:1px solid ${isEnabled ? COLORS.cardBorder : COLORS.disabled};
-                        ${!isEnabled ? "opacity:0.55;" : ""}
+                        background:${isMissing ? "rgba(255,107,107,0.12)" : (isEnabled ? COLORS.listItemBg : "rgba(22,33,62,0.4)")};
+                        border:1px solid ${isMissing ? COLORS.danger : (isEnabled ? COLORS.cardBorder : COLORS.disabled)};
+                        ${!isEnabled && !isMissing ? "opacity:0.55;" : ""}
                     `;
 
                     const dragHandle = document.createElement("div");
@@ -1798,10 +1802,10 @@ app.registerExtension({
                     row.appendChild(dragHandle);
 
                     const name = document.createElement("div");
-                    name.textContent = (lora.name || "").split('/').pop().split('\\').pop();
-                    name.title = lora.name || "";
+                    name.textContent = (lora.name || "").replace(/\\/g, "/");
+                    name.title = isMissing ? `本地未匹配: ${lora.name}` : (lora.name || "");
                     name.style.cssText = `
-                        flex:1;min-width:0;color:${isEnabled ? COLORS.text : COLORS.disabled};
+                        flex:1;min-width:0;color:${isMissing ? COLORS.danger : (isEnabled ? COLORS.text : COLORS.disabled)};
                         font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
                     `;
                     row.appendChild(name);
@@ -1809,7 +1813,7 @@ app.registerExtension({
                     // 添加悬停预览事件
                     const previewUrl = `/naiba/lora/preview?name=${encodeURIComponent(lora.name || "")}`;
                     name.addEventListener("mouseenter", (ev) => {
-                        if (lora.name && node._previewEnabled !== false) scheduleVisualLoraFloatPreview(ev, previewUrl);
+                        if (!isMissing && lora.name && node._previewEnabled !== false) scheduleVisualLoraFloatPreview(ev, previewUrl);
                     });
                     name.addEventListener("mousemove", (ev) => {
                         _visualLoraFloatLastPointer = { x: ev.clientX, y: ev.clientY };

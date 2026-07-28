@@ -3,6 +3,7 @@
  * 供 Multi LoRA Loader 和 Multi LoRA Loader (only model) 使用
  */
 
+import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
 // ========== 颜色常量 ==========
@@ -351,13 +352,15 @@ export function createPresetsModal(node, onImport = null) {
         const loraDataWidget = node.widgets?.find((w) => w.name === "lora_data");
         if (!loraDataWidget) return;
 
+        const serialized = JSON.stringify(data);
+
         // 清空现有条目（Multi LoRA Loader 节点）
         if (node._clearAllEntries) {
             node._clearAllEntries();
         }
 
         // 设置数据
-        loraDataWidget.value = JSON.stringify(data);
+        loraDataWidget.value = serialized;
 
         // 重建 UI（Multi LoRA Loader 节点）
         if (node._addLoraEntry && data.length > 0) {
@@ -365,16 +368,32 @@ export function createPresetsModal(node, onImport = null) {
                 node._addLoraEntry(item);
             }
         }
+
+        // Multi Loader 的逐条重建会在内部序列化；最后恢复完整导入数据，
+        // 确保路径、SHA256 和未知字段不会被中间状态覆盖。
+        loraDataWidget.value = serialized;
         
         // 更新显示区域（Visual LoRA Loader 节点）
         if (node._updateVisualLoraDisplay) {
             node._updateVisualLoraDisplay();
+        }
+
+        if (node._updateLoraDataPreview) {
+            node._updateLoraDataPreview();
+        }
+        if (node._visualModalReload) {
+            node._visualModalReload();
         }
         
         // 触发节点重绘（Visual LoRA Loader 节点）
         if (node._triggerVisualLoraResize) {
             node._triggerVisualLoraResize();
         }
+
+        loraDataWidget.callback?.(loraDataWidget.value, app.canvas, node);
+        node.graph?.change?.();
+        node.setDirtyCanvas?.(true, true);
+        node.graph?.setDirtyCanvas(true, true);
     }
 
     // ========== 预设搜索过滤（前端即时过滤网格卡片） ==========

@@ -1727,12 +1727,15 @@ function createLoraDataPreviewModal(node, loraList) {
         }
 
         let loraList = [];
+        let listKey = null;
         if (Array.isArray(presetData)) {
             loraList = presetData;
         } else if (presetData.lora_list && Array.isArray(presetData.lora_list)) {
             loraList = presetData.lora_list;
+            listKey = "lora_list";
         } else if (presetData.loras && Array.isArray(presetData.loras)) {
             loraList = presetData.loras;
+            listKey = "loras";
         } else {
             statusSpan.textContent = "JSON格式不正确，需要数组或包含lora_list/loras字段";
             statusSpan.style.color = COLORS.error;
@@ -1745,12 +1748,11 @@ function createLoraDataPreviewModal(node, loraList) {
             return;
         }
 
-        const enabledLoras = loraList.filter(item => item.enabled !== false);
-        if (enabledLoras.length === 0) {
-            statusSpan.textContent = "没有启用的LoRA";
-            statusSpan.style.color = COLORS.textDim;
-            return;
-        }
+        const presetContext = {
+            sourceData: presetData,
+            listKey,
+            sourceFileName: file.name || "preset.json",
+        };
 
         // ========== 执行门禁：检查全局 sha256 缓存 ==========
         let cacheData = null;
@@ -1787,7 +1789,7 @@ function createLoraDataPreviewModal(node, loraList) {
         // 即时按钮反馈：点下即变「校验中...」并置灰，让用户一眼看到按钮已响应
         verifyBtn.textContent = "校验中...";
         verifyBtn.disabled = true;
-        statusSpan.textContent = `正在校验 ${enabledLoras.length} 个 LoRA（本地匹配 + Civitai 实时查询）...`;
+        statusSpan.textContent = `正在校验预设中的 ${loraList.length} 条 LoRA（包括禁用项）...`;
         statusSpan.style.color = COLORS.text;
         checkVerifyResultsContent.innerHTML = "";
         checkMissingContent.innerHTML = "";
@@ -1806,7 +1808,7 @@ function createLoraDataPreviewModal(node, loraList) {
             const resp = await fetch('/naiba/lora/verify-preset', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ lora_list: enabledLoras, api_key: "" })
+                body: JSON.stringify({ lora_list: loraList, api_key: "" })
             });
             if (!resp.ok) {
                 const errData = await resp.json().catch(() => ({}));
@@ -1848,10 +1850,10 @@ function createLoraDataPreviewModal(node, loraList) {
         }
 
         resetVerifyBtn();
-        renderVerifyPresetResult(finalResult, statusSpan);
+        renderVerifyPresetResult(finalResult, statusSpan, presetContext);
     }
 
-    function renderVerifyPresetResult(result, statusSpan) {
+    function renderVerifyPresetResult(result, statusSpan, presetContext) {
         const green = result.green || [];
         const gray = result.gray || [];
         const notFound = result.not_found || [];
@@ -1875,6 +1877,9 @@ function createLoraDataPreviewModal(node, loraList) {
             <span style="color:${COLORS.textDim};">共 ${s.total || 0} 条</span>
         `;
         checkVerifyResultsContent.appendChild(header);
+        checkVerifyResultsContent.appendChild(
+            renderPathUpdateControls(result, statusSpan, presetContext)
+        );
 
         if (green.length) {
             checkVerifyResultsContent.appendChild(makeSectionTitle("✓ 本地存在且 C 站上也有（绿色卡片）", COLORS.success));
@@ -1899,6 +1904,177 @@ function createLoraDataPreviewModal(node, loraList) {
 
         statusSpan.textContent = `校验完成！绿 ${green.length}・灰 ${gray.length}・找不到 ${notFound.length}・无sha256 ${noSha.length}`;
         statusSpan.style.color = COLORS.success;
+    }
+
+    function makeLocalPresetFilename(sourceFileName) {
+        const name = (sourceFileName || "preset.json").replace(/\.json$/i, "");
+        return `${name}（本地）.json`;
+    }
+
+    function renderPathUpdateControls(result, statusSpan, presetContext) {
+        const relocations = result.relocations || [];
+        const ambiguous = result.ambiguous || [];
+        const staleCache = result.stale_cache || [];
+        const summary = result.path_summary || {};
+        const selectedUpdates = new Map();
+        relocations.forEach(item => selectedUpdates.set(item.preset_index, item.local_name));
+
+        const section = document.createElement("section");
+        section.style.cssText = `margin:0 0 12px;padding:10px 0;border-top:1px solid ${COLORS.border};border-bottom:1px solid ${COLORS.border};`;
+
+        const title = document.createElement("div");
+        title.textContent = `本地路径更新：可更新 ${relocations.length}，需选择 ${ambiguous.length}，缓存失效 ${staleCache.length}`;
+        title.style.cssText = `color:${COLORS.text};font-size:12px;font-weight:600;margin-bottom:8px;`;
+        section.appendChild(title);
+
+        const summaryLine = document.createElement("div");
+        summaryLine.textContent = `全部 ${summary.total || 0} · 路径一致 ${summary.same || 0} · 本地缺失 ${summary.missing || 0} · 无有效 SHA256 ${summary.no_sha256 || 0}`;
+        summaryLine.style.cssText = `color:${COLORS.textDim};font-size:10px;margin-bottom:8px;`;
+        section.appendChild(summaryLine);
+
+        const rows = document.createElement("div");
+        rows.style.cssText = "display:flex;flex-direction:column;gap:6px;";
+
+        const updateButtonLabel = () => {
+            downloadBtn.textContent = `生成本地 JSON (${selectedUpdates.size})`;
+        };
+
+        relocations.forEach(item => {
+            const row = document.createElement("label");
+            row.style.cssText = `display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:8px;align-items:center;padding:7px 8px;background:${COLORS.inputBg};border-left:3px solid ${COLORS.success};border-radius:4px;cursor:pointer;`;
+
+            const checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.checked = true;
+            checkbox.addEventListener("change", () => {
+                if (checkbox.checked) selectedUpdates.set(item.preset_index, item.local_name);
+                else selectedUpdates.delete(item.preset_index);
+                updateButtonLabel();
+            });
+
+            const paths = document.createElement("div");
+            paths.style.cssText = "min-width:0;";
+            const sourcePath = document.createElement("div");
+            sourcePath.textContent = item.original_name || "(空路径)";
+            sourcePath.title = item.original_name || "";
+            sourcePath.style.cssText = `color:${COLORS.textDim};font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+            const localPath = document.createElement("div");
+            localPath.textContent = `→ ${item.local_name}`;
+            localPath.title = item.local_name || "";
+            localPath.style.cssText = `color:${COLORS.success};font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;`;
+            paths.appendChild(sourcePath);
+            paths.appendChild(localPath);
+
+            const hash = document.createElement("code");
+            hash.textContent = (item.sha256 || "").slice(0, 12);
+            hash.title = item.sha256 || "";
+            hash.style.cssText = `color:${COLORS.textDim};font-size:10px;`;
+
+            row.appendChild(checkbox);
+            row.appendChild(paths);
+            row.appendChild(hash);
+            rows.appendChild(row);
+        });
+
+        ambiguous.forEach(item => {
+            const row = document.createElement("div");
+            row.style.cssText = `display:grid;grid-template-columns:minmax(0,1fr) minmax(180px,0.8fr);gap:8px;align-items:center;padding:7px 8px;background:${COLORS.inputBg};border-left:3px solid ${COLORS.warning};border-radius:4px;`;
+            const label = document.createElement("div");
+            label.textContent = item.original_name || "(空路径)";
+            label.title = item.original_name || "";
+            label.style.cssText = `color:${COLORS.text};font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+
+            const select = document.createElement("select");
+            select.style.cssText = `width:100%;min-width:0;padding:5px;background:${COLORS.cardBg};color:${COLORS.text};border:1px solid ${COLORS.border};border-radius:4px;font-size:10px;`;
+            const placeholder = document.createElement("option");
+            placeholder.value = "";
+            placeholder.textContent = "选择本地路径后写入";
+            select.appendChild(placeholder);
+            (item.candidates || []).forEach(candidate => {
+                const option = document.createElement("option");
+                option.value = candidate;
+                option.textContent = candidate;
+                select.appendChild(option);
+            });
+            select.addEventListener("change", () => {
+                if (select.value) selectedUpdates.set(item.preset_index, select.value);
+                else selectedUpdates.delete(item.preset_index);
+                updateButtonLabel();
+            });
+
+            row.appendChild(label);
+            row.appendChild(select);
+            rows.appendChild(row);
+        });
+
+        staleCache.forEach(item => {
+            const row = document.createElement("div");
+            row.textContent = `缓存失效：${item.name || "(空路径)"}（请重新执行离线缓存 SHA256）`;
+            row.title = (item.cached_names || []).join("\n");
+            row.style.cssText = `padding:6px 8px;color:${COLORS.warning};background:${COLORS.warningBg};border-left:3px solid ${COLORS.warning};border-radius:4px;font-size:10px;word-break:break-all;`;
+            rows.appendChild(row);
+        });
+
+        if (!relocations.length && !ambiguous.length && !staleCache.length) {
+            const empty = document.createElement("div");
+            empty.textContent = "没有需要调整的本地路径";
+            empty.style.cssText = `color:${COLORS.textDim};font-size:11px;padding:6px 0;`;
+            rows.appendChild(empty);
+        }
+        section.appendChild(rows);
+
+        const actions = document.createElement("div");
+        actions.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px;";
+        const selectAllBtn = document.createElement("button");
+        selectAllBtn.textContent = "全选唯一匹配";
+        selectAllBtn.style.cssText = `padding:6px 10px;background:${COLORS.inputBg};color:${COLORS.text};border:1px solid ${COLORS.border};border-radius:4px;cursor:pointer;font-size:11px;`;
+        selectAllBtn.addEventListener("click", () => {
+            section.querySelectorAll('input[type="checkbox"]').forEach(box => { box.checked = true; });
+            relocations.forEach(item => selectedUpdates.set(item.preset_index, item.local_name));
+            updateButtonLabel();
+        });
+
+        const clearBtn = document.createElement("button");
+        clearBtn.textContent = "清除选择";
+        clearBtn.style.cssText = selectAllBtn.style.cssText;
+        clearBtn.addEventListener("click", () => {
+            selectedUpdates.clear();
+            section.querySelectorAll('input[type="checkbox"]').forEach(box => { box.checked = false; });
+            section.querySelectorAll("select").forEach(select => { select.value = ""; });
+            updateButtonLabel();
+        });
+
+        const downloadBtn = document.createElement("button");
+        downloadBtn.style.cssText = `padding:7px 12px;background:${COLORS.success};color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;`;
+        downloadBtn.addEventListener("click", () => {
+            const outputData = JSON.parse(JSON.stringify(presetContext.sourceData));
+            const outputList = presetContext.listKey ? outputData[presetContext.listKey] : outputData;
+            selectedUpdates.forEach((localName, presetIndex) => {
+                if (outputList[presetIndex] && typeof outputList[presetIndex] === "object") {
+                    outputList[presetIndex].name = localName;
+                }
+            });
+
+            const fileName = makeLocalPresetFilename(presetContext.sourceFileName);
+            const blob = new Blob([JSON.stringify(outputData, null, 2)], { type: "application/json;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = fileName;
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 0);
+            statusSpan.textContent = `已生成 ${fileName}，更新 ${selectedUpdates.size} 条本地路径`;
+            statusSpan.style.color = COLORS.success;
+        });
+        updateButtonLabel();
+
+        actions.appendChild(selectAllBtn);
+        actions.appendChild(clearBtn);
+        actions.appendChild(downloadBtn);
+        section.appendChild(actions);
+        return section;
     }
 
     function makeSectionTitle(text, color) {
@@ -1963,6 +2139,12 @@ function createLoraDataPreviewModal(node, loraList) {
 
         const rightDiv = document.createElement("div");
         rightDiv.style.cssText = "display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;";
+        if (item.enabled === false) {
+            const disabledTag = document.createElement("div");
+            disabledTag.textContent = "预设中禁用";
+            disabledTag.style.cssText = `font-size:10px;padding:1px 6px;border-radius:3px;background:${COLORS.inputBg};color:${COLORS.warning};border:1px solid ${COLORS.border};`;
+            rightDiv.appendChild(disabledTag);
+        }
         if (!isGreen) {
             const tag = document.createElement("div");
             tag.textContent = "需下载";
@@ -1989,13 +2171,26 @@ function createLoraDataPreviewModal(node, loraList) {
         const sha = item.sha256 || "";
         const d = document.createElement("div");
         d.style.cssText = `padding:6px 8px;background:${COLORS.inputBg};border-radius:4px;margin-bottom:4px;border-left:3px solid ${type === "not_found" ? COLORS.error : COLORS.warning};`;
-        d.innerHTML = `
-            <div style="color:${COLORS.text};font-size:11px;word-break:break-all;">
-                <strong>${type === "not_found" ? "✗ 找不到地址:" : "? 预设内无sha256:"}</strong> ${name}
-            </div>
-            ${sha ? `<div style="color:${COLORS.textDim};font-size:10px;margin-top:2px;word-break:break-all;">sha256: ${sha}</div>` : ""}
-            <div style="color:${COLORS.textDim};font-size:10px;margin-top:2px;">强度: ${item.strength_model ?? 1.0} / ${item.strength_clip ?? 1.0}</div>
-        `;
+        const nameLine = document.createElement("div");
+        nameLine.textContent = `${type === "not_found" ? "✗ 找不到地址:" : "? 预设内无sha256:"} ${name}`;
+        nameLine.style.cssText = `color:${COLORS.text};font-size:11px;word-break:break-all;`;
+        d.appendChild(nameLine);
+        if (sha) {
+            const hashLine = document.createElement("div");
+            hashLine.textContent = `sha256: ${sha}`;
+            hashLine.style.cssText = `color:${COLORS.textDim};font-size:10px;margin-top:2px;word-break:break-all;`;
+            d.appendChild(hashLine);
+        }
+        const strengthLine = document.createElement("div");
+        strengthLine.textContent = `强度: ${item.strength_model ?? 1.0} / ${item.strength_clip ?? 1.0}`;
+        strengthLine.style.cssText = `color:${COLORS.textDim};font-size:10px;margin-top:2px;`;
+        d.appendChild(strengthLine);
+        if (item.enabled === false) {
+            const disabledLine = document.createElement("div");
+            disabledLine.textContent = "状态: 预设中禁用（仍已校验）";
+            disabledLine.style.cssText = `color:${COLORS.warning};font-size:10px;margin-top:2px;`;
+            d.appendChild(disabledLine);
+        }
         return d;
     }
 
@@ -3610,6 +3805,8 @@ app.registerExtension({
         } catch (e) {
             console.warn("[LoraDataPreview] Cannot fetch Lora list:", e);
         }
+        const normalizeLoraPath = (value) => String(value || "").replace(/\\/g, "/").replace(/^\/+/, "").toLocaleLowerCase();
+        const availableLoraPaths = new Set(loraList.map(normalizeLoraPath));
 
         const origOnNodeCreated = nodeType.prototype.onNodeCreated;
 
@@ -3650,9 +3847,12 @@ app.registerExtension({
                     let html = `<div style="display:flex;flex-direction:column;gap:2px;">`;
                     data.forEach((item, index) => {
                         if (item.name) {
-                            const displayName = item.name.split('/').pop().split('\\').pop();
-                            html += `<div style="display:flex;align-items:center;justify-content:space-between;padding:2px 4px;border-radius:3px;" onmouseenter="this.style.background='rgba(255,255,255,0.05)'" onmouseleave="this.style.background='transparent'">
-                                <span style="color:${COLORS.accent};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;">${displayName}</span>
+                            const isMissing = !availableLoraPaths.has(normalizeLoraPath(item.name));
+                            const displayName = String(item.name).replace(/\\/g, "/").replace(/[&<>"']/g, (char) => ({
+                                "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+                            })[char]);
+                            html += `<div style="display:flex;align-items:center;justify-content:space-between;padding:2px 4px;border-radius:3px;${isMissing ? `background:rgba(255,107,107,0.12);border:1px solid ${COLORS.error};` : ""}">
+                                <span title="${isMissing ? `本地未匹配: ${displayName}` : displayName}" style="color:${isMissing ? COLORS.error : COLORS.accent};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;">${displayName}</span>
                                 <span data-remove="${index}" style="color:${COLORS.danger};cursor:pointer;font-size:14px;padding:0 4px;opacity:0.6;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0.6'">×</span>
                             </div>`;
                         }

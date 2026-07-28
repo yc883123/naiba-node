@@ -9,6 +9,12 @@ import folder_paths
 import comfy.utils
 import comfy.sd
 
+from .lora_load_utils import (
+    ensure_lora_has_compatible_patches,
+    parse_lora_list,
+    resolve_lora_name,
+)
+
 
 class MultiLoraLoader:
     """
@@ -59,27 +65,26 @@ class MultiLoraLoader:
         ]
         """
         # 解析JSON配置
-        try:
-            loras = json.loads(lora_data) if lora_data.strip() else []
-        except (json.JSONDecodeError, TypeError):
-            loras = []
+        loras = parse_lora_list(lora_data, "lora_data")
 
-        # 跟踪所有启用的LoRA名称
-        enabled_lora_names = []
+        # 只记录真正成功应用的 LoRA；失败项汇总后让节点明确报错。
+        loaded_lora_names = []
+        load_failures = []
 
         # 依次应用每个启用的Lora
-        for lora_config in loras:
+        for preset_index, lora_config in enumerate(loras):
+            if not isinstance(lora_config, dict):
+                load_failures.append(f"第 {preset_index + 1} 项不是 LoRA 对象")
+                continue
             # 检查是否启用
             if not lora_config.get("enabled", False):
                 continue
 
             # 获取Lora文件名
-            lora_name = lora_config.get("name", "")
-            if not lora_name:
+            configured_name = lora_config.get("name", "")
+            if not configured_name:
+                load_failures.append(f"第 {preset_index + 1} 项已启用但缺少 name")
                 continue
-
-            # 记录所有启用的LoRA名称
-            enabled_lora_names.append(lora_name)
 
             # 获取权重
             strength_model = float(lora_config.get("strength_model", 1.0))
@@ -94,20 +99,31 @@ class MultiLoraLoader:
                 continue
 
             try:
+                lora_name = resolve_lora_name(lora_config)
                 # 加载Lora文件
                 lora_path = folder_paths.get_full_path_or_raise("loras", lora_name)
                 lora = comfy.utils.load_torch_file(lora_path, safe_load=True)
+                ensure_lora_has_compatible_patches(
+                    model, clip, lora, strength_model, strength_clip
+                )
 
                 # 应用Lora到模型和CLIP（如果CLIP为None，则只加载模型部分）
                 model, clip = comfy.sd.load_lora_for_models(
                     model, clip, lora, strength_model, strength_clip
                 )
+                loaded_lora_names.append(lora_name)
             except Exception as e:
-                print(f"[MultiLoraLoader] 加载Lora '{lora_name}' 失败: {e}")
+                load_failures.append(f"{configured_name}: {type(e).__name__}: {e}")
                 continue
 
-        # 始终输出已启用的LoRA名称列表
-        lora_names_json = json.dumps(enabled_lora_names, ensure_ascii=False)
+        if load_failures:
+            details = "\n".join(f"- {item}" for item in load_failures)
+            raise RuntimeError(
+                f"Multi LoRA Loader 有 {len(load_failures)} 个 LoRA 未能应用：\n{details}"
+            )
+
+        # 输出仅包含成功应用的 LoRA 名称。
+        lora_names_json = json.dumps(loaded_lora_names, ensure_ascii=False)
 
         return (model, clip, lora_names_json)
 

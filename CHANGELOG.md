@@ -1,5 +1,34 @@
 # 更新日志
 
+## v3.6.0 (2026-07-28)
+
+### 新增功能
+- **Lora Data Preview「本地路径更新」面板**：预设校验后新增面板，按 SHA256 将预设内路径与本地实际 LoRA 对齐
+  - 列出三类条目：`relocations`（唯一匹配，勾选即套用）、`ambiguous`（一个 SHA256 对应多个本地 LoRA，下拉手动选择）、`stale_cache`（缓存失效，提示重新离线缓存 SHA256）
+  - 顶部统计「全部 / 路径一致 / 本地缺失 / 无有效 SHA256」；支持「全选唯一匹配 / 清除选择」，一键下载 `原名（本地）.json`
+  - 校验覆盖全部条目（含禁用项），结果卡片标注「预设中禁用」
+
+### 优化改进
+- **SHA256 缓存状态增强（sha256_cache.py）**：
+  - 新增 `check_entry_state()`：仅用 size/mtime 判断 `current/stale/missing`，绝不读取 LoRA 内容（修复旧 `cache_invalid` 误读文件、未实际失效也报警、运行中 LoRA 被临时锁定的问题）
+  - 新增 `summarize_local_entries()`：统计 `cached_count / stale_count / orphaned_count / all_cached`；缓存状态接口新增 `stale_count`、`orphaned_count` 字段
+  - `build_sha_candidates_index()`：一个 SHA256 支持对应多个本地文件名（此前只保留第一个），支撑 ambiguous 多候选
+- **预设路径智能重定位（lora_preset_paths.py，新模块）**：重写 `resolve_preset_items`，优先按有效 SHA256 候选重定位（避免采用失效历史路径），同名优先、唯一匹配自动替换、多匹配标记 ambiguous
+- **前端体验**：
+  - 预设导入后正确触发节点重绘、预览刷新与 `setDirtyCanvas`（`naiba_preset_utils.js`）
+  - Visual / Multi LoRA Loader 列表现高亮「本地未匹配」LoRA（红色边框），并禁用其悬停预览（`visual_lora_loader.js`、`multi_lora_loader.js`、`multi_lora_loader_only_model.js`）
+  - Lora Data Preview 预设条目列表同样高亮本地缺失项并做 HTML 转义（`lora_data_preview.js`）
+  - 预设管理封面上传走 `uploadCover` 临时文件 + 原子替换，切换格式清理旧扩展名（`preset_routes.py`、`naiba_preset_utils.js`）
+
+### 节点改进
+- **4 个 LoRA 加载器统一重构（lora_load_utils.py，新模块）**：`multi_lora_loader.py`、`multi_lora_loader_only_model.py`、`lora_loader_from_preset.py`、`visual_lora_loader.py` 抽出共享加载逻辑
+  - 严格 JSON 解析：无效 JSON 明确报错，不再静默当空预设
+  - SHA256 回退定位：`lora_name` 缺失时按缓存 SHA256 唯一回退本地路径
+  - 兼容性预检：`ensure_lora_has_compatible_patches` 在加载前确认 LoRA 至少能应用到某个非零权重目标，否则报错而非静默跳过
+  - 失败聚合：加载失败汇总为 `RuntimeError` 带明细，不再静默 `print` + 跳过；输出仅含成功应用的 LoRA 名称列表
+
+---
+
 ## v3.5.4 (2026-07-26)
 
 ### Bug 修复

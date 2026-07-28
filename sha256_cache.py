@@ -21,7 +21,10 @@
     count() -> int                           # 缓存条目数
     get(name) -> str|None                    # 取单个 sha256
     update_entry(name, sha256, path=None)    # 增量写入单条
-    build_sha_index() -> dict                # {sha256_lower: name}
+    build_sha_index() -> dict                # {sha256_lower: name}（兼容旧调用）
+    build_sha_candidates_index() -> dict     # {sha256_lower: [name, ...]}
+    check_entry_state(name, path) -> str     # current / stale / missing
+    summarize_local_entries(items) -> dict   # 当前本地文件的有效缓存统计
     needs_update(name, path) -> bool         # 文件是否变化（size/mtime）
 """
 
@@ -36,6 +39,7 @@ _CACHE_VERSION = 1
 # 进程内锁 + 内存缓存，避免频繁读盘与并发写冲突
 _LOCK = threading.RLock()
 _MEM = None  # type: dict | None
+_SHA_CANDIDATES_INDEX = None  # type: dict | None
 
 
 def _norm(name):
@@ -141,6 +145,8 @@ def _load_raw():
 
 def _save_raw(data):
     """把完整缓存结构写回磁盘（原子写）。"""
+    global _SHA_CANDIDATES_INDEX
+    _SHA_CANDIDATES_INDEX = None
     try:
         tmp_path = _CACHE_PATH + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
@@ -218,6 +224,64 @@ def needs_update(name, path):
         return abs(float(cached_mtime) - float(mtime)) > 1.0
 
 
+def check_entry_state(name, path):
+    """只用文件元信息检查缓存条目，绝不读取 LoRA 文件内容。"""
+    name = _norm(name)
+    with _LOCK:
+        raw = _load_raw()
+        info = raw.get("entries", {}).get(name)
+        if not isinstance(info, dict) or not info.get("sha256"):
+            return "missing"
+
+        size, mtime = _file_meta(path)
+        if size is None:
+            return "missing"
+
+        cached_size = info.get("size")
+        cached_mtime = info.get("mtime")
+        if cached_size is not None and cached_size != size:
+            return "stale"
+        if cached_mtime is not None and abs(float(cached_mtime) - float(mtime)) > 1.0:
+            return "stale"
+        return "current"
+
+
+def summarize_local_entries(items):
+    """统计当前本地 LoRA 的缓存状态；items 为 (name, full_path) 列表。"""
+    normalized_items = [(_norm(name), path) for name, path in items]
+    cache = load_cache()
+    local_keys = {name.casefold() for name, _path in normalized_items}
+    current = []
+    needs_refresh = []
+    stale = []
+
+    for name, path in normalized_items:
+        state = check_entry_state(name, path)
+        if state == "current":
+            current.append(name)
+        else:
+            needs_refresh.append(name)
+            if state == "stale":
+                stale.append(name)
+
+    orphaned = [
+        name for name in cache
+        if _norm(name).casefold() not in local_keys
+    ]
+    return {
+        "cached_count": len(current),
+        "cache_entry_count": len(cache),
+        "total_loras": len(normalized_items),
+        "missing_count": len(needs_refresh),
+        "stale_count": len(stale),
+        "orphaned_count": len(orphaned),
+        "all_cached": bool(normalized_items) and not needs_refresh,
+        "missing": needs_refresh,
+        "stale": stale,
+        "orphaned": orphaned,
+    }
+
+
 def update_entry(name, sha256, path=None):
     """
     增量写入单条 sha256 并持久化。
@@ -270,14 +334,28 @@ def update_many(items):
         return True
 
 
-def build_sha_index():
-    """返回 {sha256_lower: 相对LoRA名}，供按哈希反查本地文件名。"""
+def build_sha_candidates_index():
+    """返回缓存化的 {sha256_lower: [相对LoRA名, ...]} 反查索引。"""
+    global _SHA_CANDIDATES_INDEX
     with _LOCK:
-        result = {}
-        for name, sha in load_cache().items():
-            if sha:
-                result[str(sha).lower()] = name
-        return result
+        if _SHA_CANDIDATES_INDEX is None:
+            result = {}
+            for name, sha in load_cache().items():
+                if sha:
+                    result.setdefault(str(sha).lower(), []).append(name)
+            for names in result.values():
+                names.sort(key=str.casefold)
+            _SHA_CANDIDATES_INDEX = result
+        return {sha: list(names) for sha, names in _SHA_CANDIDATES_INDEX.items()}
+
+
+def build_sha_index():
+    """兼容旧调用：每个 SHA256 返回排序后的第一个相对 LoRA 名。"""
+    return {
+        sha: names[0]
+        for sha, names in build_sha_candidates_index().items()
+        if names
+    }
 
 
 def remove_entry(name):
