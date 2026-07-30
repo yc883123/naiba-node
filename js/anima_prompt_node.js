@@ -64,6 +64,7 @@ let tabGroupEl = null;
 let tabEls = {};
 let toolbarEl = null;
 let searchInputEl = null;
+let draggedSelectedKey = null;
 
 // ========== 工具 ==========
 function el(tag, props = {}, ...children) {
@@ -205,6 +206,26 @@ function removeSelected(key) {
     renderGallerySelectionStates();
     renderResult();
 }
+function reorderSelected(draggedKey, targetKey, insertAfter) {
+    if (!draggedKey || !targetKey || draggedKey === targetKey) return;
+    const items = [...state.selectedMap.values()];
+    const draggedIndex = items.findIndex((it) => itemKey(it) === draggedKey);
+    if (draggedIndex < 0) return;
+
+    const [draggedItem] = items.splice(draggedIndex, 1);
+    const targetIndex = items.findIndex((it) => itemKey(it) === targetKey);
+    if (targetIndex < 0) return;
+    items.splice(targetIndex + (insertAfter ? 1 : 0), 0, draggedItem);
+
+    state.selectedMap = new Map(items.map((it) => [itemKey(it), it]));
+    serializeSelection();
+    renderResult();
+}
+function clearSelectedDragStyles() {
+    resultPanel?.querySelectorAll(".ap-res-card").forEach((card) => {
+        card.classList.remove("dragging", "drop-before", "drop-after");
+    });
+}
 function removeGacha(key) {
     gachaState.resultTags = gachaState.resultTags.filter((t) => itemKey(t) !== key);
     serializeGacha();
@@ -298,7 +319,11 @@ function buildGalleryCard(it, cat) {
 
 function buildResultCard(it, isGacha) {
     const key = itemKey(it);
-    const card = el("div", { class: "ap-res-card" });
+    const card = el("div", {
+        class: "ap-res-card" + (isGacha ? "" : " reorderable"),
+        draggable: isGacha ? "false" : "true",
+        title: isGacha ? "" : "拖动可调整顺序",
+    });
     const info = el("div", { class: "ap-res-info" },
         el("div", { class: "ap-res-name", title: it.raw_en || it.tag }, it.raw_en || it.tag),
         el("div", { class: "ap-res-cat" }, (it.cn ? it.cn + " · " : "") + (it.category || "")),
@@ -308,6 +333,38 @@ function buildResultCard(it, isGacha) {
         onclick: (e) => { e.stopPropagation(); isGacha ? removeGacha(key) : removeSelected(key); },
     }, "✕");
     card.append(info, del);
+    if (!isGacha) {
+        card.dataset.key = key;
+        card.addEventListener("dragstart", (e) => {
+            draggedSelectedKey = key;
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("text/plain", key);
+            requestAnimationFrame(() => card.classList.add("dragging"));
+        });
+        card.addEventListener("dragover", (e) => {
+            if (!draggedSelectedKey || draggedSelectedKey === key) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            const insertAfter = e.clientY >= card.getBoundingClientRect().top + card.offsetHeight / 2;
+            card.classList.toggle("drop-before", !insertAfter);
+            card.classList.toggle("drop-after", insertAfter);
+        });
+        card.addEventListener("dragleave", () => {
+            card.classList.remove("drop-before", "drop-after");
+        });
+        card.addEventListener("drop", (e) => {
+            if (!draggedSelectedKey || draggedSelectedKey === key) return;
+            e.preventDefault();
+            const insertAfter = e.clientY >= card.getBoundingClientRect().top + card.offsetHeight / 2;
+            const sourceKey = draggedSelectedKey;
+            draggedSelectedKey = null;
+            reorderSelected(sourceKey, key, insertAfter);
+        });
+        card.addEventListener("dragend", () => {
+            draggedSelectedKey = null;
+            clearSelectedDragStyles();
+        });
+    }
     return card;
 }
 
@@ -852,6 +909,7 @@ function closeModal() {
         ns.gachaState.catCounts = { ...gachaState.catCounts };
     }
     if (currentModal) { currentModal.remove(); currentModal = null; }
+    draggedSelectedKey = null;
     mainScroll = null; pagerBar = null; resultPanel = null; tabGroupEl = null; tabEls = {}; toolbarEl = null; searchInputEl = null;
     if (nodeRef && nodeRef._updateAnimaPreview) nodeRef._updateAnimaPreview();
 }
@@ -882,8 +940,14 @@ function injectStyle() {
 .ap-res-title{color:${COLORS.text};font-size:13px;font-weight:600;margin-bottom:8px;}
 .ap-res-sub{color:${COLORS.accentHover};font-size:12px;font-weight:500;margin:10px 0 6px;}
 .ap-res-grid{display:flex;flex-direction:column;gap:6px;}
-.ap-res-card{display:flex;align-items:center;gap:8px;background:${COLORS.cardBg};border:1px solid ${COLORS.cardBorder};border-radius:6px;padding:6px 8px;transition:.15s;}
+.ap-res-card{position:relative;display:flex;align-items:center;gap:8px;background:${COLORS.cardBg};border:1px solid ${COLORS.cardBorder};border-radius:6px;padding:6px 8px;transition:opacity .15s,border-color .15s,transform .15s;}
 .ap-res-card:hover{border-color:${COLORS.accent};}
+.ap-res-card.reorderable{cursor:grab;user-select:none;}
+.ap-res-card.reorderable:active{cursor:grabbing;}
+.ap-res-card.dragging{opacity:.38;}
+.ap-res-card.drop-before::before,.ap-res-card.drop-after::after{content:"";position:absolute;left:0;right:0;height:2px;background:${COLORS.accentHover};border-radius:2px;box-shadow:0 0 5px rgba(255,93,117,.65);pointer-events:none;}
+.ap-res-card.drop-before::before{top:-5px;}
+.ap-res-card.drop-after::after{bottom:-5px;}
 .ap-res-info{flex:1;min-width:0;}
 .ap-res-name{color:${COLORS.text};font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ap-res-cat{color:${COLORS.textDim};font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
