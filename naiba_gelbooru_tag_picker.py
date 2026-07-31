@@ -7,12 +7,20 @@ import base64
 import threading
 import hashlib
 import asyncio
-import urllib.request
 import urllib.parse
-import urllib.error
 import io
 import re
 from concurrent.futures import ThreadPoolExecutor
+
+from .naiba_network import (
+    NetworkRequestError,
+    fetch as network_fetch,
+    fetch_bytes as network_fetch_bytes,
+    normalize_proxy_settings,
+    proxy_context,
+    proxy_settings_from_request,
+    run_with_proxy,
+)
 
 import numpy as np
 import torch
@@ -26,7 +34,6 @@ except Exception:
 
 # 后端令牌桶：兜底限流，避免瞬时高并发把 Gelbooru 打爆
 try:
-    import aiohttp
     from aiohttp import web
     from server import PromptServer
 except Exception:  # pragma: no cover
@@ -80,56 +87,25 @@ def _is_gelbooru(url):
         return False
 
 def _fetch_url(url, timeout=15, retries=3, backoff=1.0):
-    """带后端限流的网络 GET，返回字节或 None。
-    对 403/429/5xx 做指数退避重试。"""
-    for attempt in range(retries + 1):
-        if not _bucket_allow():
-            time.sleep(0.25)
-        try:
-            req = urllib.request.Request(url, headers=UA)
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read()
-        except urllib.error.HTTPError as e:
-            if attempt < retries and e.code in (403, 429, 500, 502, 503):
-                time.sleep(backoff * (2 ** attempt))
-                continue
-            print(f"[naiba_gelbooru] fetch failed: {url} -> HTTP {e.code} {e.reason}")
-            return None
-        except Exception as e:
-            if attempt < retries:
-                time.sleep(backoff * (2 ** attempt))
-                continue
-            print(f"[naiba_gelbooru] fetch failed: {url} -> {e}")
-            return None
-    return None
+    """带限流的 GET；代理、重试、TLS 和错误脱敏由共享网络层处理。"""
+    if not _bucket_allow():
+        time.sleep(0.25)
+    return network_fetch_bytes(
+        url, headers=UA, timeout=timeout, retries=min(int(retries), 1), backoff=backoff
+    )
 
 def _fetch_url_gb(url, timeout=15, retries=3, backoff=1.0):
     """Gelbooru 图片/HTML 专用 GET：加 Referer 头 + SSRF 白名单（仅 gelbooru.com）。"""
     if not _is_gelbooru(url):
         print(f"[naiba_gelbooru] SSRF blocked: {url}")
         return None
-    for attempt in range(retries + 1):
-        if not _bucket_allow():
-            time.sleep(0.25)
-        try:
-            headers = dict(UA)
-            headers.update(REFERER)
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read()
-        except urllib.error.HTTPError as e:
-            if attempt < retries and e.code in (403, 429, 500, 502, 503):
-                time.sleep(backoff * (2 ** attempt))
-                continue
-            print(f"[naiba_gelbooru] fetch(gb) failed: {url} -> HTTP {e.code} {e.reason}")
-            return None
-        except Exception as e:
-            if attempt < retries:
-                time.sleep(backoff * (2 ** attempt))
-                continue
-            print(f"[naiba_gelbooru] fetch(gb) failed: {url} -> {e}")
-            return None
-    return None
+    if not _bucket_allow():
+        time.sleep(0.25)
+    headers = dict(UA)
+    headers.update(REFERER)
+    return network_fetch_bytes(
+        url, headers=headers, timeout=timeout, retries=min(int(retries), 1), backoff=backoff
+    )
 
 # ----------------------------- 图片 MIME 识别 -----------------------------
 def detect_image_mime(data):
@@ -446,14 +422,16 @@ def _autocomplete_search(query, limit, cat_id):
     }
     url = BASE + "/index.php?" + urllib.parse.urlencode(params)
     raw = _fetch_url(url)
-    if not raw:
-        return None
     try:
         rows = json.loads(raw.decode("utf-8"))
-    except Exception:
-        return None
+    except Exception as error:
+        raise NetworkRequestError(
+            "response_error", "目标站点返回了无法解析的数据"
+        ) from error
     if not isinstance(rows, list):
-        return []
+        raise NetworkRequestError(
+            "response_error", "目标站点响应格式不正确"
+        )
     return _filter_autocomplete(rows, cat_id)
 
 def _fallback_search(cat_id, limit):
@@ -493,8 +471,10 @@ def _rows_to_items(rows, category):
 def _parse_dapi_tags(raw, cat_id, category):
     try:
         arr = json.loads(raw.decode("utf-8"))
-    except Exception:
-        return None
+    except Exception as error:
+        raise NetworkRequestError(
+            "response_error", "目标站点返回了无法解析的数据"
+        ) from error
     rows = _extract_records(arr, "tag")
     items = []
     for it in rows:
@@ -519,38 +499,42 @@ def search_tags(query, category="", limit=100, page=1, api_key=None, user_id=Non
     cache_key = f"{category}|{query}|{page}|{limit}|{'a' if auth else 'n'}"
     cat_id = CATEGORY_ID.get(category, 0)
 
-    items = None
-    if auth:
-        params = {
-            "page": "dapi",
-            "s": "tag",
-            "q": "index",
-            "json": 1,
-            "limit": limit,
-            "pid": max(0, page - 1),
-            "orderby": "count",
-            "order": "desc",
-            "type": cat_id,
-            "api_key": api_key,
-            "user_id": user_id,
-        }
-        url = BASE + "/index.php?" + urllib.parse.urlencode(params)
-        raw = _fetch_url(url)
-        if raw:
+    try:
+        items = None
+        if auth:
+            params = {
+                "page": "dapi",
+                "s": "tag",
+                "q": "index",
+                "json": 1,
+                "limit": limit,
+                "pid": max(0, page - 1),
+                "orderby": "count",
+                "order": "desc",
+                "type": cat_id,
+                "api_key": api_key,
+                "user_id": user_id,
+            }
+            url = BASE + "/index.php?" + urllib.parse.urlencode(params)
+            raw = _fetch_url(url)
             items = _parse_dapi_tags(raw, cat_id, category)
-    else:
-        rows = _autocomplete_search(query, limit, cat_id)
-        if rows is None:
-            # 无 query 时走种子兜底
-            if not (query or "").strip():
-                rows = _fallback_search(cat_id, limit)
+        else:
+            if (query or "").strip():
+                rows = _autocomplete_search(query, limit, cat_id)
             else:
-                rows = None
-        if rows is not None:
+                rows = _fallback_search(cat_id, limit)
             items = _rows_to_items(rows, category)
             # 匿名 autocomplete 仅返回单页（最多 50 条），翻页 >1 视为无更多
             if page > 1:
                 items = []
+    except NetworkRequestError as error:
+        if _DISK_CACHE is not None:
+            cached = _DISK_CACHE.get_json(cache_key)
+            if cached is not None:
+                cached["cached"] = True
+                cached["warning"] = error.to_dict()
+                return cached
+        raise
 
     if items is None:
         if _DISK_CACHE is not None:
@@ -558,7 +542,9 @@ def search_tags(query, category="", limit=100, page=1, api_key=None, user_id=Non
             if cached is not None:
                 cached["cached"] = True
                 return cached
-        return {"items": [], "total": 0, "cached": False}
+        raise NetworkRequestError(
+            "response_error", "目标站点响应格式不正确"
+        )
 
     result = {"items": items, "total": len(items), "cached": False}
     if _DISK_CACHE is not None:
@@ -615,6 +601,8 @@ def get_random_tags_from_category(category, n, blacklist=None, api_key=None, use
                 if nm and nm not in seen:
                     seen.add(nm)
                     pool.append(nm)
+    except NetworkRequestError:
+        raise
     except Exception as e:
         print(f"[naiba_gelbooru] gacha pool error: {e}")
     filtered = [t for t in pool if t not in bl]
@@ -650,6 +638,8 @@ def get_completely_random_tags(total, blacklist=None, api_key=None, user_id=None
                     if nm and nm not in seen:
                         seen.add(nm)
                         pool.append(nm)
+        except NetworkRequestError:
+            raise
         except Exception as e:
             print(f"[naiba_gelbooru] gacha pool error({c}): {e}")
         pools[c] = [t for t in pool if t not in bl]
@@ -712,8 +702,10 @@ def get_random_post_image_url(tag, api_key=None, user_id=None):
         if raw:
             try:
                 rows = _extract_records(json.loads(raw.decode("utf-8")), "post")
-            except Exception:
-                rows = []
+            except Exception as error:
+                raise NetworkRequestError(
+                    "response_error", "目标站点返回了无法解析的数据"
+                ) from error
             if rows:
                 it = random.choice(rows)
                 preview = _normalize_url(str(it.get("preview_url") or it.get("sample_url") or it.get("file_url") or ""))
@@ -754,12 +746,18 @@ def _is_character_tag(tag, cache):
             if r.get("name") == tag:
                 is_char = True
                 break
+    except NetworkRequestError:
+        raise
     except Exception:
         is_char = False
     cache[tag] = is_char
     if _DISK_CACHE is not None:
         try:
             _DISK_CACHE.set_json("ipchar_type|" + tag, {"v": is_char})
+        except NetworkRequestError:
+            raise
+        except NetworkRequestError:
+            raise
         except Exception:
             pass
     return is_char
@@ -817,8 +815,10 @@ def get_ip_characters(ip, limit=50, page=1, api_key=None, user_id=None):
                 break
             try:
                 rows = _extract_records(json.loads(raw.decode("utf-8")), "post")
-            except Exception:
-                break
+            except Exception as error:
+                raise NetworkRequestError(
+                    "response_error", "目标站点返回了无法解析的数据"
+                ) from error
             if not rows:
                 break
             for post in rows:
@@ -845,6 +845,14 @@ def get_ip_characters(ip, limit=50, page=1, api_key=None, user_id=None):
         if _DISK_CACHE is not None:
             _DISK_CACHE.set_json(cache_key, {"items": items, "total": total})
         return result
+    except NetworkRequestError as error:
+        if _DISK_CACHE is not None:
+            cached = _DISK_CACHE.get_json(cache_key)
+            if cached is not None:
+                cached["cached"] = True
+                cached["warning"] = error.to_dict()
+                return cached
+        raise
     except Exception as e:
         print(f"[naiba_gelbooru] ip_characters error: {e}")
         return {"items": [], "total": 0, "cached": False, "auth_required": False}
@@ -884,6 +892,8 @@ class NaibaGelbooruTagPicker:
                 "cache_max_mb": ("INT", {"default": 500, "min": 100, "max": 20000, "step": 100}),
                 "blacklist_data": ("STRING", {"multiline": True, "default": "{}"}),
                 "favorites_data": ("STRING", {"multiline": True, "default": "{}"}),
+                "proxy_mode": (["auto", "manual", "direct"], {"default": "auto"}),
+                "proxy_url": ("STRING", {"default": "", "multiline": False}),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -901,6 +911,7 @@ class NaibaGelbooruTagPicker:
                 gelbooru_api_key="", gelbooru_user_id="",
                 cache_enabled=True, cache_max_mb=500,
                 blacklist_data="{}", favorites_data="{}",
+                proxy_mode="auto", proxy_url="",
                 prompt=None, extra_pnginfo=None):
         configure_disk_cache(cache_enabled, cache_max_mb)
 
@@ -970,16 +981,17 @@ class NaibaGelbooruTagPicker:
                 preview_tag_names.append(name)
 
         preview_tensors = []
-        if preview_tag_names:
-            if len(preview_tag_names) > max_images:
-                preview_tag_names = preview_tag_names[:max_images]
-            ak = gelbooru_api_key if gelbooru_api_key else None
-            uid = gelbooru_user_id if gelbooru_user_id else None
-            for name in preview_tag_names:
-                try:
-                    preview_tensors.append(_load_preview_tensor_by_name(name, preview_size, ak, uid))
-                except Exception as e:
-                    print(f"[naiba_gelbooru] preview fail {name}: {e}")
+        with proxy_context(proxy_mode, proxy_url):
+            if preview_tag_names:
+                if len(preview_tag_names) > max_images:
+                    preview_tag_names = preview_tag_names[:max_images]
+                ak = gelbooru_api_key if gelbooru_api_key else None
+                uid = gelbooru_user_id if gelbooru_user_id else None
+                for name in preview_tag_names:
+                    try:
+                        preview_tensors.append(_load_preview_tensor_by_name(name, preview_size, ak, uid))
+                    except Exception as e:
+                        print(f"[naiba_gelbooru] preview fail {name}: {e}")
 
         if preview_tensors:
             previews = torch.cat(preview_tensors, dim=0)
@@ -1042,6 +1054,33 @@ def _cred_params(request):
     uid = (request.query.get("user_id") or "").strip()
     return (ak or None), (uid or None)
 
+
+def _network_error_response(error, status=502):
+    return web.json_response({"error": error.to_dict()}, status=status)
+
+
+async def _route_network_call(request, fn, *args):
+    try:
+        settings = proxy_settings_from_request(request)
+        result = await _run_in_exec(fn, *args, proxy_settings=settings)
+        return result, None
+    except NetworkRequestError as error:
+        return None, _network_error_response(error)
+
+
+def _probe_status():
+    response = network_fetch(
+        BASE + "/index.php?page=autocomplete2&term=a&type=tag_query&limit=1",
+        headers=UA,
+        timeout=5,
+        retries=0,
+    )
+    return {
+        "online": True,
+        "latency_ms": response.elapsed_ms,
+        "proxy_source": response.proxy_source,
+    }
+
 def register_routes():
     if PromptServer is None or web is None:
         return
@@ -1061,7 +1100,11 @@ def register_routes():
         category = {"artist": "artist", "character": "character", "copyright": "copyright", "tag": "tag"}.get(cat, "tag")
         _consume_cache_params(request)
         ak, uid = _cred_params(request)
-        res = await _run_in_exec(search_tags, q, category, limit, page, ak, uid)
+        res, error = await _route_network_call(
+            request, search_tags, q, category, limit, page, ak, uid
+        )
+        if error is not None:
+            return error
         return web.json_response(res)
 
     @PromptServer.instance.routes.get("/naiba/gelbooru/cn_translate")
@@ -1077,7 +1120,9 @@ def register_routes():
             limit = int(request.query.get("limit", "10"))
         except Exception:
             limit = 10
-        items = await _run_in_exec(search_cn_tags, q, limit)
+        items, error = await _route_network_call(request, search_cn_tags, q, limit)
+        if error is not None:
+            return error
         return web.json_response({"items": items})
 
     @PromptServer.instance.routes.get("/naiba/gelbooru/preview")
@@ -1091,7 +1136,9 @@ def register_routes():
         ak, uid = _cred_params(request)
         if not tag:
             return web.json_response({"preview_url": None, "source_url": None})
-        data = await _run_in_exec(build_preview_proxy, tag, ak, uid)
+        data, error = await _route_network_call(request, build_preview_proxy, tag, ak, uid)
+        if error is not None:
+            return error
         source_url = f"{BASE}/index.php?page=post&s=list&tags={urllib.parse.quote(tag)}"
         return web.json_response({"preview_url": data, "source_url": source_url})
 
@@ -1101,7 +1148,9 @@ def register_routes():
         if not u:
             return web.Response(status=400, text="missing u")
         # SSRF 白名单在 _fetch_url_gb 内强制仅 gelbooru.com
-        data = await _run_in_exec(_fetch_url_gb, u)
+        data, error = await _route_network_call(request, _fetch_url_gb, u)
+        if error is not None:
+            return error
         if not data:
             return web.Response(status=502, text="fetch failed")
         mime = detect_image_mime(data)
@@ -1123,7 +1172,12 @@ def register_routes():
             i = 0
         blacklist = _parse_json_list(request.query.get("blacklist", "[]"))
         ak, uid = _cred_params(request)
-        out, shortfall = await _run_in_exec(_gacha_partial_job, a, c, i, blacklist, ak, uid)
+        result, error = await _route_network_call(
+            request, _gacha_partial_job, a, c, i, blacklist, ak, uid
+        )
+        if error is not None:
+            return error
+        out, shortfall = result
         return web.json_response({"tags": out, "shortfall": shortfall})
 
     @PromptServer.instance.routes.get("/naiba/gelbooru/gacha_random")
@@ -1134,34 +1188,45 @@ def register_routes():
             total = 9
         blacklist = _parse_json_list(request.query.get("blacklist", "[]"))
         ak, uid = _cred_params(request)
-        tags = await _run_in_exec(get_completely_random_tags, total, blacklist, ak, uid)
+        tags, error = await _route_network_call(
+            request, get_completely_random_tags, total, blacklist, ak, uid
+        )
+        if error is not None:
+            return error
         return web.json_response({"tags": tags})
 
     @PromptServer.instance.routes.get("/naiba/gelbooru/status")
     async def gelbooru_status(request):
         """G 站连接状态探测路由（匿名 autocomplete2 即可探测可达性）"""
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
-                async with session.get(BASE + "/index.php?page=autocomplete2&term=a&type=tag_query&limit=1", ssl=False) as resp:
-                    if resp.status == 200:
-                        return web.json_response({"online": True})
-                    else:
-                        return web.json_response({"online": False})
-        except Exception:
-            return web.json_response({"online": False})
+            settings = proxy_settings_from_request(request)
+            result = await _run_in_exec(_probe_status, proxy_settings=settings)
+            return web.json_response(result)
+        except NetworkRequestError as error:
+            return web.json_response({"online": False, "error": error.to_dict()})
 
     @PromptServer.instance.routes.get("/naiba/gelbooru/preload")
     async def gelbooru_preload(request):
-        global _PRELOAD_TASK
+        global _PRELOAD_TASK, _PRELOAD_AUTH
         action = request.query.get("action", "status")
         _consume_cache_params(request)
         ak, uid = _cred_params(request)
         if action == "start":
+            try:
+                settings = proxy_settings_from_request(request)
+            except NetworkRequestError as error:
+                return _network_error_response(error)
             if _PRELOAD_TASK is None or _PRELOAD_TASK.done():
                 _PRELOAD_STATUS["running"] = True
-                _PRELOAD_STATUS["api_key"] = ak
-                _PRELOAD_STATUS["user_id"] = uid
-                _PRELOAD_TASK = asyncio.get_event_loop().run_in_executor(None, _preload_worker)
+                _PRELOAD_AUTH = {"api_key": ak, "user_id": uid}
+                _PRELOAD_TASK = asyncio.get_event_loop().run_in_executor(
+                    None,
+                    run_with_proxy,
+                    _preload_worker,
+                    (),
+                    settings.mode,
+                    settings.url,
+                )
                 return web.json_response({"started": True, **_PRELOAD_STATUS})
             else:
                 return web.json_response({"started": False, "message": "已在运行", **_PRELOAD_STATUS})
@@ -1225,12 +1290,17 @@ def register_routes():
             page = 1
         _consume_cache_params(request)
         ak, uid = _cred_params(request)
-        res = await _run_in_exec(get_ip_characters, ip, limit, page, ak, uid)
+        res, error = await _route_network_call(
+            request, get_ip_characters, ip, limit, page, ak, uid
+        )
+        if error is not None:
+            return error
         return web.json_response(res)
 
 # ----------------------------- 后台预加载 -----------------------------
 _PRELOAD_TASK = None
-_PRELOAD_STATUS = {"running": False, "progress": 0, "total": 0, "cached_mb": 0, "max_mb": 0, "message": "", "api_key": None, "user_id": None}
+_PRELOAD_STATUS = {"running": False, "progress": 0, "total": 0, "cached_mb": 0, "max_mb": 0, "message": ""}
+_PRELOAD_AUTH = {"api_key": None, "user_id": None}
 
 def _check_cache_budget():
     if _DISK_CACHE is None:
@@ -1244,11 +1314,10 @@ def _preload_worker():
     cats = ["artist", "character", "copyright", "tag"]
     max_pages_per_cat = 200
     preview_per_page = 10
-    ak = _PRELOAD_STATUS.get("api_key")
-    uid = _PRELOAD_STATUS.get("user_id")
+    ak = _PRELOAD_AUTH.get("api_key")
+    uid = _PRELOAD_AUTH.get("user_id")
     _PRELOAD_STATUS = {"running": True, "progress": 0, "total": 0,
-                       "cached_mb": 0, "max_mb": 0, "message": "开始预加载...",
-                       "api_key": ak, "user_id": uid}
+                       "cached_mb": 0, "max_mb": 0, "message": "开始预加载..."}
     try:
         cycle = 0
         while True:
@@ -1286,6 +1355,8 @@ def _preload_worker():
                         _PRELOAD_STATUS["message"] = f"[轮{cycle}] 缓存预览: {tag} ({cached2:.1f}/{max_mb:.1f} MB)"
                         try:
                             build_preview_proxy(tag, ak, uid)
+                        except NetworkRequestError:
+                            raise
                         except Exception:
                             pass
                         time.sleep(0.15)
@@ -1299,6 +1370,10 @@ def _preload_worker():
                 return
             _PRELOAD_STATUS["message"] = f"第{cycle}轮完成，继续下一轮... ({cached:.1f}/{max_mb:.1f} MB)"
             time.sleep(1)
+    except NetworkRequestError as error:
+        _PRELOAD_STATUS["message"] = f"预加载停止: {error.message}"
+        _PRELOAD_STATUS["last_error"] = error.to_dict()
+        _PRELOAD_STATUS["running"] = False
     except Exception as e:
         _PRELOAD_STATUS["message"] = f"预加载出错: {e}"
         _PRELOAD_STATUS["running"] = False
@@ -1326,9 +1401,12 @@ def _get_executor():
                 _EXECUTOR = ThreadPoolExecutor(max_workers=4)
     return _EXECUTOR
 
-async def _run_in_exec(fn, *args):
+async def _run_in_exec(fn, *args, proxy_settings=None):
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_get_executor(), fn, *args)
+    settings = proxy_settings or normalize_proxy_settings()
+    return await loop.run_in_executor(
+        _get_executor(), run_with_proxy, fn, args, settings.mode, settings.url
+    )
 
 # ----------------------------- 注册 -----------------------------
 try:

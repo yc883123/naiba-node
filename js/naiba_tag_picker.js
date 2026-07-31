@@ -162,6 +162,14 @@ function setWidget(node, name, value) {
 function previewSize() { return parseInt(getWidget(nodeRef, "preview_size", 220), 10) || 220; }
 function cacheOn() { return getWidget(nodeRef, "cache_enabled", true) ? 1 : 0; }
 function cacheMax() { return parseInt(getWidget(nodeRef, "cache_max_mb", 500), 10) || 500; }
+function proxyMode() { return String(getWidget(nodeRef, "proxy_mode", "auto") || "auto"); }
+function proxyUrl() { return String(getWidget(nodeRef, "proxy_url", "") || "").trim(); }
+function proxyHeaders() {
+    return {
+        "X-Naiba-Proxy-Mode": proxyMode(),
+        "X-Naiba-Proxy-Url": encodeURIComponent(proxyUrl()),
+    };
+}
 
 // ========== 页面关闭时停止预加载 ==========
 window.addEventListener('beforeunload', () => {
@@ -282,9 +290,13 @@ function setGachaAll(tags, { syncModal = true } = {}) {
 
 // ========== 网络 ==========
 async function apiGetJson(path) {
-    const resp = await api.fetchApi(path);
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
-    return await resp.json();
+    const resp = await api.fetchApi(path, { headers: proxyHeaders() });
+    let data = null;
+    try { data = await resp.json(); } catch (e) { /* handled below */ }
+    if (!resp.ok) throw new Error(data?.error?.message || ("HTTP " + resp.status));
+    if (!data) throw new Error("服务器返回了无法解析的数据");
+    if (data.warning?.message) flashStatus("已使用缓存：" + data.warning.message);
+    return data;
 }
 async function doSearch(cat) {
     const ts = state.tabState[cat];
@@ -619,7 +631,80 @@ function buildSettingsPanel() {
     mainScroll.innerHTML = "";
     const wrap = el("div", { class: "tp-gacha", style: "padding:16px 18px;max-width:560px;" });
 
-    wrap.appendChild(el("div", { class: "tp-gacha-sub" }, "本地缓存"));
+    wrap.appendChild(el("div", { class: "tp-gacha-sub" }, "网络代理"));
+    const proxyModeRow = el("div", { class: "tp-gacha-row" });
+    const proxySegments = el("div", { style: "display:flex;gap:4px;" });
+    const proxyButtons = new Map();
+    [["auto", "自动"], ["manual", "手动"], ["direct", "直连"]].forEach(([value, label]) => {
+        const button = el("button", {
+            class: "tp-btn small",
+            type: "button",
+            onclick: () => {
+                setWidget(nodeRef, "proxy_mode", value);
+                refreshProxyControls();
+            },
+        }, label);
+        proxyButtons.set(value, button);
+        proxySegments.appendChild(button);
+    });
+    proxyModeRow.append(el("div", { class: "tp-gacha-rowlabel" }, "模式"), proxySegments);
+    wrap.appendChild(proxyModeRow);
+
+    const proxyUrlRow = el("div", { class: "tp-gacha-row" });
+    const proxyInput = el("input", {
+        class: "tp-search",
+        type: "text",
+        value: proxyUrl(),
+        placeholder: "127.0.0.1:7890",
+        autocomplete: "off",
+        spellcheck: "false",
+    });
+    proxyInput.addEventListener("change", () => {
+        setWidget(nodeRef, "proxy_url", proxyInput.value.trim());
+    });
+    proxyUrlRow.append(el("div", { class: "tp-gacha-rowlabel" }, "地址"), proxyInput);
+    wrap.appendChild(proxyUrlRow);
+
+    const proxyTestRow = el("div", { class: "tp-gacha-row", style: "min-height:auto;padding:6px 0;" });
+    const proxyTestStatus = el("div", { style: `font-size:11px;color:${COLORS.textDim};flex:1;` }, "");
+    const proxyTestBtn = el("button", {
+        class: "tp-btn small",
+        type: "button",
+        onclick: async () => {
+            proxyTestBtn.disabled = true;
+            proxyTestStatus.textContent = "检测中...";
+            try {
+                const data = await apiGetJson("/naiba/tag/status");
+                if (data.online) {
+                    proxyTestStatus.textContent = `已连接 · ${data.latency_ms || 0} ms · ${data.proxy_source || "unknown"}`;
+                    proxyTestStatus.style.color = COLORS.success;
+                } else {
+                    proxyTestStatus.textContent = data.error?.message || "未连接";
+                    proxyTestStatus.style.color = COLORS.danger;
+                }
+            } catch (e) {
+                proxyTestStatus.textContent = e.message;
+                proxyTestStatus.style.color = COLORS.danger;
+            } finally {
+                proxyTestBtn.disabled = false;
+            }
+        },
+    }, "测试连接");
+    proxyTestRow.append(proxyTestStatus, proxyTestBtn);
+    wrap.appendChild(proxyTestRow);
+
+    function refreshProxyControls() {
+        const active = proxyMode();
+        proxyButtons.forEach((button, value) => {
+            button.style.background = value === active ? COLORS.accent : "";
+            button.style.color = value === active ? "#fff" : "";
+        });
+        proxyInput.disabled = active !== "manual";
+        proxyInput.style.opacity = active === "manual" ? "1" : ".55";
+    }
+    refreshProxyControls();
+
+    wrap.appendChild(el("div", { class: "tp-gacha-sub", style: "margin-top:14px;" }, "本地缓存"));
     wrap.appendChild(el("div", { class: "tp-gacha-hint" }, "开启后预览图和标签搜索结果写入 preview_cache/ 目录，重启后保留；关闭则仅本次会话内存缓存。"));
 
     const cacheRow = el("div", { class: "tp-gacha-row" });
@@ -875,6 +960,7 @@ function restoreFromNode(node) {
 // ========== 模态框 ==========
 function createTagPickerModal(node) {
     if (currentModal) { currentModal.focus(); return; }
+    nodeRef = node;
 
     const overlay = el("div", { class: "tp-overlay" });
     const modal = el("div", { class: "tp-modal" });
@@ -888,16 +974,16 @@ function createTagPickerModal(node) {
         cursor: default; flex-shrink: 0;
     `;
     let danbooruOnline = null; // null=未知, true=在线, false=离线
-    function updateStatusLight(online) {
+    function updateStatusLight(online, detail = "") {
         danbooruOnline = online;
         if (online === true) {
             statusLight.style.background = COLORS.success;
             statusLight.style.boxShadow = `0 0 6px ${COLORS.success}`;
-            statusLight.title = "D站: 已连接";
+            statusLight.title = "D站: 已连接" + (detail ? ` (${detail})` : "");
         } else if (online === false) {
             statusLight.style.background = COLORS.error;
             statusLight.style.boxShadow = `0 0 6px ${COLORS.error}`;
-            statusLight.title = "D站: 未连接";
+            statusLight.title = "D站: 未连接" + (detail ? ` (${detail})` : "");
         } else {
             statusLight.style.background = COLORS.muted;
             statusLight.style.boxShadow = "none";
@@ -908,9 +994,13 @@ function createTagPickerModal(node) {
     async function checkDanbooruStatus() {
         try {
             const data = await apiGetJson("/naiba/tag/status");
-            updateStatusLight(data.online === true);
+            if (data.online === true) {
+                updateStatusLight(true, `${data.latency_ms || 0} ms, ${data.proxy_source || "unknown"}`);
+            } else {
+                updateStatusLight(false, data.error?.message || "连接失败");
+            }
         } catch (e) {
-            updateStatusLight(false);
+            updateStatusLight(false, e.message || "连接失败");
         }
     }
     // 打开弹窗时首次探测，之后每 15s 轮询
@@ -931,7 +1021,11 @@ function createTagPickerModal(node) {
                 preloadStatusEl.style.color = COLORS.muted;
                 if (preloadInterval) { clearInterval(preloadInterval); preloadInterval = null; }
             }
-        } catch (e) { /* ignore */ }
+        } catch (e) {
+            preloadStatusEl.textContent = "预加载状态失败：" + (e.message || e);
+            preloadStatusEl.style.color = COLORS.danger;
+            if (preloadInterval) { clearInterval(preloadInterval); preloadInterval = null; }
+        }
     }
     // 自动启动预加载
     async function startPreload() {
@@ -939,7 +1033,7 @@ function createTagPickerModal(node) {
             await apiGetJson(`/naiba/tag/preload?action=start&cache=${cacheOn()}&max=${cacheMax()}`);
             checkPreloadStatus();
             preloadInterval = setInterval(checkPreloadStatus, 2000);
-        } catch (e) { /* ignore */ }
+        } catch (e) { flashStatus("预加载失败：" + (e.message || e)); }
     }
     startPreload();
 
@@ -1182,7 +1276,7 @@ app.registerExtension({
             // 隐藏由前端代理的控件；gacha_mode 为自动托管（随机生成=开，清除=关），不显示在节点上
             const hiddenWidgets = ["selection_data", "gacha_data", "gacha_mode",
                 "cache_enabled", "cache_max_mb",
-                "blacklist_data", "favorites_data"];
+                "blacklist_data", "favorites_data", "proxy_mode", "proxy_url"];
             hiddenWidgets.forEach((name) => {
                 const w = node.widgets?.find((x) => x.name === name);
                 if (w) {

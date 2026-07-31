@@ -8,11 +8,19 @@ import threading
 import hashlib
 import asyncio
 import re
-import urllib.request
 import urllib.parse
-import urllib.error
 import io
 from concurrent.futures import ThreadPoolExecutor
+
+from .naiba_network import (
+    NetworkRequestError,
+    fetch as network_fetch,
+    fetch_bytes as network_fetch_bytes,
+    normalize_proxy_settings,
+    proxy_context,
+    proxy_settings_from_request,
+    run_with_proxy,
+)
 
 import numpy as np
 import torch
@@ -26,7 +34,6 @@ except Exception:
 
 # 后端令牌桶：兜底限流，避免瞬时高并发把 Danbooru 打爆
 try:
-    import aiohttp
     from aiohttp import web
     from server import PromptServer
 except Exception:  # pragma: no cover
@@ -61,28 +68,12 @@ def _bucket_allow():
         return False
 
 def _fetch_url(url, timeout=15, retries=3, backoff=1.0):
-    """带后端限流的网络 GET，返回字节或 None。
-    对 403/429/5xx 做指数退避重试（还原原版 _api_request 的稳健性）。"""
-    for attempt in range(retries + 1):
-        if not _bucket_allow():
-            time.sleep(0.25)
-        try:
-            req = urllib.request.Request(url, headers=UA)
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read()
-        except urllib.error.HTTPError as e:
-            if attempt < retries and e.code in (403, 429, 500, 502, 503):
-                time.sleep(backoff * (2 ** attempt))
-                continue
-            print(f"[naiba_tag_picker] fetch failed: {url} -> HTTP {e.code} {e.reason}")
-            return None
-        except Exception as e:
-            if attempt < retries:
-                time.sleep(backoff * (2 ** attempt))
-                continue
-            print(f"[naiba_tag_picker] fetch failed: {url} -> {e}")
-            return None
-    return None
+    """带限流的 GET；代理、重试、TLS 和错误脱敏由共享网络层处理。"""
+    if not _bucket_allow():
+        time.sleep(0.25)
+    return network_fetch_bytes(
+        url, headers=UA, timeout=timeout, retries=min(int(retries), 1), backoff=backoff
+    )
 
 # ----------------------------- 图片 MIME 识别 -----------------------------
 def detect_image_mime(data):
@@ -316,35 +307,48 @@ def search_tags(query, category="", limit=100, page=1):
     if category:
         params["search[category]"] = cat_id
     url = BASE + "/tags.json?" + urllib.parse.urlencode(params)
-    raw = _fetch_url(url)
-    
-    # 网络失败时尝试离线缓存回退
-    if not raw:
-        if _DISK_CACHE is not None:
-            cached = _DISK_CACHE.get_json(cache_key)
-            if cached is not None:
-                cached["cached"] = True  # 标记为缓存数据
-                return cached
-        return {"items": [], "total": 0}
-    
     try:
-        arr = json.loads(raw.decode("utf-8"))
-    except Exception:
-        # 解析失败也尝试缓存回退
+        raw = _fetch_url(url)
+    except NetworkRequestError as error:
         if _DISK_CACHE is not None:
             cached = _DISK_CACHE.get_json(cache_key)
             if cached is not None:
                 cached["cached"] = True
+                cached["warning"] = error.to_dict()
                 return cached
-        return {"items": [], "total": 0}
+        raise
+    
+    try:
+        arr = json.loads(raw.decode("utf-8"))
+    except Exception as error:
+        if _DISK_CACHE is not None:
+            cached = _DISK_CACHE.get_json(cache_key)
+            if cached is not None:
+                cached["cached"] = True
+                cached["warning"] = {
+                    "code": "response_error",
+                    "message": "目标站点返回了无法解析的数据",
+                    "proxy_source": "unknown",
+                }
+                return cached
+        raise NetworkRequestError(
+            "response_error", "目标站点返回了无法解析的数据"
+        ) from error
     
     if not isinstance(arr, list):
         if _DISK_CACHE is not None:
             cached = _DISK_CACHE.get_json(cache_key)
             if cached is not None:
                 cached["cached"] = True
+                cached["warning"] = {
+                    "code": "response_error",
+                    "message": "目标站点响应格式不正确",
+                    "proxy_source": "unknown",
+                }
                 return cached
-        return {"items": [], "total": 0}
+        raise NetworkRequestError(
+            "response_error", "目标站点响应格式不正确"
+        )
     
     items = []
     for it in arr:
@@ -408,7 +412,19 @@ def _translate_zh_en(text):
         c = _DISK_CACHE.get_json(cache_key)
         if c is not None:
             return c.get("text", "")
-    translated = _translate_gtx(text) or _translate_mymemory(text)
+    translated = ""
+    last_error = None
+    try:
+        translated = _translate_gtx(text)
+    except NetworkRequestError as error:
+        last_error = error
+    if not translated:
+        try:
+            translated = _translate_mymemory(text)
+        except NetworkRequestError as error:
+            last_error = error
+    if not translated and last_error is not None:
+        raise last_error
     if _DISK_CACHE is not None:
         _DISK_CACHE.set_json(cache_key, {"text": translated})
     return translated
@@ -464,8 +480,10 @@ def search_cn_tags(query, limit=10):
             continue
         try:
             arr = json.loads(raw.decode("utf-8"))
-        except Exception:
-            arr = []
+        except Exception as error:
+            raise NetworkRequestError(
+                "response_error", "目标站点返回了无法解析的数据"
+            ) from error
         if isinstance(arr, list):
             for it in arr:
                 tag = it.get("name")
@@ -512,6 +530,8 @@ def get_random_tags_from_category(category, n, blacklist=None):
                 if nm and nm not in seen:
                     seen.add(nm)
                     pool.append(nm)
+    except NetworkRequestError:
+        raise
     except Exception as e:
         print(f"[naiba_tag_picker] gacha pool error: {e}")
     filtered = [t for t in pool if t not in bl]
@@ -571,8 +591,10 @@ def get_random_post_image_url(tag):
         return None
     try:
         arr = json.loads(raw.decode("utf-8"))
-    except Exception:
-        return None
+    except Exception as error:
+        raise NetworkRequestError(
+            "response_error", "目标站点返回了无法解析的数据"
+        ) from error
     if not arr:
         return None
     it = random.choice(arr)
@@ -616,8 +638,10 @@ def get_ip_characters(ip, limit=50, page=1):
                 break
             try:
                 arr = json.loads(raw.decode("utf-8"))
-            except Exception:
-                break
+            except Exception as error:
+                raise NetworkRequestError(
+                    "response_error", "目标站点返回了无法解析的数据"
+                ) from error
             if not isinstance(arr, list) or not arr:
                 break
             for post in arr:
@@ -642,6 +666,14 @@ def get_ip_characters(ip, limit=50, page=1):
         if _DISK_CACHE is not None:
             _DISK_CACHE.set_json(cache_key, {"items": items, "total": total})
         return result
+    except NetworkRequestError as error:
+        if _DISK_CACHE is not None:
+            cached = _DISK_CACHE.get_json(cache_key)
+            if cached is not None:
+                cached["cached"] = True
+                cached["warning"] = error.to_dict()
+                return cached
+        raise
     except Exception as e:
         print(f"[naiba_tag_picker] ip_characters error: {e}")
         if _DISK_CACHE is not None:
@@ -685,6 +717,8 @@ class NaibaTagPicker:
                 "cache_max_mb": ("INT", {"default": 500, "min": 100, "max": 20000, "step": 100}),
                 "blacklist_data": ("STRING", {"multiline": True, "default": "{}"}),
                 "favorites_data": ("STRING", {"multiline": True, "default": "{}"}),
+                "proxy_mode": (["auto", "manual", "direct"], {"default": "auto"}),
+                "proxy_url": ("STRING", {"default": "", "multiline": False}),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -701,6 +735,7 @@ class NaibaTagPicker:
     def execute(self, selection_data, max_images, preview_size, artist_at, gacha_mode, gacha_data,
                 cache_enabled=True, cache_max_mb=500,
                 blacklist_data="{}", favorites_data="{}",
+                proxy_mode="auto", proxy_url="",
                 prompt=None, extra_pnginfo=None):
         # 配置磁盘缓存（仅当开启且目录可写时生效；否则降级内存）
         configure_disk_cache(cache_enabled, cache_max_mb)
@@ -776,14 +811,15 @@ class NaibaTagPicker:
                 preview_tag_names.append(name)
 
         preview_tensors = []
-        if preview_tag_names:
-            if len(preview_tag_names) > max_images:
-                preview_tag_names = preview_tag_names[:max_images]
-            for name in preview_tag_names:
-                try:
-                    preview_tensors.append(_load_preview_tensor_by_name(name, preview_size))
-                except Exception as e:
-                    print(f"[naiba_tag_picker] preview fail {name}: {e}")
+        with proxy_context(proxy_mode, proxy_url):
+            if preview_tag_names:
+                if len(preview_tag_names) > max_images:
+                    preview_tag_names = preview_tag_names[:max_images]
+                for name in preview_tag_names:
+                    try:
+                        preview_tensors.append(_load_preview_tensor_by_name(name, preview_size))
+                    except Exception as e:
+                        print(f"[naiba_tag_picker] preview fail {name}: {e}")
 
         if preview_tensors:
             previews = torch.cat(preview_tensors, dim=0)
@@ -837,6 +873,30 @@ def _parse_json_list(raw):
         pass
     return []
 
+
+def _network_error_response(error, status=502):
+    return web.json_response({"error": error.to_dict()}, status=status)
+
+
+async def _route_network_call(request, fn, *args):
+    try:
+        settings = proxy_settings_from_request(request)
+        result = await _run_in_exec(fn, *args, proxy_settings=settings)
+        return result, None
+    except NetworkRequestError as error:
+        return None, _network_error_response(error)
+
+
+def _probe_status():
+    response = network_fetch(
+        BASE + "/tags.json?limit=1", headers=UA, timeout=5, retries=0
+    )
+    return {
+        "online": True,
+        "latency_ms": response.elapsed_ms,
+        "proxy_source": response.proxy_source,
+    }
+
 def register_routes():
     if PromptServer is None or web is None:
         return
@@ -858,7 +918,9 @@ def register_routes():
         # 否则 IP 页会被兜底成 "tag"，导致 IP 页与标签页内容一模一样。
         category = {"artist": "artist", "character": "character", "copyright": "copyright", "tag": "tag"}.get(cat, "tag")
         _consume_cache_params(request)
-        res = await _run_in_exec(search_tags, q, category, limit, page)
+        res, error = await _route_network_call(request, search_tags, q, category, limit, page)
+        if error is not None:
+            return error
         return web.json_response(res)
 
     @PromptServer.instance.routes.get("/naiba/tag/cn_translate")
@@ -874,7 +936,9 @@ def register_routes():
             limit = int(request.query.get("limit", "10"))
         except Exception:
             limit = 10
-        items = await _run_in_exec(search_cn_tags, q, limit)
+        items, error = await _route_network_call(request, search_cn_tags, q, limit)
+        if error is not None:
+            return error
         return web.json_response({"items": items})
 
     @PromptServer.instance.routes.get("/naiba/tag/preview")
@@ -888,7 +952,9 @@ def register_routes():
         if not tag:
             return web.json_response({"preview_url": None, "source_url": None})
         # 在后台线程构造 base64 预览
-        data = await _run_in_exec(build_preview_proxy, tag)
+        data, error = await _route_network_call(request, build_preview_proxy, tag)
+        if error is not None:
+            return error
         source_url = f"{BASE}/posts?tags={urllib.parse.quote(tag)}"
         return web.json_response({"preview_url": data, "source_url": source_url})
 
@@ -898,7 +964,9 @@ def register_routes():
         _consume_cache_params(request)
         if not u:
             return web.Response(status=400, text="missing u")
-        data = await _run_in_exec(fetch_image_bytes, u)
+        data, error = await _route_network_call(request, fetch_image_bytes, u)
+        if error is not None:
+            return error
         if not data:
             return web.Response(status=502, text="fetch failed")
         mime = detect_image_mime(data)
@@ -919,7 +987,10 @@ def register_routes():
         except Exception:
             i = 0
         blacklist = _parse_json_list(request.query.get("blacklist", "[]"))
-        out, shortfall = await _run_in_exec(_gacha_partial_job, a, c, i, blacklist)
+        result, error = await _route_network_call(request, _gacha_partial_job, a, c, i, blacklist)
+        if error is not None:
+            return error
+        out, shortfall = result
         return web.json_response({"tags": out, "shortfall": shortfall})
 
     @PromptServer.instance.routes.get("/naiba/tag/gacha_random")
@@ -929,22 +1000,20 @@ def register_routes():
         except Exception:
             total = 9
         blacklist = _parse_json_list(request.query.get("blacklist", "[]"))
-        tags = await _run_in_exec(get_completely_random_tags, total, blacklist)
+        tags, error = await _route_network_call(request, get_completely_random_tags, total, blacklist)
+        if error is not None:
+            return error
         return web.json_response({"tags": tags})
 
     @PromptServer.instance.routes.get("/naiba/tag/status")
     async def tag_status(request):
         """D 站连接状态探测路由"""
         try:
-            # 使用短超时探测 Danbooru 可达性
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
-                async with session.get(BASE + "/tags.json?limit=1", ssl=False) as resp:
-                    if resp.status == 200:
-                        return web.json_response({"online": True})
-                    else:
-                        return web.json_response({"online": False})
-        except Exception:
-            return web.json_response({"online": False})
+            settings = proxy_settings_from_request(request)
+            result = await _run_in_exec(_probe_status, proxy_settings=settings)
+            return web.json_response(result)
+        except NetworkRequestError as error:
+            return web.json_response({"online": False, "error": error.to_dict()})
 
     @PromptServer.instance.routes.get("/naiba/tag/preload")
     async def tag_preload(request):
@@ -953,9 +1022,20 @@ def register_routes():
         action = request.query.get("action", "status")
         _consume_cache_params(request)
         if action == "start":
+            try:
+                settings = proxy_settings_from_request(request)
+            except NetworkRequestError as error:
+                return _network_error_response(error)
             if _PRELOAD_TASK is None or _PRELOAD_TASK.done():
                 _PRELOAD_STATUS["running"] = True
-                _PRELOAD_TASK = asyncio.get_event_loop().run_in_executor(None, _preload_worker)
+                _PRELOAD_TASK = asyncio.get_event_loop().run_in_executor(
+                    None,
+                    run_with_proxy,
+                    _preload_worker,
+                    (),
+                    settings.mode,
+                    settings.url,
+                )
                 return web.json_response({"started": True, **_PRELOAD_STATUS})
             else:
                 return web.json_response({"started": False, "message": "已在运行", **_PRELOAD_STATUS})
@@ -1022,7 +1102,9 @@ def register_routes():
         except Exception:
             page = 1
         _consume_cache_params(request)
-        res = await _run_in_exec(get_ip_characters, ip, limit, page)
+        res, error = await _route_network_call(request, get_ip_characters, ip, limit, page)
+        if error is not None:
+            return error
         return web.json_response(res)
 
 def _consume_cache_params(request):
@@ -1095,6 +1177,8 @@ def _preload_worker():
                         _PRELOAD_STATUS["message"] = f"[轮{cycle}] 缓存预览: {tag} ({cached2:.1f}/{max_mb:.1f} MB)"
                         try:
                             build_preview_proxy(tag)
+                        except NetworkRequestError:
+                            raise
                         except Exception:
                             pass
                         time.sleep(0.15)  # 预览图请求间短延迟
@@ -1111,6 +1195,10 @@ def _preload_worker():
                 return
             _PRELOAD_STATUS["message"] = f"第{cycle}轮完成，继续下一轮... ({cached:.1f}/{max_mb:.1f} MB)"
             time.sleep(1)
+    except NetworkRequestError as error:
+        _PRELOAD_STATUS["message"] = f"预加载停止: {error.message}"
+        _PRELOAD_STATUS["last_error"] = error.to_dict()
+        _PRELOAD_STATUS["running"] = False
     except Exception as e:
         _PRELOAD_STATUS["message"] = f"预加载出错: {e}"
         _PRELOAD_STATUS["running"] = False
@@ -1139,10 +1227,13 @@ def _get_executor():
                 _EXECUTOR = ThreadPoolExecutor(max_workers=4)
     return _EXECUTOR
 
-async def _run_in_exec(fn, *args):
+async def _run_in_exec(fn, *args, proxy_settings=None):
     """在后台线程执行阻塞 IO，返回结果（路由处理器在事件循环内 await）。"""
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_get_executor(), fn, *args)
+    settings = proxy_settings or normalize_proxy_settings()
+    return await loop.run_in_executor(
+        _get_executor(), run_with_proxy, fn, args, settings.mode, settings.url
+    )
 
 # ----------------------------- 注册 -----------------------------
 try:

@@ -2,6 +2,23 @@
 
 自定义ComfyUI节点集合，包含WAN模型优化、Multi LoRA Loader、Multi LoRA Loader (only model)、Visual LoRA Loader、List LoRA Loader、Lora Testing Converter、Save Text File、Lora Data Preview、Civitai Info Reader、Custom Data Reader、Power LoRA Config Reader、**Naiba Tag Picker（Danbooru 标签画廊/扭蛋）**和**Naiba Gelbooru Tag Picker（Gelbooru 标签画廊/扭蛋）**功能。
 
+## v3.7.0 更新亮点（2026-07-31）
+
+本次更新将 Danbooru / Gelbooru 的网络请求统一收口到独立网络层，并补齐依赖与测试。
+
+### 统一网络层（naiba_network.py）
+- 新增独立模块 `naiba_network.py`：集中处理搜索 / 预览 / 扭蛋 / 预加载 / 状态检测的全部 HTTP 请求，Danbooru 与 Gelbooru 两端共用，避免重复实现。
+- 代理模式：画廊设置页支持 `自动 / 手动 / 直连` 三种模式；手动地址支持 HTTP(S) 与 SOCKS5/SOCKS5H，裸 `127.0.0.1:7890` 按 HTTP 代理处理。
+- 自动代理探测：优先 `NAIBA_PROXY_URL`，其次标准代理环境变量，再回退 Windows 静态系统代理；PAC/WPAD 需改用手动地址或 TUN 模式。
+- 联网诊断：`status` 接口返回实际延迟与代理来源；代理 / DNS / TLS / 超时 / HTTP 错误均返回可见原因，不再伪装成空搜索结果。认证代理建议通过 `NAIBA_PROXY_URL` 提供，避免凭据随工作流保存。
+
+### 依赖与测试
+- 新增 `requirements.txt`：`requests>=2.31.0`、`PySocks>=1.7.1`（SOCKS 代理支持）。
+- 新增 `tests/test_naiba_network.py`：覆盖代理解析、URL 安全过滤、错误码映射等核心逻辑。
+- 两个 Tag Picker 节点（`naiba_tag_picker.py` / `naiba_gelbooru_tag_picker.py`）及对应前端（`js/naiba_tag_picker.js` / `js/naiba_gelbooru_tag_picker.js`）接入统一网络层与诊断。
+
+---
+
 ## v3.6.0 更新亮点（2026-07-28）
 
 本次更新聚焦 **LoRA 预设路径智能校正** 与 **加载器健壮性**。
@@ -641,6 +658,7 @@ naiba-test/
 ├── power_lora_config_reader.py             # Power LoRA Config Reader节点
 ├── naiba_textbox.py                        # 可编辑文本框节点（Textbox）
 ├── naiba_tag_picker.py                     # Danbooru 标签画廊选择器 / 扭蛋节点
+├── naiba_network.py                        # 统一网络层（代理 / 诊断 / HTTP 封装）
 ├── civitai_utils.py                        # Civitai API工具模块
 ├── preset_routes.py                        # 预设管理API路由
 ├── presets/                                # 预设存储目录（运行时自动创建）
@@ -661,6 +679,8 @@ naiba-test/
 - ComfyUI
 - PyTorch
 - tqdm
+- requests>=2.31.0（统一网络层）
+- PySocks>=1.7.1（SOCKS5/SOCKS5H 代理支持）
 
 ## 注意事项
 
@@ -774,6 +794,8 @@ Multi LoRA Loader 和 Multi LoRA Loader (only model) 都支持预设管理功能
 - **双模式认证（节点控件最方便）**：节点上 `gelbooru_api_key` / `gelbooru_user_id` 两个可见文本框，留空 = 匿名（`autocomplete2` 接口）；填凭据 = DAPI 模式（`s=tag` 带分类/Post 数/分页、`s=post` 预览），分类搜索与全库随机扭蛋能力完整启用。凭据优先级：节点控件 > 环境变量 > `data/gelbooru_auth.json`。
 - **设置分页缓存控制**：弹窗「设置」分页可视化控制磁盘缓存开关、上限（MB）、实时用量、一键清理，运行时读写节点隐藏控件 `cache_enabled` / `cache_max_mb` 持久化。
 - **预览代理与 SSRF 白名单**：`/naiba/gelbooru/image` 路由加 Referer 并仅放行 `gelbooru.com`，避免任意地址代理。
+- **统一联网代理**：Danbooru / Gelbooru 的搜索、预览、扭蛋、预加载和状态检测共用同一网络层。画廊设置页支持自动、手动和直连模式；手动地址支持 HTTP(S)、SOCKS5/SOCKS5H，裸 `127.0.0.1:7890` 按 HTTP 代理处理。自动模式优先读取 `NAIBA_PROXY_URL`，随后读取标准代理环境变量与 Windows 静态系统代理；PAC/WPAD 请改用手动地址或 TUN 模式。
+- **联网诊断**：状态检测显示实际延迟和代理来源；代理、DNS、TLS、超时及 HTTP 错误会返回可见原因，不再伪装成空搜索结果。认证代理建议通过 `NAIBA_PROXY_URL` 提供，避免凭据随工作流保存。
 
 #### 节点独立性
 - 该节点为**完全独立实现**，不 import、不继承 `comfyui-anima-t8` 或任何内置节点类，所有 Gelbooru 客户端逻辑在本文件内自实现（符合本项目铁律）。
