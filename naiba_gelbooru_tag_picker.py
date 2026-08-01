@@ -892,7 +892,8 @@ class NaibaGelbooruTagPicker:
                 "cache_max_mb": ("INT", {"default": 500, "min": 100, "max": 20000, "step": 100}),
                 "blacklist_data": ("STRING", {"multiline": True, "default": "{}"}),
                 "favorites_data": ("STRING", {"multiline": True, "default": "{}"}),
-                "proxy_mode": (["auto", "manual", "direct"], {"default": "auto"}),
+                # 空值用于兼容新增代理控件前保存的旧工作流；运行时按 auto 处理。
+                "proxy_mode": (["auto", "manual", "direct", ""], {"default": "auto"}),
                 "proxy_url": ("STRING", {"default": "", "multiline": False}),
             },
             "hidden": {
@@ -903,7 +904,7 @@ class NaibaGelbooruTagPicker:
 
     RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "IMAGE", "STRING")
     RETURN_NAMES = ("ARTIST_NAMES", "CHARACTER_NAMES", "IP_NAMES", "TAG_NAMES", "MERGED_TAGS", "RANDOM_TAGS", "PREVIEW_IMAGES", "CHARACTER_IP_NAMES")
-    OUTPUT_NODE = True
+    OUTPUT_NODE = False
     FUNCTION = "execute"
     CATEGORY = "naiba-node"
 

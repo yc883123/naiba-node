@@ -8,9 +8,12 @@ import hashlib
 import os
 import json
 import asyncio
-import aiohttp
+import functools
+import urllib.parse
 from typing import Optional, Dict, List, Tuple, Any
 from pathlib import Path
+
+from .naiba_network import NetworkRequestError, fetch
 
 # NSFW级别定义
 NSFW_LEVELS = {
@@ -25,6 +28,38 @@ NSFW_LEVELS = {
 # 默认API配置
 DEFAULT_API_BASE = "https://civitai.red/api/v1"
 DEFAULT_USER_AGENT = "NaibaLoraPreview/1.0"
+
+
+class CivitaiError(RuntimeError):
+    """Civitai failure with a stable machine-readable category."""
+
+    def __init__(self, message, code="civitai_error", **details):
+        super().__init__(str(message))
+        self.code = code
+        self.details = details
+
+    def to_dict(self):
+        data = {"code": self.code, "message": str(self)}
+        data.update(self.details)
+        return data
+
+
+def civitai_error_details(error):
+    if isinstance(error, CivitaiError):
+        return error.to_dict()
+    if error:
+        return {"code": "civitai_error", "message": str(error)}
+    return None
+
+
+def classify_civitai_lookup(local_exists, info, error):
+    """Classify verification without treating a local hit as a Civitai hit."""
+    if info is not None:
+        return "green" if local_exists else "gray"
+    code = getattr(error, "code", "")
+    if error and code != "not_found":
+        return "query_failed"
+    return "local_only" if local_exists else "not_found"
 
 # 预览图扩展名优先级
 PREVIEW_EXTENSIONS = [
@@ -66,28 +101,50 @@ class CivitaiClient:
         """
         self.api_key = api_key
         self.api_base = api_base or DEFAULT_API_BASE
-        self.session: Optional[aiohttp.ClientSession] = None
-        
-    async def _get_session(self) -> aiohttp.ClientSession:
-        """获取或创建aiohttp会话"""
-        if self.session is None or self.session.closed:
-            headers = {
-                "User-Agent": DEFAULT_USER_AGENT,
-                "Accept": "application/json",
-            }
-            if self.api_key:
-                headers["Authorization"] = f"Bearer {self.api_key}"
-            timeout = aiohttp.ClientTimeout(total=30, connect=10, sock_read=15)
-            self.session = aiohttp.ClientSession(headers=headers, timeout=timeout)
-        return self.session
+        self.last_error: Optional[CivitaiError] = None
+        self.last_proxy_source = "unknown"
+        self.last_elapsed_ms = 0
+
+    def _headers(self, *, include_auth=True, accept="application/json"):
+        headers = {"User-Agent": DEFAULT_USER_AGENT, "Accept": accept}
+        # Do not forward the API token to image/CDN origins.
+        if include_auth and self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
+    async def _request(self, url, *, timeout=10, retries=1, include_auth=True,
+                       accept="application/json"):
+        self.last_error = None
+        call = functools.partial(
+            fetch,
+            url,
+            headers=self._headers(include_auth=include_auth, accept=accept),
+            timeout=timeout,
+            retries=retries,
+        )
+        try:
+            response = await asyncio.to_thread(call)
+        except NetworkRequestError as error:
+            self.last_error = CivitaiError(
+                error.message,
+                error.code,
+                status=error.status,
+                proxy_source=error.proxy_source,
+            )
+            raise self.last_error from error
+        self.last_proxy_source = response.proxy_source
+        self.last_elapsed_ms = response.elapsed_ms
+        return response
+
+    @staticmethod
+    def _with_query(url, params):
+        return f"{url}?{urllib.parse.urlencode(params)}" if params else url
     
     async def close(self):
-        """关闭会话"""
-        if self.session and not self.session.closed:
-            await self.session.close()
-            self.session = None
+        """Compatibility no-op; requests sessions are scoped per request."""
+        return None
     
-    async def query_by_hash(self, file_hash: str, max_retries: int = 3) -> Tuple[Optional[Dict], Optional[str]]:
+    async def query_by_hash(self, file_hash: str, max_retries: int = 1) -> Tuple[Optional[Dict], Optional[str]]:
         """
         通过SHA256哈希值查询Civitai模型版本信息
         
@@ -98,49 +155,23 @@ class CivitaiClient:
         Returns:
             Tuple[Optional[Dict], Optional[str]]: (模型版本数据, 错误信息)
         """
-        for attempt in range(max_retries):
+        url = f"{self.api_base}/model-versions/by-hash/{file_hash}"
+        try:
+            response = await self._request(
+                url, timeout=10, retries=1 if max_retries else 0
+            )
             try:
-                session = await self._get_session()
-                url = f"{self.api_base}/model-versions/by-hash/{file_hash}"
-                
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        return data, None
-                    elif response.status == 404:
-                        return None, "Model not found on Civitai"
-                    elif response.status == 429:
-                        # 速率限制，等待后重试
-                        if attempt < max_retries - 1:
-                            wait_time = 2 ** attempt  # 指数退避: 1s, 2s, 4s
-                            await asyncio.sleep(wait_time)
-                            continue
-                        return None, "Rate limit exceeded, please try again later"
-                    else:
-                        error_text = await response.text()
-                        if attempt < max_retries - 1 and response.status >= 500:
-                            # 服务器错误，重试
-                            await asyncio.sleep(2 ** attempt)
-                            continue
-                        return None, f"API error {response.status}: {error_text}"
-                        
-            except asyncio.TimeoutError:
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-                return None, "Request timeout"
-            except aiohttp.ClientError as e:
-                if attempt < max_retries - 1:
-                    # 网络错误，重试
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-                return None, f"Network error: {str(e)}"
-            except Exception as e:
-                return None, f"Unexpected error: {str(e)}"
-        
-        return None, "Max retries exceeded"
-    
-    async def search_models(self, query: str, page: int = 1, limit: int = 20, model_type: Optional[str] = None, max_retries: int = 3) -> Tuple[Optional[Dict], Optional[str]]:
+                return json.loads(response.content), None
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                self.last_error = CivitaiError("Civitai 返回了无效 JSON", "response_format")
+                return None, self.last_error
+        except CivitaiError as error:
+            if error.code == "http_error" and error.details.get("status") == 404:
+                error = CivitaiError("Model not found on Civitai", "not_found", status=404)
+                self.last_error = error
+            return None, error
+
+    async def search_models(self, query: str, page: int = 1, limit: int = 20, model_type: Optional[str] = None, max_retries: int = 1) -> Tuple[Optional[Dict], Optional[str]]:
         """
         搜索Civitai模型
         
@@ -154,53 +185,44 @@ class CivitaiClient:
         Returns:
             Tuple[Optional[Dict], Optional[str]]: (搜索结果数据, 错误信息)
         """
-        for attempt in range(max_retries):
+        params = {"query": query, "page": str(page), "limit": str(limit)}
+        if model_type:
+            params["types"] = model_type
+        url = self._with_query(f"{self.api_base}/models", params)
+        try:
+            response = await self._request(
+                url, timeout=10, retries=1 if max_retries else 0
+            )
             try:
-                session = await self._get_session()
-                params = {
-                    "query": query,
-                    "page": str(page),
-                    "limit": str(limit),
-                }
-                if model_type:
-                    params["types"] = model_type
-                
-                url = f"{self.api_base}/models"
-                
-                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        return data, None
-                    elif response.status == 429:
-                        # 速率限制，等待后重试
-                        if attempt < max_retries - 1:
-                            wait_time = 2 ** attempt  # 指数退避: 1s, 2s, 4s
-                            await asyncio.sleep(wait_time)
-                            continue
-                        return None, "Rate limit exceeded, please try again later"
-                    else:
-                        error_text = await response.text()
-                        if attempt < max_retries - 1 and response.status >= 500:
-                            # 服务器错误，重试
-                            await asyncio.sleep(2 ** attempt)
-                            continue
-                        return None, f"API error {response.status}: {error_text}"
-                        
-            except asyncio.TimeoutError:
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-                return None, "Request timeout"
-            except aiohttp.ClientError as e:
-                if attempt < max_retries - 1:
-                    # 网络错误，重试
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-                return None, f"Network error: {str(e)}"
-            except Exception as e:
-                return None, f"Unexpected error: {str(e)}"
-        
-        return None, "Max retries exceeded"
+                return json.loads(response.content), None
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                self.last_error = CivitaiError("Civitai 返回了无效 JSON", "response_format")
+                return None, self.last_error
+        except CivitaiError as error:
+            return None, error
+
+    async def check_connectivity(self):
+        """Check both the metadata API and the image CDN through one proxy context."""
+        api_url = self._with_query(f"{self.api_base}/models", {"limit": "1"})
+        api_response = await self._request(api_url, timeout=10, retries=0)
+        try:
+            json.loads(api_response.content)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise CivitaiError("Civitai 返回了无效 JSON", "response_format") from error
+        api_elapsed = api_response.elapsed_ms
+        cdn_response = await self._request(
+            "https://image.civitai.com/",
+            timeout=10,
+            retries=0,
+            include_auth=False,
+            accept="*/*",
+        )
+        return {
+            "online": True,
+            "proxy_source": cdn_response.proxy_source,
+            "api_latency_ms": api_elapsed,
+            "cdn_latency_ms": cdn_response.elapsed_ms,
+        }
     
     async def download_image(self, image_url: str, save_path: str, validate: bool = True) -> bool:
         """
@@ -216,29 +238,33 @@ class CivitaiClient:
             bool: 是否成功
         """
         try:
-            session = await self._get_session()
-            
-            async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                if response.status == 200:
-                    content = await response.read()
-                    # 校验响应确为图片：拒绝 Civitai/CDN 返回的 HTML/JSON 错误页被当图片存盘
-                    if validate and not _looks_like_image(content):
-                        print(f"[CivitaiClient] 跳过非图片响应（疑似错误页），URL: {image_url}")
-                        return False
-                    # 确保目录存在
-                    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-                    # 写入文件
-                    with open(save_path, "wb") as f:
-                        f.write(content)
-                    return True
-                else:
-                    return False
-                    
-        except asyncio.TimeoutError:
-            print(f"[CivitaiClient] Download timeout: {image_url}")
+            response = await self._request(
+                image_url,
+                timeout=20,
+                retries=0,
+                include_auth=False,
+                accept="image/*,*/*;q=0.8",
+            )
+            content = response.content
+            if validate and not _looks_like_image(content):
+                self.last_error = CivitaiError(
+                    "图片 CDN 返回的内容不是受支持的图片", "response_format"
+                )
+                return False
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            with open(save_path, "wb") as file:
+                file.write(content)
+            return True
+        except CivitaiError:
             return False
-        except Exception as e:
-            print(f"[CivitaiClient] Download error: {e}")
+        except OSError as error:
+            self.last_error = CivitaiError(
+                f"无法写入预览文件: {error}", "storage_error"
+            )
+            return False
+        except Exception as error:
+            self.last_error = CivitaiError("预览图处理失败", "preview_error")
+            print(f"[CivitaiClient] Download error: {error}")
             return False
     
     @staticmethod
@@ -399,6 +425,12 @@ def _looks_like_image(data: bytes) -> bool:
     if data[:4] == b"GIF8":
         return True
     if data[:4] in (b"II*\x00", b"MM\x00*"):
+        return True
+    if data[:2] == b"BM":
+        return True
+    if data[:4] == b"\x00\x00\x01\x00":
+        return True
+    if len(data) >= 12 and data[4:8] in (b"avif", b"heic", b"heif", b"mif1"):
         return True
     return False
 
@@ -638,17 +670,19 @@ async def sync_lora_from_civitai(
         return None, None, f"LoRA file not found: {lora_path}"
     
     metadata_path = get_metadata_path(lora_path)
+    cached = load_cached_metadata(metadata_path)
     
     # 检查缓存（非强制模式）
     if not force:
-        cached = load_cached_metadata(metadata_path)
         if cached:
             # 预览图存在且本地文件存在，直接返回
             preview_path = cached.get("preview_path")
             if preview_path and os.path.exists(preview_path):
                 return cached, preview_path, None
-            # 已尝试同步但确实无可用预览（守卫标记），避免无图模型反复请求 Civitai
-            if cached.get("_preview_resolved") is True:
+            # Only the new explicit "none" state means Civitai genuinely has no
+            # usable preview. Legacy _preview_resolved=true may represent a CDN
+            # failure, so it must be retried once and migrated.
+            if cached.get("_preview_status") == "none":
                 return cached, cached.get("preview_path"), None
     
     # 计算SHA256哈希（在线程池中运行，避免阻塞事件循环）
@@ -662,29 +696,46 @@ async def sync_lora_from_civitai(
     try:
         version_data, error = await client.query_by_hash(file_hash)
         if error:
-            # API/网络错误：仍把已算好的 SHA256 写入缓存，供本地读取；
-            # _preview_resolved=False 允许下次同步重试元数据。
+            # Preserve existing full metadata on a transient refresh failure.
+            # A first-time failure still stores the SHA for local verification.
             try:
-                save_cached_metadata(metadata_path, {
+                failure_cache = dict(cached) if cached else {}
+                failure_cache.update({
                     "hash": file_hash,
-                    "_preview_resolved": False,
-                    "_sha_only": True,
+                    "_last_sync_error": str(error),
                 })
+                if not cached or cached.get("_sha_only"):
+                    failure_cache.update({
+                        "_preview_resolved": False,
+                        "_preview_status": "failed",
+                        "_sha_only": True,
+                    })
+                save_cached_metadata(metadata_path, failure_cache)
             except Exception:
                 pass
-            return None, None, error
+            cached_preview = cached.get("preview_path") if cached else None
+            return cached if cached and not cached.get("_sha_only") else None, cached_preview, error
         
         if not version_data:
-            # Civitai 无对应模型：同样缓存 SHA256（仍允许下次重试）。
             try:
-                save_cached_metadata(metadata_path, {
+                failure_cache = dict(cached) if cached else {}
+                failure_cache.update({
                     "hash": file_hash,
-                    "_preview_resolved": False,
-                    "_sha_only": True,
+                    "_last_sync_error": "No data returned from Civitai",
                 })
+                if not cached or cached.get("_sha_only"):
+                    failure_cache.update({
+                        "_preview_resolved": False,
+                        "_preview_status": "failed",
+                        "_sha_only": True,
+                    })
+                save_cached_metadata(metadata_path, failure_cache)
             except Exception:
                 pass
-            return None, None, "No data returned from Civitai"
+            cached_preview = cached.get("preview_path") if cached else None
+            return cached if cached and not cached.get("_sha_only") else None, cached_preview, CivitaiError(
+                "No data returned from Civitai", "response_format"
+            )
         
         # 提取元数据
         trained_words = version_data.get("trainedWords", [])
@@ -719,6 +770,7 @@ async def sync_lora_from_civitai(
         selected_image = CivitaiClient.select_preview_image(images, max_nsfw_level)
 
         preview_path = None
+        preview_error = None
         if selected_image:
             image_url = selected_image.get("url")
             if image_url:
@@ -752,8 +804,14 @@ async def sync_lora_from_civitai(
                                 pass
                         else:
                             preview_path = None
+                            preview_error = CivitaiError(
+                                "无法从 Civitai 动态预览提取封面", "preview_error"
+                            )
                     else:
                         preview_path = None
+                        preview_error = client.last_error or CivitaiError(
+                            "Civitai 动态预览下载失败", "preview_error"
+                        )
                 else:
                     # 静态图：直接下载
                     ext = CivitaiClient.get_preview_extension(image_url)
@@ -768,12 +826,29 @@ async def sync_lora_from_civitai(
                         metadata["preview_nsfw_level"] = selected_image.get("nsfwLevel", 0)
                     else:
                         preview_path = None
+                        preview_error = client.last_error or CivitaiError(
+                            "Civitai 预览图下载失败", "preview_error"
+                        )
 
-        # 标记预览已处理（无论最终是否有图），避免无图模型反复请求 Civitai API
-        metadata["_preview_resolved"] = True
+        if preview_path:
+            metadata["_preview_resolved"] = True
+            metadata["_preview_status"] = "downloaded"
+        elif selected_image:
+            metadata["_preview_resolved"] = False
+            metadata["_preview_status"] = "failed"
+            metadata["_preview_error"] = str(preview_error or "预览图下载失败")
+        else:
+            metadata["_preview_resolved"] = True
+            metadata["_preview_status"] = "none"
 
         # 保存缓存
-        save_cached_metadata(metadata_path, metadata)
+        if not save_cached_metadata(metadata_path, metadata):
+            return metadata, preview_path, CivitaiError(
+                "无法写入 Civitai 元数据文件", "storage_error"
+            )
+
+        if preview_error:
+            return metadata, None, preview_error
 
         return metadata, preview_path, None
         

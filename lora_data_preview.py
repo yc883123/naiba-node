@@ -24,12 +24,14 @@ class LoraDataPreview:
                     "multiline": True,
                     "tooltip": "LoRA配置JSON数据（由前端弹窗UI自动管理，无需手动编辑）"
                 }),
+                "proxy_mode": (["auto", "manual", "direct", ""], {"default": "auto"}),
+                "proxy_url": ("STRING", {"default": "", "multiline": False}),
             },
         }
     
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("lora_names",)
-    OUTPUT_NODE = True
+    OUTPUT_NODE = False
     FUNCTION = "execute"
     CATEGORY = "naiba-node"
     DESCRIPTION = (
@@ -39,7 +41,7 @@ class LoraDataPreview:
     )
     SEARCH_ALIASES = ["naiba", "lora preview", "civitai", "lora metadata"]
     
-    def execute(self, lora_data="[]"):
+    def execute(self, lora_data="[]", proxy_mode="auto", proxy_url=""):
         """
         解析LoRA配置，输出所有启用的LoRA名称列表
         """

@@ -9,11 +9,51 @@ import glob
 import time
 import asyncio
 import hashlib
+from functools import wraps
 from pathlib import Path
 from aiohttp import web
 from server import PromptServer
 import folder_paths
 from typing import Optional, Dict, Tuple
+
+from .naiba_network import (
+    NetworkRequestError,
+    proxy_context,
+    proxy_settings_from_request,
+)
+
+
+def with_naiba_proxy(handler):
+    """Apply per-request proxy settings without leaking across concurrent jobs."""
+    @wraps(handler)
+    async def wrapped(request):
+        try:
+            settings = proxy_settings_from_request(request)
+        except NetworkRequestError as error:
+            return web.json_response(
+                {"error": error.message, "error_details": error.to_dict()},
+                status=400,
+            )
+        with proxy_context(settings.mode, settings.url):
+            return await handler(request)
+    return wrapped
+
+
+_UPSTREAM_ERROR_CODES = {
+    "proxy_error", "connection_error", "tls_error", "timeout",
+    "network_error", "http_error", "response_format",
+}
+
+
+def civitai_error_http_status(error):
+    code = getattr(error, "code", "")
+    if code == "not_found":
+        return 404
+    if code == "proxy_config":
+        return 400
+    if code in _UPSTREAM_ERROR_CODES:
+        return 502
+    return 500
 
 # 图片缓存系统
 class ImageCache:
@@ -915,6 +955,7 @@ async def lora_realpath_handler(request):
 # API 路由：Civitai 同步
 # ============================================================
 @PromptServer.instance.routes.get('/naiba/lora/civitai-sync')
+@with_naiba_proxy
 async def civitai_sync_handler(request):
     """
     触发从Civitai同步LoRA元数据和预览图
@@ -945,6 +986,7 @@ async def civitai_sync_handler(request):
             find_local_preview,
             get_metadata_path,
             load_cached_metadata,
+            civitai_error_details,
         )
         
         # 获取LoRA文件路径
@@ -977,12 +1019,17 @@ async def civitai_sync_handler(request):
         )
         
         if error:
+            error_details = civitai_error_details(error)
             return web.json_response({
                 "success": False,
-                "error": error,
+                "error": str(error),
+                "error_details": error_details,
+                "metadata_available": bool(
+                    metadata and error_details.get("code") != "storage_error"
+                ),
                 "metadata": metadata,
                 "preview_path": preview_path
-            })
+            }, status=civitai_error_http_status(error))
         
         # 同步成功后清除该LoRA的图片缓存，确保前端能加载新图片
         cache_key = f"lora_preview:{lora_name}"
@@ -1052,6 +1099,7 @@ async def get_lora_metadata_handler(request):
         
         # 加载元数据
         metadata = load_cached_metadata(metadata_path)
+        has_full_metadata = bool(metadata and not metadata.get("_sha_only"))
         
         # 查找本地预览图
         local_preview = find_local_preview(lora_path)
@@ -1060,7 +1108,7 @@ async def get_lora_metadata_handler(request):
             "success": True,
             "metadata": metadata,
             "local_preview": local_preview,
-            "has_cached_metadata": metadata is not None,
+            "has_cached_metadata": has_full_metadata,
             "has_local_preview": local_preview is not None
         })
         
@@ -1073,6 +1121,7 @@ async def get_lora_metadata_handler(request):
 # API 路由：批量同步所有LoRA（SSE 流式进度推送）
 # ============================================================
 @PromptServer.instance.routes.post('/naiba/lora/batch-sync')
+@with_naiba_proxy
 async def batch_sync_handler(request):
     """
     批量同步LoRA文件的元数据和预览图（使用SSE实时推送进度）
@@ -1107,6 +1156,7 @@ async def batch_sync_handler(request):
             get_metadata_path,
             load_cached_metadata,
             CivitaiClient,
+            civitai_error_details,
         )
         from . import sha256_cache
         
@@ -1228,11 +1278,17 @@ async def batch_sync_handler(request):
                     print(f"[Naiba-SHA256Cache] 缓存 {lora_name} 失败: {_ce}")
                 
                 if error:
+                    error_details = civitai_error_details(error)
+                    metadata_available = bool(
+                        metadata and error_details.get("code") != "storage_error"
+                    )
                     results["failed"] += 1
                     results["details"].append({
                         "name": lora_name,
                         "status": "failed",
-                        "error": error
+                        "error": str(error),
+                        "error_details": error_details,
+                        "metadata_available": metadata_available,
                     })
                     # 发送失败事件
                     await send_sse("item_done", {
@@ -1240,7 +1296,9 @@ async def batch_sync_handler(request):
                         "total": len(lora_paths),
                         "name": lora_name,
                         "status": "failed",
-                        "error": error
+                        "error": str(error),
+                        "error_details": error_details,
+                        "metadata_available": metadata_available,
                     })
                 else:
                     # 同步成功，清除该LoRA的图片缓存
@@ -1497,6 +1555,7 @@ async def cache_sha256_only_handler(request):
 # API 路由：上传预设校验（本地匹配 + Civitai 实时查询，四分类）
 # ============================================================
 @PromptServer.instance.routes.post('/naiba/lora/verify-preset')
+@with_naiba_proxy
 async def verify_preset_handler(request):
     """
     上传预设校验聚合接口（SSE 流式，实时回传进度）：
@@ -1509,9 +1568,11 @@ async def verify_preset_handler(request):
        "no_sha256":[...],"relocations":[...],"ambiguous":[...],"stale_cache":[...],
        "path_summary":{...},"summary":{...}}
       {"type":"error","message":"..."}
-    四分类：
+    六分类：
       green      本地存在且 C 站上也有（含 civitai_info，可显示绿色卡片）
       gray       本地不存在但 C 站上有（含 civitai_info + 下载地址，灰色卡片）
+      local_only 本地存在但 C 站没有对应哈希
+      query_failed Civitai 查询失败，不能判定是否上站
       not_found  本地不存在且 C 站上也没有（置底「找不到地址」）
       no_sha256  预设条目本身没有 sha256（置底「预设内无sha256」）
     请求体：{"lora_list":[{"name","sha256"?,"strength_model","strength_clip","enabled"}...], "api_key":""}
@@ -1525,7 +1586,12 @@ async def verify_preset_handler(request):
             return web.json_response({"error": "lora_list 需为数组"}, status=400)
 
         from . import sha256_cache
-        from .civitai_utils import CivitaiClient, build_civitai_version_info
+        from .civitai_utils import (
+            CivitaiClient,
+            build_civitai_version_info,
+            civitai_error_details,
+            classify_civitai_lookup,
+        )
         from .lora_preset_paths import classify_preset_paths, normalize_sha256
 
         candidate_index = sha256_cache.build_sha_candidates_index()
@@ -1587,6 +1653,7 @@ async def verify_preset_handler(request):
         })
 
         sha_info_map = {}
+        sha_error_map = {}
         if unique_shas:
             client = CivitaiClient(api_key=api_key)
             sem = asyncio.Semaphore(6)
@@ -1600,8 +1667,11 @@ async def verify_preset_handler(request):
                         data, err = await client.query_by_hash(sha)
                         if data and isinstance(data, dict):
                             info = build_civitai_version_info(data)
+                        if err:
+                            sha_error_map[sha] = err
                     except Exception as _e:  # noqa: BLE001
                         print(f"[Naiba] verify-preset 查询 {sha} 失败: {_e}")
+                        sha_error_map[sha] = _e
                     sha_info_map[sha] = info
                 done_count += 1
                 await send({
@@ -1618,7 +1688,7 @@ async def verify_preset_handler(request):
             })
 
         # 分类
-        green, gray, not_found, no_sha256 = [], [], [], []
+        green, gray, local_only, query_failed, not_found, no_sha256 = [], [], [], [], [], []
         for preset_index, item in enumerate(lora_list):
             if not isinstance(item, dict):
                 continue
@@ -1638,19 +1708,27 @@ async def verify_preset_handler(request):
             candidates = local_candidates.get(preset_index, [])
             local = bool(candidates)
             info = sha_info_map.get(sha)
+            lookup_error = sha_error_map.get(sha)
             if local:
                 if len(candidates) == 1:
                     entry["local_name"] = candidates[0]
                 else:
                     entry["local_candidates"] = candidates
-                entry["civitai_found"] = info is not None
-                entry["civitai_info"] = info
+            entry["civitai_found"] = info is not None
+            entry["civitai_info"] = info
+            if lookup_error:
+                entry["civitai_error"] = civitai_error_details(lookup_error)
+
+            classification = classify_civitai_lookup(local, info, lookup_error)
+            if classification == "green":
                 green.append(entry)
-            elif info is not None:
-                entry["civitai_info"] = info
+            elif classification == "gray":
                 gray.append(entry)
+            elif classification == "local_only":
+                local_only.append(entry)
+            elif classification == "query_failed":
+                query_failed.append(entry)
             else:
-                entry["civitai_info"] = None
                 not_found.append(entry)
 
         await send({
@@ -1658,6 +1736,8 @@ async def verify_preset_handler(request):
             "success": True,
             "green": green,
             "gray": gray,
+            "local_only": local_only,
+            "query_failed": query_failed,
             "not_found": not_found,
             "no_sha256": no_sha256,
             **path_report,
@@ -1665,6 +1745,8 @@ async def verify_preset_handler(request):
                 "total": sum(1 for item in lora_list if isinstance(item, dict)),
                 "green": len(green),
                 "gray": len(gray),
+                "local_only": len(local_only),
+                "query_failed": len(query_failed),
                 "not_found": len(not_found),
                 "no_sha256": len(no_sha256),
             },
@@ -2261,7 +2343,7 @@ async def check_lora_local_existence(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
-print("✅ Naiba Routes loaded: /naiba/presets/*, /naiba/presets/resolve, /naiba/presets/upload-image, /naiba/presets/image, /naiba/lora/preview, /naiba/lora/metadata/preview, /naiba/lora/civitai-sync, /naiba/lora/batch-sync, /naiba/lora/metadata, /naiba/cache/*, /naiba/lora/favorites/*, /naiba/lora/detail, /naiba/lora/custom-data/*, /naiba/lora/civitai-by-hash, /naiba/lora/civitai-search, /naiba/lora/resolve-sha256, /naiba/lora/check-local, /naiba/lora/list-all")
+print("✅ Naiba Routes loaded: /naiba/presets/*, /naiba/presets/resolve, /naiba/presets/upload-image, /naiba/presets/image, /naiba/lora/preview, /naiba/lora/metadata/preview, /naiba/lora/civitai-sync, /naiba/lora/civitai-status, /naiba/lora/batch-sync, /naiba/lora/metadata, /naiba/cache/*, /naiba/lora/favorites/*, /naiba/lora/detail, /naiba/lora/custom-data/*, /naiba/lora/civitai-by-hash, /naiba/lora/civitai-search, /naiba/lora/resolve-sha256, /naiba/lora/check-local, /naiba/lora/list-all")
 
 
 # ============================================================
@@ -2474,6 +2556,7 @@ async def get_lora_detail_handler(request):
         # 获取Civitai元数据
         metadata_path = get_metadata_path(lora_path)
         metadata = load_cached_metadata(metadata_path)
+        has_full_metadata = bool(metadata and not metadata.get("_sha_only"))
         
         # 查找本地预览图
         local_preview = find_local_preview(lora_path)
@@ -2490,7 +2573,7 @@ async def get_lora_detail_handler(request):
             "local_preview": local_preview,
             "metadata_preview": metadata_preview,
             "custom_data": custom_data,
-            "has_cached_metadata": metadata is not None,
+            "has_cached_metadata": has_full_metadata,
             "has_local_preview": local_preview is not None,
             "has_metadata_preview": metadata_preview is not None,
             "has_custom_data": custom_data is not None
@@ -2767,7 +2850,29 @@ async def delete_custom_data_handler(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+@PromptServer.instance.routes.get('/naiba/lora/civitai-status')
+@with_naiba_proxy
+async def civitai_status_handler(request):
+    """Test the metadata API and image CDN through the selected proxy."""
+    from .civitai_utils import CivitaiClient, civitai_error_details
+
+    client = CivitaiClient()
+    try:
+        result = await client.check_connectivity()
+        settings = proxy_settings_from_request(request)
+        result["proxy_mode"] = settings.mode
+        return web.json_response(result)
+    except Exception as error:
+        details = civitai_error_details(error)
+        return web.json_response({
+            "online": False,
+            "error": str(error),
+            "error_details": details,
+        }, status=civitai_error_http_status(error))
+
+
 @PromptServer.instance.routes.get('/naiba/lora/civitai-by-hash')
+@with_naiba_proxy
 async def civitai_by_hash_handler(request):
     """按sha256查询Civitai模型"""
     client = None
@@ -2780,22 +2885,29 @@ async def civitai_by_hash_handler(request):
         if not all(c in '0123456789abcdefABCDEF' for c in file_hash):
             return web.json_response({"error": "hash格式无效，只允许十六进制字符"}, status=400)
         
-        from .civitai_utils import CivitaiClient, build_civitai_version_info
+        from .civitai_utils import (
+            CivitaiClient, build_civitai_version_info, civitai_error_details,
+        )
         client = CivitaiClient()
         data, error = await client.query_by_hash(file_hash)
         
         if error:
-            if "Model not found" in str(error):
+            details = civitai_error_details(error)
+            if getattr(error, "code", "") == "not_found":
                 return web.json_response({
                     "found": False,
                     "hash": file_hash,
-                    "error": "Model not found"
+                    "error": "Model not found",
+                    "error_code": "not_found",
+                    "error_details": details,
                 })
             return web.json_response({
                 "found": False,
                 "hash": file_hash,
-                "error": error
-            })
+                "error": str(error),
+                "error_code": getattr(error, "code", "civitai_error"),
+                "error_details": details,
+            }, status=civitai_error_http_status(error))
         
         # 提取关键信息
         info = build_civitai_version_info(data)
@@ -2818,6 +2930,7 @@ async def civitai_by_hash_handler(request):
 
 
 @PromptServer.instance.routes.get('/naiba/lora/civitai-search')
+@with_naiba_proxy
 async def civitai_search_handler(request):
     """搜索Civitai模型"""
     client = None
@@ -2834,12 +2947,17 @@ async def civitai_search_handler(request):
         page = max(1, page)
         limit = max(1, min(100, limit))
         
-        from .civitai_utils import CivitaiClient, build_civitai_version_info
+        from .civitai_utils import (
+            CivitaiClient, build_civitai_version_info, civitai_error_details,
+        )
         client = CivitaiClient()
         data, error = await client.search_models(query, page, limit, model_type)
         
         if error:
-            return web.json_response({"error": error}, status=500)
+            return web.json_response({
+                "error": str(error),
+                "error_details": civitai_error_details(error),
+            }, status=civitai_error_http_status(error))
         
         # 处理搜索结果
         items = []

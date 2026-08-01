@@ -49,6 +49,39 @@ function createLoraDataPreviewModal(node, loraList) {
         return;
     }
 
+    const proxyStorageKey = "naiba.civitai.proxy";
+    const getNodeWidget = (name) => node?.widgets?.find((widget) => widget.name === name);
+    let storedProxy = {};
+    try {
+        storedProxy = JSON.parse(localStorage.getItem(proxyStorageKey) || "{}");
+    } catch (_) {}
+    let currentProxyMode = String(getNodeWidget("proxy_mode")?.value || storedProxy.mode || "auto");
+    let currentProxyUrl = String(getNodeWidget("proxy_url")?.value || storedProxy.url || "").trim();
+
+    const saveProxySettings = () => {
+        const modeWidget = getNodeWidget("proxy_mode");
+        const urlWidget = getNodeWidget("proxy_url");
+        if (modeWidget) modeWidget.value = currentProxyMode;
+        if (urlWidget) urlWidget.value = currentProxyUrl;
+        try {
+            localStorage.setItem(proxyStorageKey, JSON.stringify({
+                mode: currentProxyMode,
+                url: currentProxyUrl,
+            }));
+        } catch (_) {}
+        node?.graph?.setDirtyCanvas?.(true, true);
+    };
+    const proxyHeaders = () => ({
+        "X-Naiba-Proxy-Mode": currentProxyMode,
+        "X-Naiba-Proxy-Url": encodeURIComponent(currentProxyUrl),
+    });
+    const responseErrorMessage = (result, fallback) => {
+        const details = result?.error_details;
+        const source = details?.proxy_source && details.proxy_source !== "unknown"
+            ? ` (${details.proxy_source})` : "";
+        return `${result?.error || details?.message || fallback}${source}`;
+    };
+
     // ========== 创建模态框容器 ==========
     const overlay = document.createElement("div");
     overlay.style.cssText = `
@@ -371,6 +404,85 @@ function createLoraDataPreviewModal(node, loraList) {
     toolbar.appendChild(searchInput);
     toolbar.appendChild(statusDisplay);
     modal.appendChild(toolbar);
+
+    const networkBar = document.createElement("div");
+    networkBar.style.cssText = `
+        display:flex;align-items:center;gap:8px;padding:6px 16px;
+        background:${COLORS.sidebarBg};border-bottom:1px solid ${COLORS.border};
+    `;
+    const networkLabel = document.createElement("span");
+    networkLabel.textContent = "Civitai 网络";
+    networkLabel.style.cssText = `color:${COLORS.textDim};font-size:11px;white-space:nowrap;`;
+    const proxySegments = document.createElement("div");
+    proxySegments.style.cssText = `display:flex;gap:2px;background:${COLORS.inputBg};padding:2px;border-radius:4px;`;
+    const proxyButtons = new Map();
+    const proxyInput = document.createElement("input");
+    proxyInput.type = "text";
+    proxyInput.value = currentProxyUrl;
+    proxyInput.placeholder = "127.0.0.1:7890";
+    proxyInput.autocomplete = "off";
+    proxyInput.spellcheck = false;
+    proxyInput.style.cssText = `
+        width:190px;padding:4px 8px;background:${COLORS.inputBg};
+        border:1px solid ${COLORS.border};border-radius:4px;color:${COLORS.text};font-size:11px;
+    `;
+    const refreshProxyControls = () => {
+        proxyButtons.forEach((button, value) => {
+            const active = value === currentProxyMode;
+            button.style.background = active ? COLORS.accent : "transparent";
+            button.style.color = active ? "white" : COLORS.textDim;
+        });
+        proxyInput.disabled = currentProxyMode !== "manual";
+        proxyInput.style.opacity = currentProxyMode === "manual" ? "1" : ".55";
+    };
+    [["auto", "自动"], ["manual", "手动"], ["direct", "直连"]].forEach(([value, label]) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = label;
+        button.style.cssText = `padding:3px 8px;border:0;border-radius:3px;cursor:pointer;font-size:11px;`;
+        button.addEventListener("click", () => {
+            currentProxyMode = value;
+            saveProxySettings();
+            refreshProxyControls();
+        });
+        proxyButtons.set(value, button);
+        proxySegments.appendChild(button);
+    });
+    proxyInput.addEventListener("change", () => {
+        currentProxyUrl = proxyInput.value.trim();
+        saveProxySettings();
+    });
+    const networkStatus = document.createElement("span");
+    networkStatus.style.cssText = `color:${COLORS.textDim};font-size:11px;flex:1;min-width:0;`;
+    const networkTestBtn = document.createElement("button");
+    networkTestBtn.type = "button";
+    networkTestBtn.textContent = "测试连接";
+    networkTestBtn.style.cssText = `
+        padding:4px 9px;background:${COLORS.accent};color:white;border:0;
+        border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;
+    `;
+    networkTestBtn.addEventListener("click", async () => {
+        currentProxyUrl = proxyInput.value.trim();
+        saveProxySettings();
+        networkTestBtn.disabled = true;
+        networkStatus.textContent = "检测中...";
+        networkStatus.style.color = COLORS.textDim;
+        try {
+            const response = await fetch("/naiba/lora/civitai-status", { headers: proxyHeaders() });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || !result.online) throw new Error(responseErrorMessage(result, `HTTP ${response.status}`));
+            networkStatus.textContent = `在线 · API ${result.api_latency_ms}ms · 图片 ${result.cdn_latency_ms}ms · ${result.proxy_source}`;
+            networkStatus.style.color = COLORS.success;
+        } catch (error) {
+            networkStatus.textContent = `失败: ${error.message}`;
+            networkStatus.style.color = COLORS.error;
+        } finally {
+            networkTestBtn.disabled = false;
+        }
+    });
+    networkBar.append(networkLabel, proxySegments, proxyInput, networkStatus, networkTestBtn);
+    refreshProxyControls();
+    modal.appendChild(networkBar);
 
     // 当前目录面包屑（对标 visual_lora_loader.js：必须声明 currentPath 为 DOM 元素，
     // 否则目录点击 handler 中访问 currentPath.textContent 会抛 ReferenceError，导致列表不刷新）
@@ -1807,7 +1919,7 @@ function createLoraDataPreviewModal(node, loraList) {
         try {
             const resp = await fetch('/naiba/lora/verify-preset', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...proxyHeaders() },
                 body: JSON.stringify({ lora_list: loraList, api_key: "" })
             });
             if (!resp.ok) {
@@ -1856,6 +1968,8 @@ function createLoraDataPreviewModal(node, loraList) {
     function renderVerifyPresetResult(result, statusSpan, presetContext) {
         const green = result.green || [];
         const gray = result.gray || [];
+        const localOnly = result.local_only || [];
+        const queryFailed = result.query_failed || [];
         const notFound = result.not_found || [];
         const noSha = result.no_sha256 || [];
         const s = result.summary || {};
@@ -1872,6 +1986,8 @@ function createLoraDataPreviewModal(node, loraList) {
         header.innerHTML = `
             <span style="color:${COLORS.success};font-weight:600;">● 绿色(本地+C站) ${green.length}</span>
             <span style="color:${COLORS.textDim};font-weight:600;">● 灰色(需下载) ${gray.length}</span>
+            <span style="color:${COLORS.warning};font-weight:600;">● 仅本地 ${localOnly.length}</span>
+            <span style="color:${COLORS.error};font-weight:600;">● 查询失败 ${queryFailed.length}</span>
             <span style="color:${COLORS.error};font-weight:600;">● 找不到地址 ${notFound.length}</span>
             <span style="color:${COLORS.warning};font-weight:600;">● 预设内无sha256 ${noSha.length}</span>
             <span style="color:${COLORS.textDim};">共 ${s.total || 0} 条</span>
@@ -1889,6 +2005,14 @@ function createLoraDataPreviewModal(node, loraList) {
             checkVerifyResultsContent.appendChild(makeSectionTitle("⬜ 本地不存在但 C 站有（灰色卡片，点击详情下载）", COLORS.textDim));
             gray.forEach(item => checkVerifyResultsContent.appendChild(makeCard(item, "gray")));
         }
+        if (localOnly.length) {
+            checkVerifyResultsContent.appendChild(makeSectionTitle("△ 本地存在，但 C 站没有对应哈希", COLORS.warning));
+            localOnly.forEach(item => checkVerifyResultsContent.appendChild(makeBottomItem(item, "local_only")));
+        }
+        if (queryFailed.length) {
+            checkVerifyResultsContent.appendChild(makeSectionTitle("! Civitai 查询失败（不等同于未上站）", COLORS.error));
+            queryFailed.forEach(item => checkVerifyResultsContent.appendChild(makeBottomItem(item, "query_failed")));
+        }
         if (notFound.length) {
             checkVerifyResultsContent.appendChild(makeSectionTitle("✗ 本地不存在且 C 站也找不到（找不到地址）", COLORS.error));
             notFound.forEach(item => checkMissingContent.appendChild(makeBottomItem(item, "not_found")));
@@ -1898,12 +2022,12 @@ function createLoraDataPreviewModal(node, loraList) {
             noSha.forEach(item => checkMissingContent.appendChild(makeBottomItem(item, "no_sha256")));
         }
 
-        if (!green.length && !gray.length && !notFound.length && !noSha.length) {
+        if (!green.length && !gray.length && !localOnly.length && !queryFailed.length && !notFound.length && !noSha.length) {
             checkVerifyResultsContent.appendChild(makeSectionTitle("无结果", COLORS.textDim));
         }
 
-        statusSpan.textContent = `校验完成！绿 ${green.length}・灰 ${gray.length}・找不到 ${notFound.length}・无sha256 ${noSha.length}`;
-        statusSpan.style.color = COLORS.success;
+        statusSpan.textContent = `校验完成！绿 ${green.length}・灰 ${gray.length}・仅本地 ${localOnly.length}・查询失败 ${queryFailed.length}・找不到 ${notFound.length}・无sha256 ${noSha.length}`;
+        statusSpan.style.color = queryFailed.length ? COLORS.error : COLORS.success;
     }
 
     function makeLocalPresetFilename(sourceFileName) {
@@ -2170,9 +2294,16 @@ function createLoraDataPreviewModal(node, loraList) {
         const name = item.name || "Unknown";
         const sha = item.sha256 || "";
         const d = document.createElement("div");
-        d.style.cssText = `padding:6px 8px;background:${COLORS.inputBg};border-radius:4px;margin-bottom:4px;border-left:3px solid ${type === "not_found" ? COLORS.error : COLORS.warning};`;
+        const isFailure = type === "not_found" || type === "query_failed";
+        d.style.cssText = `padding:6px 8px;background:${COLORS.inputBg};border-radius:4px;margin-bottom:4px;border-left:3px solid ${isFailure ? COLORS.error : COLORS.warning};`;
         const nameLine = document.createElement("div");
-        nameLine.textContent = `${type === "not_found" ? "✗ 找不到地址:" : "? 预设内无sha256:"} ${name}`;
+        const labels = {
+            not_found: "✗ 找不到地址:",
+            no_sha256: "? 预设内无sha256:",
+            local_only: "△ 仅本地存在:",
+            query_failed: "! 查询失败:",
+        };
+        nameLine.textContent = `${labels[type] || "?"} ${name}`;
         nameLine.style.cssText = `color:${COLORS.text};font-size:11px;word-break:break-all;`;
         d.appendChild(nameLine);
         if (sha) {
@@ -2180,6 +2311,12 @@ function createLoraDataPreviewModal(node, loraList) {
             hashLine.textContent = `sha256: ${sha}`;
             hashLine.style.cssText = `color:${COLORS.textDim};font-size:10px;margin-top:2px;word-break:break-all;`;
             d.appendChild(hashLine);
+        }
+        if (item.civitai_error?.message) {
+            const errorLine = document.createElement("div");
+            errorLine.textContent = item.civitai_error.message;
+            errorLine.style.cssText = `color:${COLORS.error};font-size:10px;margin-top:2px;word-break:break-word;`;
+            d.appendChild(errorLine);
         }
         const strengthLine = document.createElement("div");
         strengthLine.textContent = `强度: ${item.strength_model ?? 1.0} / ${item.strength_clip ?? 1.0}`;
@@ -2338,11 +2475,15 @@ function createLoraDataPreviewModal(node, loraList) {
         
         // 查询Civitai
         try {
-            const response = await fetch(`/naiba/lora/civitai-by-hash?hash=${sha256}`);
+            const response = await fetch(`/naiba/lora/civitai-by-hash?hash=${sha256}`, {
+                headers: proxyHeaders(),
+            });
             const result = await response.json();
             
             if (result.found) {
                 addVerifyResult(loraItem, result.info, "已找到", "found");
+            } else if (result.error_code && result.error_code !== "not_found") {
+                addVerifyResult(loraItem, null, `查询失败: ${responseErrorMessage(result, "网络错误")}`, "error");
             } else {
                 addVerifyResult(loraItem, null, "未找到", "missing");
                 addMissingResult(loraItem, sha256);
@@ -2509,8 +2650,11 @@ function createLoraDataPreviewModal(node, loraList) {
         
         try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 15000);
-            const response = await fetch(`/naiba/lora/civitai-sync?name=${encodeURIComponent(loraName)}`, { signal: controller.signal });
+            const timeoutId = setTimeout(() => controller.abort(), 50000);
+            const response = await fetch(`/naiba/lora/civitai-sync?name=${encodeURIComponent(loraName)}`, {
+                signal: controller.signal,
+                headers: proxyHeaders(),
+            });
             clearTimeout(timeoutId);
             const result = await response.json();
             
@@ -2535,7 +2679,7 @@ function createLoraDataPreviewModal(node, loraList) {
                 }
                 
                 // 更新节点预览图
-                if (node._updateLoraDataPreview) {
+                if (node?._updateLoraDataPreview) {
                     node._updateLoraDataPreview();
                 }
                 
@@ -2556,7 +2700,8 @@ function createLoraDataPreviewModal(node, loraList) {
                 button.textContent = "失败";
                 button.style.background = COLORS.danger;
                 button.style.cursor = "pointer";
-                syncStatus.textContent = `同步失败: ${result.error || "未知错误"}`;
+                const failureLabel = result.metadata_available ? "元数据可用，封面或刷新失败" : "同步失败";
+                syncStatus.textContent = `${failureLabel}: ${responseErrorMessage(result, "未知错误")}`;
                 syncStatus.style.color = COLORS.danger;
                 
                 // 2秒后恢复
@@ -2636,6 +2781,7 @@ function createLoraDataPreviewModal(node, loraList) {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    ...proxyHeaders(),
                 },
                 body: JSON.stringify({
                     api_key: '',
@@ -2706,7 +2852,8 @@ function createLoraDataPreviewModal(node, loraList) {
                                         progressBarStatus.textContent = `[${data.current}/${data.total}] ✓ ${data.name.split('/').pop().split('\\').pop()}`;
                                         progressBarStatus.style.color = COLORS.success;
                                     } else {
-                                        progressBarStatus.textContent = `[${data.current}/${data.total}] ✗ ${data.name.split('/').pop().split('\\').pop()} - ${data.error || '失败'}`;
+                                        const failureLabel = data.metadata_available ? "元数据可用，封面失败" : (data.error || "失败");
+                                        progressBarStatus.textContent = `[${data.current}/${data.total}] ✗ ${data.name.split('/').pop().split('\\').pop()} - ${failureLabel}`;
                                         progressBarStatus.style.color = COLORS.danger;
                                     }
                                     
@@ -3168,7 +3315,7 @@ function createLoraDataPreviewModal(node, loraList) {
                     // 刷新列表与节点封面（若无自定义封面则回退为无图）
                     modalTimestamp = Date.now();
                     renderLoraList();
-                    if (node._updateLoraDataPreview) {
+                    if (node?._updateLoraDataPreview) {
                         node._updateLoraDataPreview();
                     }
                 } else {
@@ -3513,11 +3660,11 @@ function createLoraDataPreviewModal(node, loraList) {
                 // 同步按钮（15秒超时）
                 metadataHtml += `<button id="detail-sync-btn" onclick="
                     var btn=this;btn.disabled=true;btn.textContent='同步中...';btn.style.background='#555';btn.style.cursor='wait';
-                    var c=new AbortController();var tid=setTimeout(function(){c.abort();},15000);
-                    fetch('/naiba/lora/civitai-sync?name=${encodeURIComponent(loraName)}',{signal:c.signal}).then(function(r){clearTimeout(tid);return r.json();}).then(function(r){
+                    var c=new AbortController();var tid=setTimeout(function(){c.abort();},50000);
+                    fetch('/naiba/lora/civitai-sync?name=${encodeURIComponent(loraName)}',{signal:c.signal,headers:${JSON.stringify(proxyHeaders())}}).then(function(r){clearTimeout(tid);return r.json();}).then(function(r){
                         if(r.success){btn.textContent='✓ 已同步';btn.style.background='${COLORS.success}';btn.style.cursor='default';
                             setTimeout(function(){btn.textContent='从 Civitai 同步';btn.style.background='${COLORS.accent}';btn.style.cursor='pointer';btn.disabled=false;},3000);}
-                        else{btn.textContent='失败: '+(r.error||'未知');btn.style.background='${COLORS.danger}';btn.style.cursor='pointer';
+                        else{btn.textContent=(r.metadata_available?'元数据可用，封面失败':'失败: '+(r.error||'未知'));btn.style.background='${COLORS.danger}';btn.style.cursor='pointer';
                             setTimeout(function(){btn.textContent='从 Civitai 同步';btn.style.background='${COLORS.accent}';btn.disabled=false;},2000);}
                     }).catch(function(e){clearTimeout(tid);btn.textContent=e.name==='AbortError'?'超时':'错误';btn.style.background='${COLORS.danger}';btn.style.cursor='pointer';
                         setTimeout(function(){btn.textContent='从 Civitai 同步';btn.style.background='${COLORS.accent}';btn.disabled=false;},2000);})
@@ -3679,7 +3826,7 @@ function createLoraDataPreviewModal(node, loraList) {
                             // 刷新主列表与节点封面（回退到元数据封面/无图）
                             modalTimestamp = Date.now();
                             renderLoraList();
-                            if (node._updateLoraDataPreview) {
+                            if (node?._updateLoraDataPreview) {
                                 node._updateLoraDataPreview();
                             }
                         } else {
@@ -3821,6 +3968,13 @@ app.registerExtension({
                 if (loraDataWidget.inputEl) loraDataWidget.inputEl.style.display = "none";
                 if (loraDataWidget.element) loraDataWidget.element.style.display = "none";
             }
+            ["proxy_mode", "proxy_url"].forEach((name) => {
+                const widget = node.widgets?.find((item) => item.name === name);
+                if (!widget) return;
+                widget.hidden = true;
+                if (widget.inputEl) widget.inputEl.style.display = "none";
+                if (widget.element) widget.element.style.display = "none";
+            });
 
             // 创建已选LoRA列表预览区域
             const previewArea = document.createElement("div");

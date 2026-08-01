@@ -8,7 +8,7 @@ import pytest
 import requests
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(os.environ.get("NAIBA_TEST_ROOT", Path(__file__).resolve().parents[1]))
 PACKAGE_NAME = "naiba_test_network_tests"
 
 
@@ -80,6 +80,7 @@ def clear_proxy_env(monkeypatch):
 
 
 def test_proxy_url_normalization_and_validation():
+    assert network.normalize_proxy_settings("", "").mode == "auto"
     assert network.normalize_proxy_url("127.0.0.1:7890") == "http://127.0.0.1:7890"
     assert network.normalize_proxy_url("socks5h://localhost:1080") == "socks5h://localhost:1080"
     with pytest.raises(network.NetworkRequestError) as error:
