@@ -103,7 +103,7 @@ class MultiLoraLoader:
                 # 加载Lora文件
                 lora_path = folder_paths.get_full_path_or_raise("loras", lora_name)
                 lora = comfy.utils.load_torch_file(lora_path, safe_load=True)
-                ensure_lora_has_compatible_patches(
+                lora = ensure_lora_has_compatible_patches(
                     model, clip, lora, strength_model, strength_clip
                 )
 

@@ -67,6 +67,22 @@ def test_network_failure_is_never_classified_as_verified(monkeypatch):
     assert civitai.classify_civitai_lookup(False, None, error) == "query_failed"
 
 
+def test_has_synced_metadata_requires_civitai_identity():
+    assert not civitai.has_synced_metadata(None)
+    assert not civitai.has_synced_metadata({})
+    assert not civitai.has_synced_metadata({"hash": "a" * 64})
+    assert not civitai.has_synced_metadata({
+        "hash": "a" * 64,
+        "version_id": 123,
+        "_sha_only": True,
+    })
+
+    assert civitai.has_synced_metadata({"version_id": 123})
+    assert civitai.has_synced_metadata({"model_id": 456})
+    assert civitai.has_synced_metadata({"model_name": "Example"})
+    assert civitai.has_synced_metadata({"version_name": "v1"})
+
+
 def test_preview_failure_is_saved_as_retryable(monkeypatch, tmp_path):
     lora_path = tmp_path / "sample.safetensors"
     lora_path.write_bytes(b"lora")

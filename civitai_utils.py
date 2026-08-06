@@ -61,6 +61,16 @@ def classify_civitai_lookup(local_exists, info, error):
         return "query_failed"
     return "local_only" if local_exists else "not_found"
 
+
+def has_synced_metadata(metadata: Optional[Dict]) -> bool:
+    """Return whether a cache contains an actual Civitai model/version match."""
+    if not isinstance(metadata, dict) or metadata.get("_sha_only"):
+        return False
+    return any(
+        metadata.get(key) is not None
+        for key in ("model_id", "version_id", "model_name", "version_name")
+    )
+
 # 预览图扩展名优先级
 PREVIEW_EXTENSIONS = [
     ".preview.webp",

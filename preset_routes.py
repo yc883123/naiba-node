@@ -1074,6 +1074,7 @@ async def get_lora_metadata_handler(request):
             get_metadata_path,
             load_cached_metadata,
             find_local_preview,
+            has_synced_metadata,
         )
         
         # 获取LoRA文件路径
@@ -1099,7 +1100,7 @@ async def get_lora_metadata_handler(request):
         
         # 加载元数据
         metadata = load_cached_metadata(metadata_path)
-        has_full_metadata = bool(metadata and not metadata.get("_sha_only"))
+        has_full_metadata = has_synced_metadata(metadata)
         
         # 查找本地预览图
         local_preview = find_local_preview(lora_path)
@@ -1157,6 +1158,7 @@ async def batch_sync_handler(request):
             load_cached_metadata,
             CivitaiClient,
             civitai_error_details,
+            has_synced_metadata,
         )
         from . import sha256_cache
         
@@ -1197,8 +1199,11 @@ async def batch_sync_handler(request):
         skipped_count = 0
         
         for lora_name, lora_path in all_lora_paths:
-            # sync_all 模式：不跳过任何
-            # sync_unsynced 模式：也全部进入 sync_lora_from_civitai，由其内部处理缓存
+            if not force:
+                metadata = load_cached_metadata(get_metadata_path(lora_path))
+                if has_synced_metadata(metadata):
+                    skipped_count += 1
+                    continue
             lora_paths.append((lora_name, lora_path))
         
         # 同步结果
@@ -2551,12 +2556,13 @@ async def get_lora_detail_handler(request):
             get_metadata_path,
             load_cached_metadata,
             find_local_preview,
+            has_synced_metadata,
         )
         
         # 获取Civitai元数据
         metadata_path = get_metadata_path(lora_path)
         metadata = load_cached_metadata(metadata_path)
-        has_full_metadata = bool(metadata and not metadata.get("_sha_only"))
+        has_full_metadata = has_synced_metadata(metadata)
         
         # 查找本地预览图
         local_preview = find_local_preview(lora_path)

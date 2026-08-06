@@ -38,6 +38,25 @@ class FakeClip:
     cond_stage_model = object()
 
 
+class FakeTensor:
+    def __init__(self, shape):
+        self.shape = shape
+
+
+class FakeMiniMaxInner:
+    model_config = types.SimpleNamespace(unet_config={"image_model": "minimax_h3"})
+
+    def state_dict(self):
+        return {
+            "diffusion_model.blocks.0.attn.qkv_proj.weight": FakeTensor((300, 100)),
+            "diffusion_model.blocks.0.adaln_proj.linear.weight": FakeTensor((96768, 8)),
+        }
+
+
+class FakeMiniMaxModel:
+    model = FakeMiniMaxInner()
+
+
 def load_torch_file(path, safe_load=True):
     assert safe_load is True
     return {"path": path}
@@ -100,6 +119,7 @@ MODULES = {
     "visual": load_module("visual_lora_loader.py"),
     "list": load_module("lora_loader_from_preset.py"),
 }
+LOAD_UTILS = sys.modules[f"{PACKAGE_NAME}.lora_load_utils"]
 
 
 def execute_loader(kind, items):
@@ -211,6 +231,42 @@ def test_all_loaders_fall_back_from_missing_path_to_unique_current_sha_candidate
         assert loaded_names(kind, result) == ["local-path.safetensors"]
 
 
+def test_native_minimax_keys_are_normalized_and_incompatible_adaln_is_removed():
+    lora = {
+        "blocks.0.attn.qkv_proj.lora_A.weight": FakeTensor((16, 100)),
+        "blocks.0.attn.qkv_proj.lora_B.weight": FakeTensor((300, 16)),
+        "blocks.0.adaln_proj.linear.lora_A.weight": FakeTensor((16, 2688)),
+        "blocks.0.adaln_proj.linear.lora_B.weight": FakeTensor((96768, 16)),
+    }
+
+    prepared = LOAD_UTILS.prepare_lora_for_models(FakeMiniMaxModel(), lora)
+
+    assert "diffusion_model.blocks.0.attn.qkv_proj.lora_A.weight" in prepared
+    assert "diffusion_model.blocks.0.attn.qkv_proj.lora_B.weight" in prepared
+    assert "blocks.0.attn.qkv_proj.lora_A.weight" not in prepared
+    assert "diffusion_model.blocks.0.adaln_proj.linear.lora_A.weight" not in prepared
+    assert "diffusion_model.blocks.0.adaln_proj.linear.lora_B.weight" not in prepared
+
+
+def test_native_minimax_adaln_is_kept_when_full_model_shapes_match():
+    class FullMiniMaxInner(FakeMiniMaxInner):
+        def state_dict(self):
+            state = super().state_dict()
+            state["diffusion_model.blocks.0.adaln_proj.linear.weight"] = FakeTensor((96768, 2688))
+            return state
+
+    full_model = types.SimpleNamespace(model=FullMiniMaxInner())
+    lora = {
+        "blocks.0.adaln_proj.linear.lora_A.weight": FakeTensor((16, 2688)),
+        "blocks.0.adaln_proj.linear.lora_B.weight": FakeTensor((96768, 16)),
+    }
+
+    prepared = LOAD_UTILS.prepare_lora_for_models(full_model, lora)
+
+    assert "diffusion_model.blocks.0.adaln_proj.linear.lora_A.weight" in prepared
+    assert "diffusion_model.blocks.0.adaln_proj.linear.lora_B.weight" in prepared
+
+
 if __name__ == "__main__":
     test_all_loaders_only_output_successfully_applied_names()
     test_all_loaders_raise_visible_error_for_missing_enabled_lora()
@@ -220,4 +276,6 @@ if __name__ == "__main__":
     test_invalid_json_is_not_silently_treated_as_an_empty_preset()
     test_enabled_item_without_name_is_reported()
     test_all_loaders_fall_back_from_missing_path_to_unique_current_sha_candidate()
+    test_native_minimax_keys_are_normalized_and_incompatible_adaln_is_removed()
+    test_native_minimax_adaln_is_kept_when_full_model_shapes_match()
     print("lora loader failure tests passed")
