@@ -163,7 +163,13 @@ def _get_merged_data():
 
 
 def _get_categories():
-    return [c for c in _load_data().keys() if c not in _EXCLUDED_CATEGORIES]
+    """返回分类列表：内置分类 + 自定义分类（含空分类，顺序稳定）。"""
+    base = [c for c in _load_data().keys() if c not in _EXCLUDED_CATEGORIES]
+    custom = _load_custom_data()
+    for cat in custom.keys():
+        if cat not in _EXCLUDED_CATEGORIES and cat not in base:
+            base.append(cat)
+    return base
 
 
 def _get_tags(category, query="", page=1, page_size=20):
@@ -476,6 +482,9 @@ def register_routes():
 
     @routes.post("/anima/prompt/custom/add")
     async def anima_custom_add(request):
+        """新增自定义词条（支持批量）。
+        raw_en 按行拆分，每个非空英文行新增 1 条；cn_description 按行与英文行一一对应，不足留空。
+        同一分类中已存在的同名词跳过，其余词继续添加。兼容单条调用。"""
         try:
             body = await request.json()
         except Exception:
@@ -494,18 +503,28 @@ def register_routes():
             if not isinstance(lst, list):
                 lst = []
                 data[category] = lst
-            key = raw_en.lower()
-            for t in lst:
-                if isinstance(t, dict) and str(t.get("raw_en", "")).lower() == key:
-                    return {"ok": False, "error": "该分类已存在相同词条"}
-            lst.append({
-                "en_tags": [raw_en],
-                "cn_description": cn,
-                "raw_en": raw_en,
-                "_custom": True,
-            })
+            existing = {str(t.get("raw_en", "")).lower() for t in lst if isinstance(t, dict)}
+            raw_lines = raw_en.splitlines()
+            en_lines = [l.strip() for l in raw_lines if l.strip()]
+            cn_lines = [l.strip() for l in cn.splitlines()]
+            added = 0
+            skipped = 0
+            invalid = len(raw_lines) - len(en_lines)  # 空英文行计为无效
+            for i, en in enumerate(en_lines):
+                key = en.lower()
+                if key in existing:
+                    skipped += 1
+                    continue
+                lst.append({
+                    "en_tags": [en],
+                    "cn_description": cn_lines[i] if i < len(cn_lines) else "",
+                    "raw_en": en,
+                    "_custom": True,
+                })
+                existing.add(key)
+                added += 1
             _save_custom_data(data)
-            return {"ok": True}
+            return {"ok": True, "added": added, "skipped": skipped, "invalid": invalid}
 
         try:
             res = await _run_in_exec(_add)
@@ -522,8 +541,12 @@ def register_routes():
         except Exception:
             return web.json_response({"ok": False, "error": "无效请求"}, status=400)
         category = str(body.get("category") or "").strip()
-        raw_en = str(body.get("raw_en") or "").strip()
-        if not category or not raw_en:
+        raw_en_raw = body.get("raw_en")
+        if isinstance(raw_en_raw, list):
+            raw_ens = [str(x).strip() for x in raw_en_raw if str(x).strip()]
+        else:
+            raw_ens = [str(raw_en_raw or "").strip()] if str(raw_en_raw or "").strip() else []
+        if not category or not raw_ens:
             return web.json_response({"ok": False, "error": "参数缺失"}, status=400)
 
         def _del():
@@ -531,29 +554,228 @@ def register_routes():
             lst = data.get(category)
             if not isinstance(lst, list):
                 return {"ok": False, "error": "词条不存在"}
-            key = raw_en.lower()
-            idx = -1
-            for i, t in enumerate(lst):
-                if isinstance(t, dict) and str(t.get("raw_en", "")).lower() == key and t.get("_custom"):
-                    idx = i
-                    break
-            if idx < 0:
+            keys = [k.lower() for k in raw_ens]
+            deleted = 0
+            for i in range(len(lst) - 1, -1, -1):
+                t = lst[i]
+                if isinstance(t, dict) and str(t.get("raw_en", "")).lower() in keys and t.get("_custom"):
+                    lst.pop(i)
+                    deleted += 1
+            if deleted == 0:
                 return {"ok": False, "error": "仅允许删除自定义词条"}
-            lst.pop(idx)
             _save_custom_data(data)
             # 同步清理收藏中对应引用，避免悬空
             fav = _load_favorites()
             items = fav.get("items") or []
             fav["items"] = [x for x in items if not (
                 isinstance(x, dict)
-                and str(x.get("raw_en", "")).lower() == key
+                and str(x.get("raw_en", "")).lower() in keys
                 and str(x.get("category", "")) == category
+            )]
+            _save_favorites(fav)
+            return {"ok": True, "deleted": deleted}
+
+        try:
+            res = await _run_in_exec(_del)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
+        if not res.get("ok"):
+            return web.json_response(res, status=400)
+        return web.json_response(res)
+
+    # --------------------------- 自定义分类管理 ---------------------------
+    @routes.get("/anima/prompt/custom/categories")
+    async def anima_custom_categories(request):
+        """返回纯自定义分类（非内置、非排除分类），用于前端分类管理列表。"""
+        def _get():
+            builtin = set(_load_data().keys())
+            custom = _load_custom_data()
+            return [c for c in custom.keys() if c not in builtin and c not in _EXCLUDED_CATEGORIES]
+        res = await _run_in_exec(_get)
+        return web.json_response({"categories": res})
+
+    @routes.post("/anima/prompt/custom/category/add")
+    async def anima_custom_category_add(request):
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        name = str(body.get("name") or "").strip()
+        if not name:
+            return web.json_response({"ok": False, "error": "分类名不能为空"}, status=400)
+        if name in _EXCLUDED_CATEGORIES:
+            return web.json_response({"ok": False, "error": "不能使用该分类名"}, status=400)
+
+        def _add():
+            key = name.lower()
+            for c in _get_categories():
+                if c.lower() == key:
+                    return {"ok": False, "error": "分类已存在"}
+            data = _load_custom_data()
+            data[name] = []
+            _save_custom_data(data)
+            return {"ok": True}
+
+        try:
+            res = await _run_in_exec(_add)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
+        if not res.get("ok"):
+            return web.json_response(res, status=400)
+        return web.json_response(res)
+
+    @routes.post("/anima/prompt/custom/category/rename")
+    async def anima_custom_category_rename(request):
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        old = str(body.get("old") or "").strip()
+        new = str(body.get("new") or "").strip()
+        if not old or not new:
+            return web.json_response({"ok": False, "error": "分类名不能为空"}, status=400)
+        if old in _EXCLUDED_CATEGORIES or new in _EXCLUDED_CATEGORIES:
+            return web.json_response({"ok": False, "error": "不能操作排除分类"}, status=400)
+
+        def _rename():
+            if old in _load_data():
+                return {"ok": False, "error": "内置分类不能重命名"}
+            data = _load_custom_data()
+            if old not in data:
+                return {"ok": False, "error": "分类不存在"}
+            key = new.lower()
+            for c in _get_categories():
+                if c.lower() == key and c != old:
+                    return {"ok": False, "error": "分类已存在"}
+            data[new] = data.pop(old)
+            _save_custom_data(data)
+            # 同步更新收藏中对应分类字段
+            fav = _load_favorites()
+            items = fav.get("items") or []
+            changed = False
+            for x in items:
+                if isinstance(x, dict) and str(x.get("category", "")) == old:
+                    x["category"] = new
+                    changed = True
+            if changed:
+                _save_favorites(fav)
+            return {"ok": True}
+
+        try:
+            res = await _run_in_exec(_rename)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
+        if not res.get("ok"):
+            return web.json_response(res, status=400)
+        return web.json_response(res)
+
+    @routes.post("/anima/prompt/custom/category/delete")
+    async def anima_custom_category_delete(request):
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        name = str(body.get("name") or "").strip()
+        if not name:
+            return web.json_response({"ok": False, "error": "分类名不能为空"}, status=400)
+        if name in _EXCLUDED_CATEGORIES:
+            return web.json_response({"ok": False, "error": "不能操作排除分类"}, status=400)
+
+        def _delete():
+            if name in _load_data():
+                return {"ok": False, "error": "内置分类不能删除"}
+            data = _load_custom_data()
+            if name not in data:
+                return {"ok": False, "error": "分类不存在"}
+            data.pop(name)
+            _save_custom_data(data)
+            # 同步清理收藏中该分类的引用
+            fav = _load_favorites()
+            items = fav.get("items") or []
+            fav["items"] = [x for x in items if not (
+                isinstance(x, dict) and str(x.get("category", "")) == name
             )]
             _save_favorites(fav)
             return {"ok": True}
 
         try:
-            res = await _run_in_exec(_del)
+            res = await _run_in_exec(_delete)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=400)
+        if not res.get("ok"):
+            return web.json_response(res, status=400)
+        return web.json_response(res)
+
+    @routes.post("/anima/prompt/custom/move")
+    async def anima_custom_move(request):
+        """批量迁移自定义词到目标分类。raw_en 支持单值或数组。
+        仅移动自定义词条（_custom）；目标分类中已存在的同名词跳过。"""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        src = str(body.get("source") or "").strip()
+        dst = str(body.get("target") or "").strip()
+        raw_ens = body.get("raw_en")
+        if not isinstance(raw_ens, list):
+            raw_ens = [raw_ens]
+        if not src or not dst:
+            return web.json_response({"ok": False, "error": "参数缺失"}, status=400)
+        if src in _EXCLUDED_CATEGORIES or dst in _EXCLUDED_CATEGORIES:
+            return web.json_response({"ok": False, "error": "不能操作排除分类"}, status=400)
+        if src == dst:
+            return web.json_response({"ok": False, "error": "源分类与目标分类相同"}, status=400)
+
+        def _move():
+            data = _load_custom_data()
+            src_lst = data.get(src)
+            if not isinstance(src_lst, list):
+                return {"ok": False, "error": "源分类不存在或没有自定义词"}
+            dst_lst = data.get(dst)
+            if not isinstance(dst_lst, list):
+                dst_lst = []
+                data[dst] = dst_lst
+            dst_existing = {str(t.get("raw_en", "")).lower() for t in dst_lst if isinstance(t, dict)}
+            moved = 0
+            skipped = 0
+            moved_keys = set()
+            for raw in raw_ens:
+                raw = str(raw or "").strip()
+                if not raw:
+                    continue
+                key = raw.lower()
+                idx = -1
+                for i, t in enumerate(src_lst):
+                    if isinstance(t, dict) and str(t.get("raw_en", "")).lower() == key and t.get("_custom"):
+                        idx = i
+                        break
+                if idx < 0:
+                    skipped += 1
+                    continue
+                if key in dst_existing:
+                    skipped += 1
+                    continue
+                item = src_lst.pop(idx)
+                dst_lst.append(item)
+                dst_existing.add(key)
+                moved += 1
+                moved_keys.add(key)
+            _save_custom_data(data)
+            # 同步更新收藏中对应词的分类字段
+            if moved:
+                fav = _load_favorites()
+                items = fav.get("items") or []
+                changed = False
+                for x in items:
+                    if isinstance(x, dict) and str(x.get("category", "")) == src and str(x.get("raw_en", "")).lower() in moved_keys:
+                        x["category"] = dst
+                        changed = True
+                if changed:
+                    _save_favorites(fav)
+            return {"ok": True, "moved": moved, "skipped": skipped}
+
+        try:
+            res = await _run_in_exec(_move)
         except Exception as e:
             return web.json_response({"ok": False, "error": str(e)}, status=400)
         if not res.get("ok"):

@@ -263,6 +263,26 @@ function ensureTabState(cat) {
     if (!state.tabState[cat]) state.tabState[cat] = { items: [], page: 1, totalPages: 1, loading: false, seq: 0, query: "" };
     return state.tabState[cat];
 }
+// 强制刷新分类列表（用于自定义分类增删改后）
+async function refreshCategories() {
+    try {
+        const data = await apiGetJson("/anima/prompt/categories");
+        state.categories = (data.categories || []).filter((c) => !_EXCLUDED_CATEGORIES.has(c));
+    } catch (e) {
+        flashStatus("刷新分类失败：" + e.message);
+    }
+    return state.categories;
+}
+// 清空指定分类的分页缓存（增删改后强制重新拉取）
+function clearTabCache(cats) {
+    (cats || []).forEach((c) => {
+        if (state.tabState[c]) {
+            state.tabState[c].items = [];
+            state.tabState[c].page = 1;
+            state.tabState[c].totalPages = 1;
+        }
+    });
+}
 async function doSearch(cat) {
     const ts = ensureTabState(cat);
     ts.loading = true;
@@ -591,78 +611,220 @@ async function renderCustomPanel() {
     if (!mainScroll) return;
     mainScroll.innerHTML = "";
     const wrap = el("div", { class: "ap-custom" });
+
+    // ===== 分类管理区 =====
+    const mgmt = el("div", { class: "ap-custom-section" });
+    mgmt.appendChild(el("div", { class: "ap-gacha-sub" }, "自定义分类管理"));
+    const newCatInput = el("input", { class: "ap-search", type: "text", placeholder: "新分类名称" });
+    const newCatBtn = el("button", { class: "ap-btn small", onclick: async () => {
+        const name = newCatInput.value.trim();
+        if (!name) { flashStatus("请输入分类名称"); return; }
+        newCatBtn.disabled = true;
+        try {
+            const resp = await api.fetchApi("/anima/prompt/custom/category/add", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.ok) throw new Error(data.error || ("HTTP " + resp.status));
+            newCatInput.value = "";
+            customState.loaded = false;
+            await refreshCategories();
+            buildTabs();
+            flashStatus("已创建分类：" + name);
+            renderCustomPanel();
+        } catch (e) { flashStatus("创建分类失败：" + e.message); }
+        finally { newCatBtn.disabled = false; }
+    } }, "新建");
+    mgmt.appendChild(el("div", { class: "ap-gacha-row" }, newCatInput, newCatBtn));
+
+    const tags = await loadCustomTags();
+    let customCats = [];
+    try {
+        const cdata = await apiGetJson("/anima/prompt/custom/categories");
+        customCats = cdata.categories || [];
+    } catch (e) { flashStatus("加载自定义分类失败：" + e.message); }
+    if (customCats.length) {
+        const catList = el("div", { class: "ap-cat-list" });
+        customCats.forEach((c) => {
+            const count = Array.isArray(tags[c]) ? tags[c].length : 0;
+            const row = el("div", { class: "ap-cat-item" },
+                el("span", { style: "flex:1;" }, `${c}（${count}）`),
+            );
+            const renameBtn = el("button", { class: "ap-btn small", onclick: async () => {
+                const newName = prompt("重命名分类「" + c + "」为：", c);
+                if (newName == null) return;
+                const nn = newName.trim();
+                if (!nn || nn === c) return;
+                renameBtn.disabled = true;
+                try {
+                    const resp = await api.fetchApi("/anima/prompt/custom/category/rename", {
+                        method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ old: c, new: nn }),
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok || !data.ok) throw new Error(data.error || ("HTTP " + resp.status));
+                    customState.loaded = false;
+                    await refreshCategories();
+                    clearTabCache([c, nn]);
+                    buildTabs();
+                    flashStatus("已重命名分类");
+                    renderCustomPanel();
+                } catch (e) { flashStatus("重命名失败：" + e.message); }
+                finally { renameBtn.disabled = false; }
+            } }, "重命名");
+            const delBtn = el("button", { class: "ap-btn small", style: "color:" + COLORS.danger + ";", onclick: async () => {
+                if (!confirm("确定删除分类「" + c + "」？其中 " + count + " 个自定义词将一并删除。")) return;
+                delBtn.disabled = true;
+                try {
+                    const resp = await api.fetchApi("/anima/prompt/custom/category/delete", {
+                        method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ name: c }),
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok || !data.ok) throw new Error(data.error || ("HTTP " + resp.status));
+                    customState.loaded = false;
+                    await refreshCategories();
+                    clearTabCache([c]);
+                    buildTabs();
+                    flashStatus("已删除分类");
+                    renderCustomPanel();
+                } catch (e) { flashStatus("删除失败：" + e.message); }
+                finally { delBtn.disabled = false; }
+            } }, "删除");
+            row.append(renameBtn, delBtn);
+            catList.appendChild(row);
+        });
+        mgmt.appendChild(catList);
+    }
+    wrap.appendChild(mgmt);
+
+    // ===== 批量添加区 =====
+    const form = el("div", { class: "ap-custom-section" });
+    form.appendChild(el("div", { class: "ap-gacha-sub" }, "批量添加自定义词条"));
     const sel = el("select", { class: "ap-mini-select" });
     state.categories.forEach((c) => sel.appendChild(el("option", { value: c }, c)));
-    const en = el("input", { class: "ap-search", type: "text", placeholder: "英文词（如 1girl）" });
-    const cn = el("input", { class: "ap-search", type: "text", placeholder: "中文描述（可选）" });
+    const en = el("textarea", { class: "ap-search", rows: "4", placeholder: "英文词（每行一个，如：\n1girl\nsmile\nblush）" });
+    const cn = el("textarea", { class: "ap-search", rows: "4", placeholder: "中文描述（每行对应一个英文词，可留空）" });
     const addBtn = el("button", { class: "ap-btn small", onclick: async () => {
         const category = sel.value;
-        const raw_en = en.value.trim();
-        const cnv = cn.value.trim();
-        if (!category || !raw_en) { flashStatus("请选择分类并填写英文词"); return; }
+        const raw_en = en.value;
+        const cnv = cn.value;
+        if (!category || !raw_en.trim()) { flashStatus("请选择分类并填写英文词"); return; }
         addBtn.disabled = true;
         try {
             const resp = await api.fetchApi("/anima/prompt/custom/add", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
+                method: "POST", headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ category, raw_en, cn_description: cnv }),
             });
             const data = await resp.json();
             if (!resp.ok || !data.ok) throw new Error(data.error || ("HTTP " + resp.status));
             customState.loaded = false;
-            if (state.tabState[category]) state.tabState[category].items = [];
+            clearTabCache([category]);
             en.value = ""; cn.value = "";
-            flashStatus("已添加自定义词条");
+            flashStatus(`成功新增 ${data.added} 条` + (data.skipped ? `，跳过 ${data.skipped} 条` : ""));
             renderCustomPanel();
         } catch (e) { flashStatus("添加失败：" + e.message); }
         finally { addBtn.disabled = false; }
-    } }, "添加");
-    wrap.appendChild(el("div", { class: "ap-custom-form" },
-        el("div", { class: "ap-gacha-rowlabel" }, "新增自定义词条（仅可删除自定义项）"),
-        el("div", { class: "ap-gacha-row" }, sel, en, cn, addBtn),
-    ));
-    const tags = await loadCustomTags();
+    } }, "批量添加");
+    form.appendChild(el("div", { class: "ap-gacha-row" }, sel));
+    form.appendChild(en);
+    form.appendChild(cn);
+    form.appendChild(el("div", { class: "ap-gacha-row" }, addBtn));
+    wrap.appendChild(form);
+
+    // ===== 自定义词列表（含批量移动） =====
+    const listSec = el("div", { class: "ap-custom-section" });
+    listSec.appendChild(el("div", { class: "ap-gacha-sub" }, "自定义词列表"));
     const cats = Object.keys(tags).filter((c) => Array.isArray(tags[c]) && tags[c].length);
     if (!cats.length) {
-        wrap.appendChild(el("div", { class: "ap-empty" }, "暂无自定义词条，使用上方表单添加"));
+        listSec.appendChild(el("div", { class: "ap-empty" }, "暂无自定义词条，使用上方表单添加"));
     } else {
         cats.forEach((cat) => {
-            wrap.appendChild(el("div", { class: "ap-gacha-sub" }, cat));
+            listSec.appendChild(el("div", { class: "ap-gacha-sub" }, cat));
             const grid = el("div", { class: "ap-grid" });
+            const checked = new Set();
             tags[cat].forEach((it) => {
                 const card = el("div", { class: "ap-card custom", tabindex: "0", title: it.raw_en || "" });
-                const header = el("div", { class: "ap-card-header" },
-                    el("span", { class: "ap-card-badge-inline" }, "自定义"),
-                    el("div", { class: "ap-card-en" }, it.raw_en || ""),
-                    el("div", { class: "ap-card-check", style: "visibility:hidden;" }, "✓"),
-                );
-                const cnEl = el("div", { class: "ap-card-cn" }, it.cn_description || "");
-                card.append(header, cnEl);
-                const del = el("button", { class: "ap-card-del", title: "删除", onclick: async (e) => {
+                const chk = el("input", { type: "checkbox", class: "ap-move-check", title: "勾选以批量移动" });
+                chk.addEventListener("click", (e) => e.stopPropagation());
+                chk.addEventListener("change", () => { if (chk.checked) checked.add(it.raw_en); else checked.delete(it.raw_en); });
+                const del = el("button", { class: "ap-card-op", title: "删除", onclick: async (e) => {
                     e.stopPropagation();
+                    if (!confirm(`确定删除「${it.raw_en}」？`)) return;
                     del.disabled = true;
                     try {
                         const resp = await api.fetchApi("/anima/prompt/custom/delete", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ category: cat, raw_en: it.raw_en }),
+                            method: "POST", headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ category: cat, raw_en: [it.raw_en] }),
                         });
                         const data = await resp.json();
                         if (!resp.ok || !data.ok) throw new Error(data.error || ("HTTP " + resp.status));
                         customState.loaded = false;
-                        if (state.tabState[cat]) state.tabState[cat].items = [];
-                        flashStatus("已删除自定义词条");
+                        clearTabCache([cat]);
+                        flashStatus(`已删除 ${data.deleted || 1} 条自定义词条`);
                         renderCustomPanel();
                     } catch (e2) { flashStatus("删除失败：" + e2.message); }
                     finally { del.disabled = false; }
                 } }, "✕");
-                card.appendChild(del);
+                const header = el("div", { class: "ap-card-header" },
+                    el("span", { class: "ap-card-badge-inline" }, "自定义"),
+                    el("div", { class: "ap-card-en" }, it.raw_en || ""),
+                    el("div", { class: "ap-card-right" }, chk, del),
+                );
+                const cnEl = el("div", { class: "ap-card-cn" }, it.cn_description || "");
+                card.append(header, cnEl);
                 card.addEventListener("click", () => selectTag(it, cat));
                 grid.appendChild(card);
             });
-            wrap.appendChild(grid);
+            listSec.appendChild(grid);
+            // 该分类的批量移动行
+            const target = el("select", { class: "ap-mini-select" });
+            state.categories.filter((c) => c !== cat).forEach((c) => target.appendChild(el("option", { value: c }, c)));
+            const mvBtn = el("button", { class: "ap-btn small", onclick: async () => {
+                if (!checked.size) { flashStatus("请先勾选要移动的词"); return; }
+                const dst = target.value;
+                if (!dst) { flashStatus("请选择目标分类"); return; }
+                mvBtn.disabled = true;
+                try {
+                    const resp = await api.fetchApi("/anima/prompt/custom/move", {
+                        method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ source: cat, target: dst, raw_en: [...checked] }),
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok || !data.ok) throw new Error(data.error || ("HTTP " + resp.status));
+                    customState.loaded = false;
+                    clearTabCache([cat, dst]);
+                    flashStatus(`已移动 ${data.moved} 条` + (data.skipped ? `，跳过 ${data.skipped} 条` : ""));
+                    renderCustomPanel();
+                } catch (e) { flashStatus("移动失败：" + e.message); }
+                finally { mvBtn.disabled = false; }
+            } }, "移动选中");
+            const delBtn = el("button", { class: "ap-btn small", style: "color:#ff6b6b;border-color:#ff6b6b;", onclick: async () => {
+                if (!checked.size) { flashStatus("请先勾选要删除的词"); return; }
+                if (!confirm(`确定删除选中的 ${checked.size} 个自定义词条？`)) return;
+                delBtn.disabled = true;
+                try {
+                    const resp = await api.fetchApi("/anima/prompt/custom/delete", {
+                        method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ category: cat, raw_en: [...checked] }),
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok || !data.ok) throw new Error(data.error || ("HTTP " + resp.status));
+                    customState.loaded = false;
+                    clearTabCache([cat]);
+                    flashStatus(`已删除 ${data.deleted || checked.size} 条自定义词条`);
+                    renderCustomPanel();
+                } catch (e) { flashStatus("删除失败：" + e.message); }
+                finally { delBtn.disabled = false; }
+            } }, "删除选中");
+            listSec.appendChild(el("div", { class: "ap-gacha-row" },
+                el("div", { class: "ap-gacha-rowlabel" }, "移动到"), target, mvBtn, delBtn,
+            ));
         });
     }
+    wrap.appendChild(listSec);
+
     mainScroll.appendChild(wrap);
     updatePager();
 }
@@ -989,8 +1151,15 @@ function injectStyle() {
 .ap-card-fav.active{color:#ffd700;}
 .ap-card-badge-inline{background:rgba(233,69,96,.18);color:${COLORS.accentHover};border:1px solid ${COLORS.accent};border-radius:4px;font-size:10px;padding:2px 6px;flex-shrink:0;}
 .ap-card-del{position:absolute;top:6px;right:6px;background:none;border:none;color:${COLORS.danger};cursor:pointer;font-size:14px;padding:2px 6px;border-radius:4px;z-index:3;}
+.ap-card-op{position:static;background:none;border:none;color:${COLORS.danger};cursor:pointer;font-size:14px;padding:2px 4px;border-radius:4px;line-height:1;flex-shrink:0;}
+.ap-card-op:hover{background:rgba(255,107,107,.15);}
 .ap-card-del:hover{background:rgba(255,107,107,.15);}
 .ap-custom-form{margin-bottom:14px;}
+.ap-custom-section{margin-bottom:16px;}
+.ap-custom textarea.ap-search{width:100%;resize:vertical;font-family:inherit;margin-bottom:8px;}
+.ap-cat-list{display:flex;flex-direction:column;gap:6px;margin-top:8px;}
+.ap-cat-item{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid ${COLORS.border};border-radius:6px;background:${COLORS.card};}
+.ap-move-check{width:16px;height:16px;flex-shrink:0;cursor:pointer;accent-color:${COLORS.accent};}
 @media (max-width:780px){
   .ap-body{flex-direction:column;}
   .ap-result{width:100%;border-left:none;border-top:1px solid ${COLORS.border};max-height:38vh;}

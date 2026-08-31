@@ -86,3 +86,6 @@ watch-and-sync.ps1
 # 忽略系统文件
 .DS_Store
 Thumbs.db
+
+# 忽略插件扫描器编译产物（源码已入库，exe/rar 仅本机构建使用）
+dist/
