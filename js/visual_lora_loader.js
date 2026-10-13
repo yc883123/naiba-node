@@ -1980,6 +1980,32 @@ app.registerExtension({
                     });
                     row.appendChild(toggle);
 
+                    // 移除按钮：直接从已选列表删除该 LoRA，无需打开选择器
+                    const removeBtn = document.createElement("div");
+                    removeBtn.textContent = "✕";
+                    removeBtn.title = "从列表移除";
+                    removeBtn.style.cssText = `
+                        flex-shrink:0;width:18px;height:18px;border-radius:4px;
+                        display:flex;align-items:center;justify-content:center;
+                        color:${COLORS.textDim};font-size:11px;line-height:1;
+                        cursor:pointer;transition:all 0.15s;user-select:none;
+                    `;
+                    removeBtn.addEventListener("mouseenter", () => {
+                        removeBtn.style.color = "#fff";
+                        removeBtn.style.background = COLORS.danger;
+                    });
+                    removeBtn.addEventListener("mouseleave", () => {
+                        removeBtn.style.color = COLORS.textDim;
+                        removeBtn.style.background = "transparent";
+                    });
+                    removeBtn.addEventListener("click", (e) => {
+                        e.stopPropagation();
+                        // index 是 loraData 中的原始下标，搜索过滤状态下删除依然准确
+                        loraData.splice(index, 1);
+                        commitLoraData(loraData, true);
+                    });
+                    row.appendChild(removeBtn);
+
                     displayArea.appendChild(row);
                 });
             };
