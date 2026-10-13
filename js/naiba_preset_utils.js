@@ -13,6 +13,7 @@ const COLORS = {
     contentBg: "#0f1729",
     accent: "#6c5ce7",
     accentHover: "#7c6cf7",
+    primary: "#3b82f6",       // 导入按钮（最高频主操作）蓝色
     danger: "#ff6b6b",
     dangerHover: "#ff8b8b",
     success: "#2ed573",
@@ -209,17 +210,18 @@ export function createPresetsModal(node, onImport = null) {
         return btn;
     };
 
-    const importBtn = createBtn("导入预设", COLORS.accent);
+    const importBtn = createBtn("导入预设", COLORS.primary);
     const saveBtn = createBtn("保存预设", COLORS.success);
     const deleteBtn = createBtn("删除预设", COLORS.danger);
     const renameBtn = createBtn("重命名", COLORS.textDim);
     const exportBtn = createBtn("导出到文件", COLORS.accent);
     const importFileBtn = createBtn("从文件导入", COLORS.accent);
 
+    // 布局：导入（主操作，蓝色）最左，重命名居中，保存/删除靠右
     btnGroup.appendChild(importBtn);
+    btnGroup.appendChild(renameBtn);
     btnGroup.appendChild(saveBtn);
     btnGroup.appendChild(deleteBtn);
-    btnGroup.appendChild(renameBtn);
     content.appendChild(btnGroup);
 
     const btnGroup2 = document.createElement("div");
@@ -824,6 +826,9 @@ export function createPresetsModal(node, onImport = null) {
         let dialogCoverFile = null;
         let dialogCoverUrl = "";
         let coverDragDepth = 0;
+        // 覆盖已有预设时用于展示其当前封面（不选新封面则覆盖后原样保留）
+        let existingCoverNameShown = "";
+        let existingCoverAvailable = false;
 
         const coverPicker = document.createElement("div");
         coverPicker.tabIndex = 0;
@@ -865,6 +870,47 @@ export function createPresetsModal(node, onImport = null) {
             coverPickerText.textContent = file.name;
         }
 
+        const isExistingPresetName = (name) =>
+            !!name && existingNames.some((n) => n.toLowerCase() === name.toLowerCase());
+
+        const coverPlaceholderText = () => {
+            if (dialogCoverFile) return dialogCoverFile.name;
+            if (isExistingPresetName(input.value.trim()) && existingCoverAvailable) return "覆盖后将保留原封面";
+            return "选择封面（可选）";
+        };
+
+        // 名称命中已有预设时，展示其当前封面，明确「不选新封面就直接复用原封面」
+        function refreshExistingCoverPreview() {
+            if (dialogCoverFile) return; // 已选择新封面，以新封面为准
+            const name = input.value.trim();
+            if (isExistingPresetName(name)) {
+                if (existingCoverNameShown === name) return;
+                existingCoverNameShown = name;
+                coverPreview.onload = () => {
+                    if (dialogCoverFile) return;
+                    existingCoverAvailable = true;
+                    coverPreview.style.display = "block";
+                    coverPickerText.textContent = coverPlaceholderText();
+                };
+                coverPreview.onerror = () => {
+                    if (dialogCoverFile) return;
+                    existingCoverAvailable = false;
+                    existingCoverNameShown = "";
+                    coverPreview.style.display = "none";
+                    coverPickerText.textContent = "选择封面（可选）";
+                };
+                coverPreview.src = `/naiba/presets/image?name=${encodeURIComponent(name)}`;
+            } else {
+                existingCoverNameShown = "";
+                existingCoverAvailable = false;
+                coverPreview.onload = null;
+                coverPreview.onerror = null;
+                coverPreview.removeAttribute("src");
+                coverPreview.style.display = "none";
+                coverPickerText.textContent = coverPlaceholderText();
+            }
+        }
+
         coverPicker.appendChild(coverPreview);
         coverPicker.appendChild(coverPickerText);
         coverPicker.addEventListener("click", () => dialogCoverInput.click());
@@ -895,7 +941,7 @@ export function createPresetsModal(node, onImport = null) {
             if (coverDragDepth === 0) {
                 coverPicker.style.borderColor = COLORS.border;
                 coverPicker.style.color = COLORS.textDim;
-                coverPickerText.textContent = dialogCoverFile?.name || "选择封面（可选）";
+                coverPickerText.textContent = coverPlaceholderText();
             }
         });
         coverPicker.addEventListener("drop", (e) => {
@@ -936,6 +982,7 @@ export function createPresetsModal(node, onImport = null) {
                 warn.style.display = "none";
                 confirmBtn.textContent = "保存";
             }
+            refreshExistingCoverPreview();
         }
 
         const close = () => {
