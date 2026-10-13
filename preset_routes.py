@@ -2205,6 +2205,45 @@ async def list_all_loras(request):
 
 
 # ============================================================
+# API 路由：获取全部 LoRA 文件修改时间（前端选择器按时间倒序排序用）
+# ============================================================
+_LORA_MTIME_CACHE = {"ts": 0.0, "key": None, "data": {}}
+_LORA_MTIME_TTL_SECONDS = 10.0
+
+
+@PromptServer.instance.routes.get('/naiba/lora/mtimes')
+async def get_lora_mtimes(request):
+    """返回所有 LoRA 文件的修改时间（毫秒时间戳），键为相对文件名。
+
+    带 10 秒 TTL 缓存且文件列表未变化时直接复用上次扫描结果，
+    避免每次打开选择器都重新 stat 全部文件。
+    """
+    try:
+        lora_files = folder_paths.get_filename_list("loras")
+        cache_key = tuple(lora_files)
+        now = time.time()
+        if (
+            _LORA_MTIME_CACHE["key"] != cache_key
+            or now - _LORA_MTIME_CACHE["ts"] > _LORA_MTIME_TTL_SECONDS
+        ):
+            mtimes = {}
+            for name in lora_files:
+                try:
+                    full_path = folder_paths.get_full_path("loras", name)
+                    if full_path and os.path.exists(full_path):
+                        mtimes[name] = int(os.path.getmtime(full_path) * 1000)
+                except OSError as e:
+                    print(f"[Naiba] 获取 LoRA 修改时间失败 {name}: {e}")
+            _LORA_MTIME_CACHE["ts"] = now
+            _LORA_MTIME_CACHE["key"] = cache_key
+            _LORA_MTIME_CACHE["data"] = mtimes
+        return web.json_response({"mtimes": _LORA_MTIME_CACHE["data"]})
+    except Exception as e:
+        print(f"Error listing lora mtimes: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+# ============================================================
 # API 路由：批量检查 LoRA 本地存在性（支持SHA256或文件名匹配）
 # ============================================================
 @PromptServer.instance.routes.post('/naiba/lora/check-local')

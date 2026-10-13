@@ -268,6 +268,80 @@ function createVisualLoraModal(node, loraList) {
             .catch(() => { realPathCache[virtualPath] = null; });
     };
 
+    // 排序方式切换（字母序 / 修改时间倒序），选择持久化到 localStorage
+    const SORT_MODE_STORAGE_KEY = "naiba_visual_lora_sort_mode";
+    let sortMode = "name";
+    try {
+        if (localStorage.getItem(SORT_MODE_STORAGE_KEY) === "time") sortMode = "time";
+    } catch (e) { /* localStorage 不可用时保持默认字母序 */ }
+
+    // LoRA 文件修改时间（name -> ms），懒加载：首次切到时间排序或恢复时间排序时才请求
+    let loraMtimes = null;
+    let loraMtimesPromise = null;
+    const ensureLoraMtimes = (force = false) => {
+        if (force) { loraMtimes = null; loraMtimesPromise = null; }
+        if (loraMtimes) return Promise.resolve(loraMtimes);
+        if (!loraMtimesPromise) {
+            loraMtimesPromise = api.fetchApi("/naiba/lora/mtimes")
+                .then((r) => r.json())
+                .then((d) => {
+                    loraMtimes = (d && d.mtimes) || {};
+                    return loraMtimes;
+                })
+                .catch((e) => {
+                    console.warn("[VisualLoRALoader] 加载LoRA修改时间失败，时间排序退化为字母序:", e);
+                    loraMtimes = {};
+                    return loraMtimes;
+                });
+        }
+        return loraMtimesPromise;
+    };
+
+    // 按当前排序方式排序列表（默认保持原有字母序不动；时间倒序时最新在前）
+    const applyCurrentSort = (list) => {
+        if (sortMode !== "time") return list;
+        const mtimes = loraMtimes || {};
+        return [...list].sort((a, b) => {
+            const ta = mtimes[a] ?? 0;
+            const tb = mtimes[b] ?? 0;
+            if (tb !== ta) return tb - ta;
+            return a.localeCompare(b);
+        });
+    };
+
+    const sortBtn = document.createElement("button");
+    sortBtn.style.cssText = `
+        padding:6px 12px;background:transparent;
+        color:${COLORS.textDim};border:1px solid ${COLORS.border};
+        border-radius:4px;cursor:pointer;font-size:12px;
+    `;
+    const updateSortBtnUI = () => {
+        if (sortMode === "time") {
+            sortBtn.textContent = "排序: 最新优先";
+            sortBtn.style.background = COLORS.accent;
+            sortBtn.style.color = "white";
+            sortBtn.style.borderColor = COLORS.accent;
+            sortBtn.title = "当前按修改时间倒序（最新在前），点击恢复字母序";
+        } else {
+            sortBtn.textContent = "排序: 字母序";
+            sortBtn.style.background = "transparent";
+            sortBtn.style.color = COLORS.textDim;
+            sortBtn.style.borderColor = COLORS.border;
+            sortBtn.title = "当前按字母序，点击切换为修改时间倒序（最新在前）";
+        }
+    };
+    updateSortBtnUI();
+    sortBtn.addEventListener("click", () => {
+        sortMode = sortMode === "time" ? "name" : "time";
+        try { localStorage.setItem(SORT_MODE_STORAGE_KEY, sortMode); } catch (e) { /* 忽略持久化失败 */ }
+        updateSortBtnUI();
+        renderLoraList();
+        // 时间排序依赖文件修改时间，数据未就绪时先按原序渲染，就绪后重排
+        if (sortMode === "time") {
+            ensureLoraMtimes().then(() => { if (sortMode === "time") renderLoraList(); });
+        }
+    });
+
     // 预设按钮
     const presetBtn = document.createElement("button");
     presetBtn.textContent = "预设";
@@ -281,6 +355,7 @@ function createVisualLoraModal(node, loraList) {
 
     toolbar.appendChild(searchInput);
     toolbar.appendChild(folderNav);
+    toolbar.appendChild(sortBtn);
     toolbar.appendChild(presetBtn);
     
     // 刷新列表按钮
@@ -307,6 +382,10 @@ function createVisualLoraModal(node, loraList) {
                 folderStructure = buildFolderStructure(loraList);
                 // 重新渲染列表
                 renderLoraList();
+                // 文件列表可能已变化，失效修改时间缓存并按需重排
+                ensureLoraMtimes(true).then(() => {
+                    if (sortMode === "time") renderLoraList();
+                });
             }
         } catch (e) {
             console.warn("[VisualLoRALoader] 刷新列表失败:", e);
@@ -747,6 +826,9 @@ function createVisualLoraModal(node, loraList) {
                 lora.toLowerCase().includes(currentSearchTerm)
             );
         }
+
+        // 应用排序方式（默认字母序保持原状，时间模式最新在前）
+        lorasToRender = applyCurrentSort(lorasToRender);
         
         if (lorasToRender.length === 0) {
             const emptyMsg = document.createElement("div");
@@ -1297,6 +1379,10 @@ function createVisualLoraModal(node, loraList) {
         filteredLoras = getLorasInFolder("/");
         renderLoraList();
         updateSelectedCount();
+        // 上次会话选择了时间倒序时，预取修改时间并重排
+        if (sortMode === "time") {
+            ensureLoraMtimes().then(() => { if (sortMode === "time") renderLoraList(); });
+        }
     });
 
     // 设置单例
