@@ -239,6 +239,11 @@ export function createPresetsModal(node, onImport = null) {
     let presetItems = [];
     let coverTargetItem = null;
 
+    // 选中已有预设时，保存按钮文案切换为「覆盖预设」，与保存对话框的覆盖语义一致
+    const refreshSaveBtnLabel = () => {
+        saveBtn.textContent = selectedPreset ? "覆盖预设" : "保存预设";
+    };
+
     // ========== 关闭模态框 ==========
     function closeModal() {
         try {
@@ -558,6 +563,7 @@ export function createPresetsModal(node, onImport = null) {
                         item.style.background = COLORS.listItemBg;
                         item.style.borderColor = "transparent";
                         selectedPreset = null;
+                        refreshSaveBtnLabel();
                         return;
                     }
                     // 取消其他选中
@@ -571,6 +577,7 @@ export function createPresetsModal(node, onImport = null) {
                     item.style.background = COLORS.listItemActive;
                     item.style.borderColor = COLORS.accent;
                     selectedPreset = item._name;
+                    refreshSaveBtnLabel();
                 });
 
                 // 将本地图片拖到某个预设格子，直接替换该预设的封面。
@@ -1050,6 +1057,7 @@ export function createPresetsModal(node, onImport = null) {
             } else {
                 showStatus("预设已删除");
                 selectedPreset = null;
+                refreshSaveBtnLabel();
                 await loadPresetList();
             }
         } catch (e) {
