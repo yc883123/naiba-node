@@ -1899,13 +1899,24 @@ app.registerExtension({
                     // 添加悬停预览事件
                     const previewUrl = `/naiba/lora/preview?name=${encodeURIComponent(lora.name || "")}`;
                     name.addEventListener("mouseenter", (ev) => {
-                        if (!isMissing && lora.name && node._previewEnabled !== false) scheduleVisualLoraFloatPreview(ev, previewUrl);
+                        if (!isMissing && lora.name && node._previewEnabled !== false) {
+                            // 封面浮层显示期间隐藏浏览器原生 title 提示框，避免两者叠加
+                            name.dataset.titleBackup = name.title;
+                            name.removeAttribute("title");
+                            scheduleVisualLoraFloatPreview(ev, previewUrl);
+                        }
                     });
                     name.addEventListener("mousemove", (ev) => {
                         _visualLoraFloatLastPointer = { x: ev.clientX, y: ev.clientY };
                         placeVisualLoraFloatPreview(ev);
                     });
-                    name.addEventListener("mouseleave", () => hideVisualLoraFloatPreview());
+                    name.addEventListener("mouseleave", () => {
+                        hideVisualLoraFloatPreview();
+                        if (name.dataset.titleBackup !== undefined) {
+                            name.title = name.dataset.titleBackup;
+                            delete name.dataset.titleBackup;
+                        }
+                    });
 
                     const mkNum = (label, val, onInput) => {
                         const wrap = document.createElement("div");

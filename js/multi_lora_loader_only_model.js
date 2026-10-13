@@ -349,13 +349,22 @@ function createFilterableSelect(options, selected, onChange, node) {
         optEl.style.cssText = `padding:6px 8px 6px ${indent}px;cursor:pointer;font-size:12px;color:${C.text};${fullPath === currentValue ? `background:rgba(108,92,231,0.2);` : ""}`;
         optEl.addEventListener("mouseenter", (e) => {
             if (fullPath !== currentValue) requestOptionHighlight(optEl);
-            if (fullPath && node._previewEnabled) scheduleLoraFloatPreview(fullPath, e);
+            if (fullPath && node._previewEnabled) {
+                // 封面浮层显示期间隐藏浏览器原生 title 提示框，避免两者叠加
+                optEl.dataset.titleBackup = optEl.title;
+                optEl.removeAttribute("title");
+                scheduleLoraFloatPreview(fullPath, e);
+            }
         });
         optEl.addEventListener("mousemove", (e) => { if (fullPath) movePreview(e); });
         optEl.addEventListener("mouseleave", () => {
             if (fullPath !== currentValue) clearOptionHighlight(optEl);
             cancelScheduledPreview();
             hideLoraFloatPreview();
+            if (optEl.dataset.titleBackup !== undefined) {
+                optEl.title = optEl.dataset.titleBackup;
+                delete optEl.dataset.titleBackup;
+            }
         });
         optEl.addEventListener("click", () => {
             currentValue = fullPath;
@@ -571,19 +580,26 @@ function createFilterableSelect(options, selected, onChange, node) {
                     color:${C.text};
                     ${opt === currentValue ? `background:rgba(108,92,231,0.2);` : ""}
                 `;
-                optEl.addEventListener("mouseenter", (e) => { 
+                optEl.addEventListener("mouseenter", (e) => {
                     if (opt !== currentValue) requestOptionHighlight(optEl);
                     if (opt && node._previewEnabled) {
+                        // 封面浮层显示期间隐藏浏览器原生 title 提示框，避免两者叠加
+                        optEl.dataset.titleBackup = optEl.title;
+                        optEl.removeAttribute("title");
                         scheduleLoraFloatPreview(opt, e);
                     }
                 });
-                optEl.addEventListener("mousemove", (e) => { 
-                    if (opt) movePreview(e); 
+                optEl.addEventListener("mousemove", (e) => {
+                    if (opt) movePreview(e);
                 });
-                optEl.addEventListener("mouseleave", () => { 
+                optEl.addEventListener("mouseleave", () => {
                     if (opt !== currentValue) clearOptionHighlight(optEl);
                     cancelScheduledPreview();
                     hideLoraFloatPreview();
+                    if (optEl.dataset.titleBackup !== undefined) {
+                        optEl.title = optEl.dataset.titleBackup;
+                        delete optEl.dataset.titleBackup;
+                    }
                 });
                 optEl.addEventListener("click", () => {
                     currentValue = opt;
@@ -1033,6 +1049,12 @@ app.registerExtension({
                 // 悬浮封面预览（仅绑定名称选择框，避免整张卡片划过即触发；带延迟）
                 nameSelect.el.addEventListener("mouseenter", (e) => {
                     if (entry.name && node._previewEnabled) {
+                        // 选择框内部 input 的原生 title 提示框与封面浮层叠加，悬浮期间隐藏
+                        const inp = nameSelect.el.querySelector("input");
+                        if (inp && inp.title) {
+                            inp.dataset.titleBackup = inp.title;
+                            inp.removeAttribute("title");
+                        }
                         scheduleLoraFloatPreview(entry.name, e);
                     }
                 });
@@ -1040,6 +1062,11 @@ app.registerExtension({
                 nameSelect.el.addEventListener("mouseleave", () => {
                     cancelScheduledPreview();
                     hideLoraFloatPreview();
+                    const inp = nameSelect.el.querySelector("input");
+                    if (inp && inp.dataset.titleBackup !== undefined) {
+                        inp.title = inp.dataset.titleBackup;
+                        delete inp.dataset.titleBackup;
+                    }
                 });
 
                 const mkLabel = (t) => {
