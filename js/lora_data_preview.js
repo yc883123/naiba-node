@@ -220,12 +220,16 @@ function createLoraDataPreviewModal(node, loraList) {
     // SHA256 缓存状态徽章（按钮旁的常驻指示）
     const cacheSha256Badge = document.createElement("span");
     cacheSha256Badge.textContent = "SHA256 —";
-    cacheSha256Badge.title = "本地 LoRA 的 sha256 全局缓存覆盖状态（由离线缓存/批量同步写入）。绿=全部已缓存，黄=部分缺失，灰=未缓存。";
+    cacheSha256Badge.title = "本地 LoRA 的 sha256 全局缓存覆盖状态（由离线缓存/批量同步写入）。绿=全部已缓存，黄=部分缺失，灰=未缓存。点击查看缺失列表。";
     cacheSha256Badge.style.cssText = `
         padding:2px 9px;border-radius:10px;font-size:11px;line-height:1.6;
         background:transparent;color:${COLORS.textDim};
-        border:1px solid ${COLORS.border};white-space:nowrap;
+        border:1px solid ${COLORS.border};white-space:nowrap;cursor:pointer;
     `;
+    // 点击徽章直接跳到"缺SHA256"标签页
+    cacheSha256Badge.addEventListener("click", () => {
+        switchToMissingShaTab();
+    });
 
     // 关闭按钮
     const closeBtn = document.createElement("div");
@@ -300,6 +304,14 @@ function createLoraDataPreviewModal(node, loraList) {
         background:transparent;color:${COLORS.textDim};
     `;
 
+    const tabMissingSha = document.createElement("div");
+    tabMissingSha.textContent = "缺SHA256";
+    tabMissingSha.title = "列出缺少 sha256 缓存的 LoRA，便于逐个同步；云端没有数据的可从统计中排除";
+    tabMissingSha.style.cssText = `
+        padding:4px 12px;border-radius:3px;cursor:pointer;font-size:12px;
+        background:transparent;color:${COLORS.textDim};
+    `;
+
     const updateTabStyle = () => {
         // 重置所有标签样式
         tabAll.style.background = "transparent";
@@ -310,6 +322,8 @@ function createLoraDataPreviewModal(node, loraList) {
         tabFavorite.style.color = COLORS.textDim;
         tabCivitaiCheck.style.background = "transparent";
         tabCivitaiCheck.style.color = COLORS.textDim;
+        tabMissingSha.style.background = "transparent";
+        tabMissingSha.style.color = COLORS.textDim;
         
         // 设置当前活动标签样式
         if (currentCategory === "all") {
@@ -324,6 +338,9 @@ function createLoraDataPreviewModal(node, loraList) {
         } else if (currentCategory === "civitai-check") {
             tabCivitaiCheck.style.background = COLORS.warning;
             tabCivitaiCheck.style.color = "white";
+        } else if (currentCategory === "missing-sha256") {
+            tabMissingSha.style.background = "#d29922";
+            tabMissingSha.style.color = "white";
         }
     };
 
@@ -345,6 +362,14 @@ function createLoraDataPreviewModal(node, loraList) {
                 : `收藏: ${favCount} 个LoRA`;
         } else if (currentCategory === "civitai-check") {
             statusDisplay.textContent = "Civitai校验模式";
+        } else if (currentCategory === "missing-sha256") {
+            const missingSet = new Set(shaMissingList);
+            const cnt = searchTerm
+                ? baseLoras.filter(l => missingSet.has(l)).length
+                : shaMissingList.length;
+            statusDisplay.textContent = searchTerm
+                ? `缺失SHA256: ${cnt} 个结果`
+                : `缺失SHA256: ${cnt} 个LoRA`;
         } else {
             statusDisplay.textContent = searchTerm 
                 ? `搜索: ${baseLoras.length} 个结果` 
@@ -380,10 +405,24 @@ function createLoraDataPreviewModal(node, loraList) {
         renderLoraList();
     });
 
+    // 切到"缺SHA256"视图：首次进入时拉取含缺失/排除名单的缓存状态
+    const switchToMissingShaTab = async () => {
+        currentCategory = "missing-sha256";
+        currentPage = 0;
+        updateTabStyle();
+        updateStatusDisplay();
+        if (!shaStatsLoaded) await loadSha256Status();
+        renderLoraList();
+    };
+    tabMissingSha.addEventListener("click", () => {
+        switchToMissingShaTab();
+    });
+
     tabGroup.appendChild(tabAll);
     tabGroup.appendChild(tabSelected);
     tabGroup.appendChild(tabFavorite);
     tabGroup.appendChild(tabCivitaiCheck);
+    tabGroup.appendChild(tabMissingSha);
 
     // 搜索框
     const searchInput = document.createElement("input");
@@ -667,22 +706,35 @@ function createLoraDataPreviewModal(node, loraList) {
     sha256CacheHint.style.cssText = `color:${COLORS.success};font-size:12px;margin-left:8px;display:none;`;
     sha256CacheHint.title = "本地 LoRA 的 sha256 全局缓存状态，供上传预设做本地匹配";
 
-    async function refreshSha256CacheHint() {
+    // 缓存状态数据（供"缺SHA256"标签页使用）
+    let shaMissingList = [];      // 缺失 sha256 的本地 LoRA（已扣除排除项）
+    let shaExcludedList = [];     // 已被排除出统计的本地 LoRA
+    let shaStatsLoaded = false;
+
+    async function loadSha256Status() {
         try {
             const ctrl = new AbortController();
             const tid = setTimeout(() => ctrl.abort(), 8000);
-            const resp = await fetch('/naiba/lora/sha256-cache', { signal: ctrl.signal });
+            const resp = await fetch('/naiba/lora/sha256-cache?include_map=1', { signal: ctrl.signal });
             clearTimeout(tid);
             const data = await resp.json();
             if (data && data.success) {
+                shaMissingList = Array.isArray(data.missing) ? data.missing : [];
+                shaExcludedList = Array.isArray(data.excluded_missing) ? data.excluded_missing : [];
+                shaStatsLoaded = true;
+
+                const excludedNote = data.excluded_count > 0 ? `，已排除 ${data.excluded_count} 个` : "";
                 if (data.all_cached && data.cached_count > 0) {
-                    sha256CacheHint.textContent = `✓ 所有 LoRA 已有 sha256 缓存（共 ${data.cached_count} 个）`;
+                    sha256CacheHint.textContent = `✓ 所有未排除的 LoRA 已有 sha256 缓存（共 ${data.cached_count} 个${excludedNote}）`;
                     sha256CacheHint.style.color = COLORS.success;
                 } else {
-                    sha256CacheHint.textContent = `⚠ 已缓存 ${data.cached_count}/${data.total_loras} 个 sha256（缺失 ${data.missing_count} 个）`;
+                    sha256CacheHint.textContent = `⚠ 已缓存 ${data.cached_count}/${data.total_loras} 个 sha256（缺失 ${data.missing_count} 个${excludedNote}）`;
                     sha256CacheHint.style.color = '#d29922';
                 }
                 sha256CacheHint.style.display = 'inline';
+
+                // 标签页文案带上缺失数量
+                tabMissingSha.textContent = data.missing_count > 0 ? `缺SHA256 (${data.missing_count})` : "缺SHA256";
 
                 // 按钮旁徽章：绿=全部，黄=部分，灰=未缓存
                 if (data.cached_count === 0) {
@@ -702,6 +754,11 @@ function createLoraDataPreviewModal(node, loraList) {
         } catch (e) {
             // 接口不可用时静默
         }
+    }
+
+    // 兼容旧调用点：刷新提示的同时同步缺失/排除名单
+    async function refreshSha256CacheHint() {
+        await loadSha256Status();
     }
 
     const buttonGroup = document.createElement("div");
@@ -1068,6 +1125,22 @@ function createLoraDataPreviewModal(node, loraList) {
         // 进度条（批量同步时显示）
         mainContent.appendChild(progressBarContainer);
 
+        // "缺SHA256"视图：排除名单提示条
+        if (currentCategory === "missing-sha256" && shaExcludedList.length > 0) {
+            const exBar = document.createElement("div");
+            exBar.style.cssText = `display:flex;align-items:center;gap:10px;margin:0 8px 10px;padding:8px 12px;background:${COLORS.inputBg};border:1px dashed ${COLORS.border};border-radius:4px;color:${COLORS.textDim};font-size:12px;`;
+            const exText = document.createElement("span");
+            exText.textContent = `已排除 ${shaExcludedList.length} 个（不计入统计，批量同步跳过）`;
+            exText.style.cssText = "flex:1;";
+            const exManageBtn = document.createElement("button");
+            exManageBtn.textContent = "管理排除";
+            exManageBtn.style.cssText = `padding:4px 10px;background:transparent;color:${COLORS.textDim};border:1px solid ${COLORS.border};border-radius:4px;cursor:pointer;font-size:11px;`;
+            exManageBtn.addEventListener("click", () => openExcludedManager());
+            exBar.appendChild(exText);
+            exBar.appendChild(exManageBtn);
+            mainContent.appendChild(exBar);
+        }
+
         // 更新应用按钮文本显示选中数量
         if (applyBtn) applyBtn.textContent = `应用选中 (${selectedLoras.size})`;
 
@@ -1082,6 +1155,8 @@ function createLoraDataPreviewModal(node, loraList) {
             // Civitai校验模式：显示基于lora_data的校验视图
             renderCivitaiCheckView();
             return;
+        } else if (currentCategory === "missing-sha256") {
+            displayLoras = shaMissingList.slice();
         } else {
             displayLoras = getLorasInFolder(currentFolder);
         }
@@ -1144,6 +1219,26 @@ function createLoraDataPreviewModal(node, loraList) {
                 emptyMsg.appendChild(goBtn);
             } else if (currentCategory === "favorite") {
                 emptyMsg.textContent = "尚未收藏任何LoRA";
+            } else if (currentCategory === "missing-sha256") {
+                if (shaStatsLoaded && shaMissingList.length === 0) {
+                    emptyMsg.textContent = "没有缺失 sha256 缓存的 LoRA";
+                    if (shaExcludedList.length > 0) {
+                        const note = document.createElement("div");
+                        note.textContent = `另有 ${shaExcludedList.length} 个已排除（不计入统计）`;
+                        note.style.cssText = `color:${COLORS.textDim};font-size:12px;`;
+                        emptyMsg.appendChild(note);
+                        const manageBtn = document.createElement("button");
+                        manageBtn.textContent = "管理排除";
+                        manageBtn.style.cssText = `
+                            padding:8px 16px;background:transparent;color:${COLORS.textDim};
+                            border:1px solid ${COLORS.border};border-radius:4px;cursor:pointer;font-size:12px;
+                        `;
+                        manageBtn.addEventListener("click", () => openExcludedManager());
+                        emptyMsg.appendChild(manageBtn);
+                    }
+                } else {
+                    emptyMsg.textContent = "正在加载缺失列表...";
+                }
             } else {
                 emptyMsg.textContent = searchTerm ? "没有匹配的LoRA文件" : "没有找到LoRA文件";
             }
@@ -1190,6 +1285,10 @@ function createLoraDataPreviewModal(node, loraList) {
                     return b;
                 };
                 btnWrap.appendChild(mkBtn("同步", COLORS.accent, (btn) => syncSingleLora(lora, btn)));
+                // "缺SHA256"视图下提供排除入口
+                if (currentCategory === "missing-sha256") {
+                    btnWrap.appendChild(mkBtn("排除", "transparent", () => excludeLoraFromShaStats(lora)));
+                }
                 btnWrap.appendChild(mkBtn("编辑", "transparent", () => showEditPanel(lora)));
                 btnWrap.appendChild(mkBtn("详情", "transparent", () => showLoraDetail(lora)));
                 item.appendChild(checkbox);
@@ -1383,6 +1482,22 @@ function createLoraDataPreviewModal(node, loraList) {
             });
 
             actionButtons.appendChild(syncBtn);
+            // "缺SHA256"视图下提供排除入口：云端没有数据的 LoRA 永久移出统计
+            if (currentCategory === "missing-sha256") {
+                const excludeBtn = document.createElement("button");
+                excludeBtn.textContent = "排除";
+                excludeBtn.title = "云端没有此模型信息时，将其从 sha256 缺失统计中永久排除（可恢复）";
+                excludeBtn.style.cssText = `
+                    padding:4px 8px;background:transparent;
+                    color:${COLORS.warning};border:1px solid ${COLORS.border};
+                    border-radius:3px;cursor:pointer;font-size:11px;
+                `;
+                excludeBtn.addEventListener("click", async (e) => {
+                    e.stopPropagation();
+                    await excludeLoraFromShaStats(lora);
+                });
+                actionButtons.appendChild(excludeBtn);
+            }
             actionButtons.appendChild(editBtn);
             actionButtons.appendChild(detailBtn);
 
@@ -2723,6 +2838,158 @@ function createLoraDataPreviewModal(node, loraList) {
     }
 
     // ========== 同步单个LoRA ==========
+    // ========== sha256 统计排除（云端无数据的 LoRA 永久移出缺失统计） ==========
+    async function excludeLoraFromShaStats(loraName) {
+        if (!confirm(`确定将「${loraName}」从 sha256 缓存统计中永久排除吗？\n\n· 不再计入缺失统计（徽章/提示不再提它）\n· 批量同步将跳过它\n· 随时可在「缺SHA256」页的"管理排除"中恢复`)) {
+            return;
+        }
+        syncStatus.textContent = `正在排除: ${loraName}`;
+        syncStatus.style.color = COLORS.textDim;
+        try {
+            const resp = await api.fetchApi('/naiba/lora/sha256-cache/exclude', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ names: [loraName], action: 'add' }),
+            });
+            const result = await resp.json();
+            if (!result.success) throw new Error(result.error || "未知错误");
+            syncStatus.textContent = `已排除: ${loraName}`;
+            syncStatus.style.color = COLORS.success;
+            await loadSha256Status();
+            renderLoraList();
+        } catch (error) {
+            console.error("[LoraDataPreview] 排除失败:", error);
+            syncStatus.textContent = `排除失败: ${error.message}`;
+            syncStatus.style.color = COLORS.danger;
+        }
+    }
+
+    // 排除名单管理：逐项恢复或全部恢复
+    function openExcludedManager() {
+        if (document.getElementById("naiba-sha-exclude-manager")) return;
+        const mgOverlay = document.createElement("div");
+        mgOverlay.id = "naiba-sha-exclude-manager";
+        mgOverlay.style.cssText = `
+            position:fixed;top:0;left:0;width:100%;height:100%;
+            background:rgba(0,0,0,0.6);z-index:10010;
+            display:flex;align-items:center;justify-content:center;
+        `;
+
+        const box = document.createElement("div");
+        box.style.cssText = `
+            width:min(560px,90vw);max-height:80vh;background:${COLORS.modalBg};
+            border:1px solid ${COLORS.border};border-radius:8px;
+            display:flex;flex-direction:column;overflow:hidden;
+            box-shadow:0 10px 40px rgba(0,0,0,0.5);
+        `;
+
+        const title = document.createElement("div");
+        title.textContent = "排除名单管理";
+        title.style.cssText = `color:${COLORS.text};font-size:14px;font-weight:600;padding:12px 16px;background:${COLORS.headerBg};border-bottom:1px solid ${COLORS.border};`;
+
+        const hint = document.createElement("div");
+        hint.textContent = "已排除的 LoRA 不计入 sha256 缺失统计，批量同步会跳过；恢复后重新计入。";
+        hint.style.cssText = `color:${COLORS.textDim};font-size:11px;padding:8px 16px 0;`;
+
+        const listWrap = document.createElement("div");
+        listWrap.style.cssText = "flex:1;overflow-y:auto;padding:8px 16px;min-height:60px;";
+
+        const buildRows = () => {
+            listWrap.innerHTML = "";
+            if (!shaExcludedList.length) {
+                const empty = document.createElement("div");
+                empty.textContent = "暂无排除项";
+                empty.style.cssText = `color:${COLORS.textDim};text-align:center;padding:24px 0;font-size:12px;`;
+                listWrap.appendChild(empty);
+                return;
+            }
+            shaExcludedList.forEach((name) => {
+                const row = document.createElement("div");
+                row.style.cssText = "display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(42,58,92,0.4);";
+                const nameEl = document.createElement("span");
+                nameEl.textContent = name;
+                nameEl.title = name;
+                nameEl.style.cssText = `flex:1;min-width:0;color:${COLORS.text};font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+                const restoreBtn = document.createElement("button");
+                restoreBtn.textContent = "恢复";
+                restoreBtn.style.cssText = `padding:3px 10px;background:transparent;color:${COLORS.success};border:1px solid ${COLORS.border};border-radius:3px;cursor:pointer;font-size:11px;flex-shrink:0;`;
+                restoreBtn.addEventListener("click", async () => {
+                    restoreBtn.disabled = true;
+                    restoreBtn.textContent = "恢复中...";
+                    try {
+                        const resp = await api.fetchApi('/naiba/lora/sha256-cache/exclude', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ names: [name], action: 'remove' }),
+                        });
+                        const result = await resp.json();
+                        if (!result.success) throw new Error(result.error || "未知错误");
+                        await loadSha256Status();
+                        buildRows();
+                        renderLoraList();
+                    } catch (error) {
+                        console.error("[LoraDataPreview] 恢复排除失败:", error);
+                        restoreBtn.disabled = false;
+                        restoreBtn.textContent = "失败,重试";
+                    }
+                });
+                row.appendChild(nameEl);
+                row.appendChild(restoreBtn);
+                listWrap.appendChild(row);
+            });
+        };
+        buildRows();
+
+        const btnRow = document.createElement("div");
+        btnRow.style.cssText = `display:flex;justify-content:space-between;gap:8px;padding:10px 16px;border-top:1px solid ${COLORS.border};`;
+
+        const restoreAllBtn = document.createElement("button");
+        restoreAllBtn.textContent = "全部恢复";
+        restoreAllBtn.style.cssText = `padding:6px 14px;background:transparent;color:${COLORS.warning};border:1px solid ${COLORS.border};border-radius:4px;cursor:pointer;font-size:12px;`;
+        restoreAllBtn.addEventListener("click", async () => {
+            if (!shaExcludedList.length) return;
+            if (!confirm(`确定恢复全部 ${shaExcludedList.length} 个排除项吗？`)) return;
+            restoreAllBtn.disabled = true;
+            try {
+                const resp = await api.fetchApi('/naiba/lora/sha256-cache/exclude', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ names: [...shaExcludedList], action: 'remove' }),
+                });
+                const result = await resp.json();
+                if (!result.success) throw new Error(result.error || "未知错误");
+                await loadSha256Status();
+                buildRows();
+                renderLoraList();
+            } catch (error) {
+                console.error("[LoraDataPreview] 全部恢复失败:", error);
+                alert(`恢复失败: ${error.message}`);
+            } finally {
+                restoreAllBtn.disabled = false;
+            }
+        });
+
+        const closeBtn = document.createElement("button");
+        closeBtn.textContent = "关闭";
+        closeBtn.style.cssText = `padding:6px 14px;background:${COLORS.accent};color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;`;
+        const closeManager = () => {
+            if (mgOverlay.parentNode) mgOverlay.parentNode.removeChild(mgOverlay);
+        };
+        closeBtn.addEventListener("click", closeManager);
+        mgOverlay.addEventListener("click", (e) => {
+            if (e.target === mgOverlay) closeManager();
+        });
+
+        btnRow.appendChild(restoreAllBtn);
+        btnRow.appendChild(closeBtn);
+        box.appendChild(title);
+        box.appendChild(hint);
+        box.appendChild(listWrap);
+        box.appendChild(btnRow);
+        mgOverlay.appendChild(box);
+        document.body.appendChild(mgOverlay);
+    }
+
     async function syncSingleLora(loraName, button) {
         button.disabled = true;
         button.textContent = "同步中...";
@@ -2766,6 +3033,12 @@ function createLoraDataPreviewModal(node, loraList) {
                 
                 syncStatus.textContent = `同步成功: ${loraName}`;
                 syncStatus.style.color = COLORS.success;
+
+                // 刷新 sha256 缓存状态（同步后该 LoRA 的哈希已回填全局缓存），
+                // "缺SHA256"视图下让已同步条目即时消失
+                refreshSha256CacheHint().then(() => {
+                    if (currentCategory === "missing-sha256") renderLoraList();
+                });
                 
                 // 3秒后恢复按钮和状态栏
                 setTimeout(() => {
@@ -2912,6 +3185,9 @@ function createLoraDataPreviewModal(node, loraList) {
                                     if (data.already_synced > 0) {
                                         startTitle += `，跳过 ${data.already_synced} 个`;
                                     }
+                                    if (data.excluded > 0) {
+                                        startTitle += `，排除 ${data.excluded} 个`;
+                                    }
                                     startTitle += ')';
                                     progressBarTitle.textContent = startTitle;
                                     progressBarStatus.textContent = `开始同步 ${data.to_sync} 个 LoRA...`;
@@ -2970,8 +3246,8 @@ function createLoraDataPreviewModal(node, loraList) {
                 syncStatus.textContent = `批量同步完成: ${finalResults.success} 成功, ${finalResults.failed} 失败`;
                 syncStatus.style.color = COLORS.success;
 
-                // 刷新 sha256 全局缓存提示
-                refreshSha256CacheHint();
+                // 刷新 sha256 全局缓存状态与缺失/排除名单
+                await refreshSha256CacheHint();
                 
                 // 刷新列表
                 renderLoraList();
@@ -2982,6 +3258,9 @@ function createLoraDataPreviewModal(node, loraList) {
                 summaryMsg += `成功: ${finalResults.success}\n失败: ${finalResults.failed}`;
                 if (finalResults.already_synced > 0) {
                     summaryMsg += `\n已有缓存跳过: ${finalResults.already_synced}`;
+                }
+                if (finalResults.excluded > 0) {
+                    summaryMsg += `\n排除名单跳过: ${finalResults.excluded}`;
                 }
                 alert(summaryMsg);
             }
@@ -3106,8 +3385,11 @@ function createLoraDataPreviewModal(node, loraList) {
         cacheSha256Btn.disabled = false;
         cacheSha256Btn.textContent = "离线缓存SHA256";
         cacheSha256Btn.style.background = COLORS.accent2 || COLORS.accent;
-        // 无论成功/失败，结束都重新拉取最新缓存状态刷新徽章
-        refreshSha256CacheHint();
+        // 无论成功/失败，结束都重新拉取最新缓存状态刷新徽章，
+        // "缺SHA256"视图下同步重排缺失列表
+        refreshSha256CacheHint().then(() => {
+            if (currentCategory === "missing-sha256") renderLoraList();
+        });
 
         setTimeout(() => {
             syncStatus.style.color = COLORS.textDim;
