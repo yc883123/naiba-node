@@ -1194,23 +1194,33 @@ async def batch_sync_handler(request):
                         rel_path = os.path.relpath(file_path, lora_dir)
                         all_lora_paths.append((rel_path, file_path))
         
+        # 被用户排除的 LoRA（云端无数据）不参与同步，避免反复失败提示
+        excluded_keys = {
+            str(n).replace("\\", "/").casefold() for n in sha256_cache.get_excluded()
+        }
+
         # 根据模式过滤需要同步的LoRA
         lora_paths = []
         skipped_count = 0
-        
+        excluded_count = 0
+
         for lora_name, lora_path in all_lora_paths:
+            if str(lora_name).replace("\\", "/").casefold() in excluded_keys:
+                excluded_count += 1
+                continue
             if not force:
                 metadata = load_cached_metadata(get_metadata_path(lora_path))
                 if has_synced_metadata(metadata):
                     skipped_count += 1
                     continue
             lora_paths.append((lora_name, lora_path))
-        
+
         # 同步结果
         results = {
             "total": len(all_lora_paths),
             "to_sync": len(lora_paths),
             "already_synced": skipped_count,
+            "excluded": excluded_count,
             "success": 0,
             "failed": 0,
             "details": []
@@ -1242,7 +1252,8 @@ async def batch_sync_handler(request):
         await send_sse("start", {
             "total": len(all_lora_paths),
             "to_sync": len(lora_paths),
-            "already_synced": skipped_count
+            "already_synced": skipped_count,
+            "excluded": excluded_count
         })
         
         # 批量同步
@@ -1385,9 +1396,10 @@ async def sha256_cache_status_handler(request):
     返回全局 sha256 缓存状态：
         cached_count : 已缓存 sha256 的条目数
         total_loras  : 本地 LoRA 总数
-        missing_count: 尚未缓存的本地 LoRA 数
-        all_cached   : 是否所有本地 LoRA 都已缓存
-    可选 query: include_map=1 时附带完整 cache 映射与 missing 列表（前 200 条）。
+        missing_count: 尚未缓存的本地 LoRA 数（不含已排除项）
+        all_cached   : 是否所有未排除的本地 LoRA 都已缓存
+        excluded_count : 排除名单中的 LoRA 总数
+    可选 query: include_map=1 时附带完整 cache 映射与 missing/excluded_missing 列表。
     """
     try:
         from . import sha256_cache
@@ -1396,16 +1408,59 @@ async def sha256_cache_status_handler(request):
         status = _get_sha256_cache_status(sha256_cache)
         resp = {"success": True, **{
             key: value for key, value in status.items()
-            if key not in ("missing", "stale", "orphaned")
+            if key not in ("missing", "stale", "orphaned", "excluded_missing")
         }}
         if include_map:
             resp["cache"] = sha256_cache.get_all()
-            resp["missing"] = status["missing"][:200]
+            # missing 前端用于"缺SHA256"标签页展示，上限放宽到 2000（其余靠徽章计数感知）
+            resp["missing"] = status["missing"][:2000]
             resp["stale"] = status["stale"][:200]
             resp["orphaned"] = status["orphaned"][:200]
+            resp["excluded_missing"] = status.get("excluded_missing", [])[:2000]
         return web.json_response(resp)
     except Exception as e:
         print(f"[Naiba] sha256-cache status error: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+# ============================================================
+# API 路由：sha256 缓存统计排除名单（云端无数据的 LoRA 永久排除，避免反复提示）
+# ============================================================
+@PromptServer.instance.routes.post('/naiba/lora/sha256-cache/exclude')
+async def sha256_cache_exclude_handler(request):
+    """
+    把 LoRA 加入/移出 sha256 缓存统计排除名单。
+
+    body: {"names": ["a.safetensors", ...], "action": "add"|"remove"}（action 默认 add）
+    被排除的 LoRA 不再计入缺失统计，批量同步（两种模式）都会跳过；
+    离线 sha256 计算仍包含它们（供预设按哈希本地匹配）。
+    """
+    try:
+        from . import sha256_cache
+
+        body = await request.json()
+        names = body.get('names', [])
+        action = body.get('action', 'add')
+        if isinstance(names, str):
+            names = [names]
+        if not isinstance(names, list):
+            return web.json_response({"success": False, "error": "names 需为列表"}, status=400)
+        clean = [str(n).strip() for n in names if str(n).strip()]
+        if not clean:
+            return web.json_response({"success": False, "error": "names 不能为空"}, status=400)
+
+        if action == 'remove':
+            excluded = sha256_cache.remove_excluded(clean)
+        else:
+            excluded = sha256_cache.add_excluded(clean)
+        return web.json_response({
+            "success": True,
+            "action": action,
+            "excluded": excluded,
+            "excluded_count": len(excluded),
+        })
+    except Exception as e:
+        print(f"[Naiba] sha256-cache exclude error: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 

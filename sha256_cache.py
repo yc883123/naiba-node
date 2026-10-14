@@ -59,7 +59,7 @@ def _migrate_legacy(loaded):
     """
     if not isinstance(loaded, dict):
         return None
-    known_keys = {"version", "entries", "sha256_map", "updated_at", "created_at", "meta"}
+    known_keys = {"version", "entries", "sha256_map", "updated_at", "created_at", "meta", "excluded"}
 
     # 新结构 / 含 entries 的结构
     entries = loaded.get("entries")
@@ -115,7 +115,7 @@ def _load_raw():
     global _MEM
     if _MEM is not None:
         return _MEM
-    data = {"version": _CACHE_VERSION, "entries": {}}
+    data = {"version": _CACHE_VERSION, "entries": {}, "excluded": []}
     try:
         if os.path.exists(_CACHE_PATH):
             with open(_CACHE_PATH, "r", encoding="utf-8") as f:
@@ -123,7 +123,11 @@ def _load_raw():
 
             migrated = _migrate_legacy(loaded)
             if migrated is not None:
-                data = {"version": _CACHE_VERSION, "entries": migrated}
+                data = {"version": _CACHE_VERSION, "entries": migrated, "excluded": []}
+                # 排除名单是顶层附加数据，迁移重建顶层结构时必须保留，否则重启即丢
+                excluded = loaded.get("excluded")
+                if isinstance(excluded, list):
+                    data["excluded"] = [_norm(n) for n in excluded if n]
                 # 迁移后固化新格式，后续读取不再走迁移分支
                 try:
                     _save_raw(data)
@@ -246,19 +250,88 @@ def check_entry_state(name, path):
         return "current"
 
 
+def get_excluded():
+    """返回被排除出 sha256 缓存统计的 LoRA 名列表（正斜杠规整）。"""
+    with _LOCK:
+        raw = _load_raw()
+        excluded = raw.get("excluded")
+        return list(excluded) if isinstance(excluded, list) else []
+
+
+def is_excluded(name):
+    """判断某 LoRA 是否被排除出 sha256 统计（大小写/分隔符不敏感）。"""
+    if not name:
+        return False
+    target = _norm(name).casefold()
+    return any(_norm(n).casefold() == target for n in get_excluded())
+
+
+def add_excluded(names):
+    """把 LoRA 加入排除名单（去重、规整），返回最终名单。"""
+    if isinstance(names, str):
+        names = [names]
+    with _LOCK:
+        raw = _load_raw()
+        excluded = raw.get("excluded")
+        if not isinstance(excluded, list):
+            excluded = []
+        seen = {_norm(n).casefold() for n in excluded if n}
+        changed = False
+        for n in names or []:
+            if not n:
+                continue
+            normalized = _norm(n)
+            key = normalized.casefold()
+            if key not in seen:
+                seen.add(key)
+                excluded.append(normalized)
+                changed = True
+        if changed:
+            raw["excluded"] = excluded
+            _save_raw(raw)
+        return get_excluded()
+
+
+def remove_excluded(names):
+    """把 LoRA 从排除名单移除（大小写/分隔符不敏感），返回最终名单。"""
+    if isinstance(names, str):
+        names = [names]
+    drop = {_norm(n).casefold() for n in names or [] if n}
+    if not drop:
+        return get_excluded()
+    with _LOCK:
+        raw = _load_raw()
+        excluded = raw.get("excluded")
+        if not isinstance(excluded, list):
+            excluded = []
+        kept = [n for n in excluded if _norm(n).casefold() not in drop]
+        if len(kept) != len(excluded):
+            raw["excluded"] = kept
+            _save_raw(raw)
+        return get_excluded()
+
+
 def summarize_local_entries(items):
-    """统计当前本地 LoRA 的缓存状态；items 为 (name, full_path) 列表。"""
+    """统计当前本地 LoRA 的缓存状态；items 为 (name, full_path) 列表。
+
+    被用户排除的 LoRA 不计入缺失统计（missing_count / missing / all_cached），
+    单独归入 excluded_missing，供前端区分展示，避免"云端无此模型"的 LoRA 反复提示。
+    """
     normalized_items = [(_norm(name), path) for name, path in items]
     cache = load_cache()
     local_keys = {name.casefold() for name, _path in normalized_items}
+    excluded_keys = {_norm(n).casefold() for n in get_excluded()}
     current = []
     needs_refresh = []
     stale = []
+    excluded_missing = []
 
     for name, path in normalized_items:
         state = check_entry_state(name, path)
         if state == "current":
             current.append(name)
+        elif name.casefold() in excluded_keys:
+            excluded_missing.append(name)
         else:
             needs_refresh.append(name)
             if state == "stale":
@@ -275,10 +348,12 @@ def summarize_local_entries(items):
         "missing_count": len(needs_refresh),
         "stale_count": len(stale),
         "orphaned_count": len(orphaned),
+        "excluded_count": len(excluded_keys),
         "all_cached": bool(normalized_items) and not needs_refresh,
         "missing": needs_refresh,
         "stale": stale,
         "orphaned": orphaned,
+        "excluded_missing": excluded_missing,
     }
 
 
