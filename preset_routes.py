@@ -1017,6 +1017,28 @@ async def civitai_sync_handler(request):
         metadata, preview_path, error = await sync_lora_from_civitai(
             lora_path, api_key_value, max_nsfw, force
         )
+
+        # 无论同步成功与否，都尽量把该 LoRA 的 sha256 写入全局缓存（与批量同步一致），
+        # 否则"缺SHA256"页里单个同步成功后条目不会消失
+        try:
+            from . import sha256_cache
+            from .civitai_utils import CivitaiClient
+
+            file_hash = None
+            if metadata and isinstance(metadata, dict):
+                file_hash = metadata.get("hash")
+            if not file_hash:
+                meta_cached = load_cached_metadata(get_metadata_path(lora_path))
+                if meta_cached:
+                    file_hash = meta_cached.get("hash")
+            if not file_hash and sha256_cache.needs_update(lora_name, lora_path):
+                file_hash = await asyncio.get_event_loop().run_in_executor(
+                    None, CivitaiClient.calculate_sha256, lora_path
+                )
+            if file_hash:
+                sha256_cache.update_entry(lora_name, file_hash, lora_path)
+        except Exception as _ce:  # noqa: BLE001
+            print(f"[Naiba-SHA256Cache] 缓存 {lora_name} 失败: {_ce}")
         
         if error:
             error_details = civitai_error_details(error)
