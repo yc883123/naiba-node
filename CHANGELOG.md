@@ -6,12 +6,12 @@
 - **Visual LoRA Loader 选择器支持按修改时间倒序排序**：工具栏新增「排序: 字母序 / 最新优先」切换按钮（选择持久化到 localStorage），时间模式最新 LoRA 排最前，便于快速添加最新 LoRA；后端新增 `/naiba/lora/mtimes` 路由（10 秒 TTL 缓存）
 - **Visual LoRA Loader 已选列表行内移除按钮**：节点显示区每行开关右侧新增 ✕ 按钮，点击直接从已选列表删除该 LoRA 并写回 `lora_data`，无需打开选择器
 - **NAIBA LoRA 浏览器同等排序能力**：Lora Data Preview 弹窗工具栏新增「排序: 字母序 / 最新优先」切换按钮，行为与可视化选择器一致
-- **NAIBA LoRA 浏览器新增「缺SHA256」标签页**：带缺失计数，单独列出缺少 sha256 缓存的 LoRA 便于逐个同步；SHA256 徽章可点击直达该页
-- **sha256 缓存统计支持永久排除名单**：云端没有数据的 LoRA 可在「缺SHA256」页一键排除（可恢复），不再计入缺失统计、批量同步自动跳过；后端新增 `POST /naiba/lora/sha256-cache/exclude`，排除名单持久化在 `naiba_sha256_cache.json` 顶层 `excluded` 字段
+- **NAIBA LoRA 浏览器新增「未同步」标签页**：带计数，单独列出尚未从 Civitai 同步的 LoRA（与批量同步"同步未同步的"模式同口径），便于逐个同步
+- **同步排除名单**：云端没有数据的 LoRA 可在「未同步」页一键永久排除（可恢复），批量同步两种模式（含"同步全部"）都跳过，不再反复重试注定失败的条目；后端新增 `GET /naiba/lora/unsynced` 与 `POST /naiba/lora/sync-excluded`，名单持久化在 `naiba_sync_excluded.json`
 
 ### 优化改进
 - **NAIBA LoRA 浏览器封面改为最长边适应不裁切**：网格卡片封面 `object-fit: cover → contain`，与可视化 LoRA 选择器显示行为一致
-- **单个 Civitai 同步也回填全局 sha256 缓存**：与批量同步一致，保证「缺SHA256」页单个同步成功后条目即时消失
+- **单个 Civitai 同步也回填全局 sha256 缓存**：与批量同步一致，同步成功后相关统计即时更新
 
 ### 优化改进
 - **保存预设覆盖时展示并保留原封面**：保存对话框名称命中已有预设时直接显示其当前封面并提示「覆盖后将保留原封面」，消除「覆盖必须重设封面」的误解（后端保存本就保留封面文件）
