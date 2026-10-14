@@ -1216,9 +1216,11 @@ async def batch_sync_handler(request):
                         rel_path = os.path.relpath(file_path, lora_dir)
                         all_lora_paths.append((rel_path, file_path))
         
-        # 被用户排除的 LoRA（云端无数据）不参与同步，避免反复失败提示
+        # 被用户排除的 LoRA（云端无数据、永远无法同步）不参与同步，
+        # 两种模式（同步未同步的 / 同步全部）都跳过，避免每次全量重试浪费时间
+        from . import naiba_sync_exclude
         excluded_keys = {
-            str(n).replace("\\", "/").casefold() for n in sha256_cache.get_excluded()
+            str(n).replace("\\", "/").casefold() for n in naiba_sync_exclude.get_excluded()
         }
 
         # 根据模式过滤需要同步的LoRA
@@ -1418,10 +1420,9 @@ async def sha256_cache_status_handler(request):
     返回全局 sha256 缓存状态：
         cached_count : 已缓存 sha256 的条目数
         total_loras  : 本地 LoRA 总数
-        missing_count: 尚未缓存的本地 LoRA 数（不含已排除项）
-        all_cached   : 是否所有未排除的本地 LoRA 都已缓存
-        excluded_count : 排除名单中的 LoRA 总数
-    可选 query: include_map=1 时附带完整 cache 映射与 missing/excluded_missing 列表。
+        missing_count: 尚未缓存的本地 LoRA 数
+        all_cached   : 是否所有本地 LoRA 都已缓存
+    可选 query: include_map=1 时附带完整 cache 映射与 missing 列表（前 200 条）。
     """
     try:
         from . import sha256_cache
@@ -1430,15 +1431,13 @@ async def sha256_cache_status_handler(request):
         status = _get_sha256_cache_status(sha256_cache)
         resp = {"success": True, **{
             key: value for key, value in status.items()
-            if key not in ("missing", "stale", "orphaned", "excluded_missing")
+            if key not in ("missing", "stale", "orphaned")
         }}
         if include_map:
             resp["cache"] = sha256_cache.get_all()
-            # missing 前端用于"缺SHA256"标签页展示，上限放宽到 2000（其余靠徽章计数感知）
-            resp["missing"] = status["missing"][:2000]
+            resp["missing"] = status["missing"][:200]
             resp["stale"] = status["stale"][:200]
             resp["orphaned"] = status["orphaned"][:200]
-            resp["excluded_missing"] = status.get("excluded_missing", [])[:2000]
         return web.json_response(resp)
     except Exception as e:
         print(f"[Naiba] sha256-cache status error: {e}")
@@ -1446,19 +1445,71 @@ async def sha256_cache_status_handler(request):
 
 
 # ============================================================
-# API 路由：sha256 缓存统计排除名单（云端无数据的 LoRA 永久排除，避免反复提示）
+# API 路由：未同步 LoRA 列表（与批量同步 sync_unsynced 模式同口径，
+# 扣除用户排除名单，供前端「未同步」标签页展示）
 # ============================================================
-@PromptServer.instance.routes.post('/naiba/lora/sha256-cache/exclude')
-async def sha256_cache_exclude_handler(request):
+def _get_unsynced_loras():
+    """遍历本地 LoRA，返回 (未同步列表, 排除名单)。
+
+    未同步判定与 batch-sync 的 sync_unsynced 过滤完全一致：
+    无 .civitai.info.json 或元数据缺少 Civitai model/version 匹配即视为未同步。
     """
-    把 LoRA 加入/移出 sha256 缓存统计排除名单。
+    from .civitai_utils import get_metadata_path, load_cached_metadata, has_synced_metadata
+    from . import naiba_sync_exclude
+
+    excluded = naiba_sync_exclude.get_excluded()
+    excluded_keys = {str(n).replace("\\", "/").casefold() for n in excluded}
+
+    unsynced = []
+    for raw_name in folder_paths.get_filename_list("loras"):
+        name = str(raw_name).replace("\\", "/")
+        if name.casefold() in excluded_keys:
+            continue
+        try:
+            lora_path = folder_paths.get_full_path("loras", name)
+        except Exception:
+            lora_path = None
+        if not lora_path or not os.path.exists(lora_path):
+            continue
+        metadata = load_cached_metadata(get_metadata_path(lora_path))
+        if not has_synced_metadata(metadata):
+            unsynced.append(name)
+    return unsynced, excluded
+
+
+@PromptServer.instance.routes.get('/naiba/lora/unsynced')
+async def unsynced_loras_handler(request):
+    """返回未同步的 LoRA 列表（已扣除排除名单）与排除名单本身。"""
+    try:
+        unsynced, excluded = _get_unsynced_loras()
+        return web.json_response({
+            "success": True,
+            "unsynced": unsynced,
+            "count": len(unsynced),
+            "excluded": excluded,
+            "excluded_count": len(excluded),
+        })
+    except Exception as e:
+        print(f"[Naiba] unsynced list error: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+# ============================================================
+# API 路由：同步排除名单（云端无数据的 LoRA 永久跳过批量同步，避免反复重试）
+# ============================================================
+@PromptServer.instance.routes.post('/naiba/lora/sync-excluded')
+async def sync_excluded_handler(request):
+    """
+    把 LoRA 加入/移出同步排除名单。
 
     body: {"names": ["a.safetensors", ...], "action": "add"|"remove"}（action 默认 add）
-    被排除的 LoRA 不再计入缺失统计，批量同步（两种模式）都会跳过；
-    离线 sha256 计算仍包含它们（供预设按哈希本地匹配）。
+    被排除的 LoRA：
+    - 不计入「未同步」统计（前端未同步列表/徽章）
+    - 批量同步的两种模式（同步未同步的 / 同步全部）都跳过
+    - 单个 LoRA 手动同步不受限制
     """
     try:
-        from . import sha256_cache
+        from . import naiba_sync_exclude
 
         body = await request.json()
         names = body.get('names', [])
@@ -1472,9 +1523,9 @@ async def sha256_cache_exclude_handler(request):
             return web.json_response({"success": False, "error": "names 不能为空"}, status=400)
 
         if action == 'remove':
-            excluded = sha256_cache.remove_excluded(clean)
+            excluded = naiba_sync_exclude.remove_excluded(clean)
         else:
-            excluded = sha256_cache.add_excluded(clean)
+            excluded = naiba_sync_exclude.add_excluded(clean)
         return web.json_response({
             "success": True,
             "action": action,
@@ -1482,7 +1533,7 @@ async def sha256_cache_exclude_handler(request):
             "excluded_count": len(excluded),
         })
     except Exception as e:
-        print(f"[Naiba] sha256-cache exclude error: {e}")
+        print(f"[Naiba] sync-excluded error: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
