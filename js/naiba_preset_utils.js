@@ -290,7 +290,7 @@ export async function openSavePresetDialog(node, { defaultName = "", existingNam
     const coverPicker = document.createElement("div");
     coverPicker.tabIndex = 0;
     coverPicker.style.cssText = `
-        width:132px;aspect-ratio:1/1;margin-top:10px;padding:8px;box-sizing:border-box;
+        width:132px;aspect-ratio:1/1;margin:10px auto 0;padding:8px;box-sizing:border-box;
         display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
         border:1px dashed ${COLORS.border};border-radius:4px;background:${COLORS.inputBg};
         color:${COLORS.textDim};font-size:12px;cursor:pointer;transition:all 0.15s;
