@@ -17,7 +17,6 @@ const COLORS = {
     danger: "#ff6b6b",
     dangerHover: "#ff8b8b",
     success: "#2ed573",
-    successHover: "#48e589",
     favorite: "#ff9f43",      // 收藏按钮颜色（橙色）
     favoriteActive: "#ff6b6b", // 已收藏颜色（红色）
     text: "#e0e0e0",
@@ -1550,21 +1549,27 @@ app.registerExtension({
             const buttonRow = document.createElement("div");
             buttonRow.style.cssText = "display:flex;gap:8px;width:100%;min-width:0;flex:0 0 auto;";
 
+            // 按钮行统一低饱和深色调（明度对齐右侧「全部开启/清除」，高饱和亮色长时间观看易视觉疲劳）
+            const ROW_PURPLE_BG = "#5544a6";
+            const ROW_PURPLE_BG_HOVER = "#6352b8";
+            const ROW_BLUE_BG = "#3a5f8f";
+            const ROW_BLUE_BG_HOVER = "#446c9e";
+
             // 创建打开弹窗的按钮
             const openBtn = document.createElement("button");
             openBtn.textContent = "打开 LoRA 选择器";
             openBtn.style.cssText = `
                 flex:1;padding:10px;margin:8px 0;
-                background:${COLORS.accent};color:white;
+                background:${ROW_PURPLE_BG};color:white;
                 border:none;border-radius:6px;cursor:pointer;
                 font-size:13px;font-weight:500;
                 transition:background 0.2s;
             `;
             openBtn.addEventListener("mouseenter", () => {
-                openBtn.style.background = COLORS.accentHover;
+                openBtn.style.background = ROW_PURPLE_BG_HOVER;
             });
             openBtn.addEventListener("mouseleave", () => {
-                openBtn.style.background = COLORS.accent;
+                openBtn.style.background = ROW_PURPLE_BG;
             });
             openBtn.addEventListener("click", () => {
                 createVisualLoraModal(node, loraList);
@@ -1649,16 +1654,16 @@ app.registerExtension({
             presetBtn.title = "调取预设";
             presetBtn.style.cssText = `
                 padding:10px 16px;margin:8px 0;
-                background:${COLORS.accent};color:white;
+                background:${ROW_PURPLE_BG};color:white;
                 border:none;border-radius:6px;cursor:pointer;
                 font-size:13px;font-weight:500;
                 transition:background 0.2s;
             `;
             presetBtn.addEventListener("mouseenter", () => {
-                presetBtn.style.background = COLORS.accentHover;
+                presetBtn.style.background = ROW_PURPLE_BG_HOVER;
             });
             presetBtn.addEventListener("mouseleave", () => {
-                presetBtn.style.background = COLORS.accent;
+                presetBtn.style.background = ROW_PURPLE_BG;
             });
             presetBtn.addEventListener("click", () => {
                 createPresetsModal(node);
@@ -1668,20 +1673,20 @@ app.registerExtension({
 
             // 保存预设按钮（预填最近导入的预设名与封面，方便覆盖迭代）
             const savePresetBtn = document.createElement("button");
-            savePresetBtn.textContent = "保存";
+            savePresetBtn.textContent = "保存预设";
             savePresetBtn.title = "保存当前选择为预设";
             savePresetBtn.style.cssText = `
                 padding:10px 16px;margin:8px 0;
-                background:${COLORS.success};color:white;
+                background:${ROW_BLUE_BG};color:white;
                 border:none;border-radius:6px;cursor:pointer;
                 font-size:13px;font-weight:500;
                 transition:background 0.2s;
             `;
             savePresetBtn.addEventListener("mouseenter", () => {
-                savePresetBtn.style.background = COLORS.successHover;
+                savePresetBtn.style.background = ROW_BLUE_BG_HOVER;
             });
             savePresetBtn.addEventListener("mouseleave", () => {
-                savePresetBtn.style.background = COLORS.success;
+                savePresetBtn.style.background = ROW_BLUE_BG;
             });
             savePresetBtn.addEventListener("click", () => {
                 openSavePresetDialog(node, { defaultName: getLoadedPresetName(node) });
