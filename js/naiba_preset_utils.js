@@ -247,7 +247,7 @@ export async function openSavePresetDialog(node, { defaultName = "", existingNam
     const box = document.createElement("div");
     box.style.cssText = `
         background:${COLORS.modalBg};border:1px solid ${COLORS.border};border-radius:6px;
-        padding:16px;width:min(360px,calc(100vw - 48px));box-shadow:0 4px 20px rgba(0,0,0,0.4);
+        padding:16px;width:min(480px,calc(100vw - 48px));box-shadow:0 4px 20px rgba(0,0,0,0.4);
     `;
 
     const title = document.createElement("div");
@@ -268,9 +268,9 @@ export async function openSavePresetDialog(node, { defaultName = "", existingNam
     // 覆盖已有预设时展示与当前内容的 git 风格差异（+新增 −移除 ~强度修改）
     const diffBox = document.createElement("div");
     diffBox.style.cssText = `
-        display:none;margin-top:8px;padding:6px 8px;box-sizing:border-box;
+        display:none;margin-top:8px;padding:8px 10px;box-sizing:border-box;
         background:${COLORS.inputBg};border:1px solid ${COLORS.border};border-radius:3px;
-        font-size:11px;line-height:1.7;max-height:150px;overflow-y:auto;
+        font-size:12px;line-height:1.8;max-height:280px;overflow-y:auto;
         font-family:Consolas,monospace;
     `;
 
@@ -290,19 +290,19 @@ export async function openSavePresetDialog(node, { defaultName = "", existingNam
     const coverPicker = document.createElement("div");
     coverPicker.tabIndex = 0;
     coverPicker.style.cssText = `
-        min-height:72px;margin-top:10px;padding:8px;box-sizing:border-box;
-        display:flex;align-items:center;justify-content:center;gap:10px;
+        width:132px;aspect-ratio:1/1;margin-top:10px;padding:8px;box-sizing:border-box;
+        display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
         border:1px dashed ${COLORS.border};border-radius:4px;background:${COLORS.inputBg};
         color:${COLORS.textDim};font-size:12px;cursor:pointer;transition:all 0.15s;
     `;
 
     const coverPreview = document.createElement("img");
     coverPreview.style.cssText = `
-        width:56px;height:56px;object-fit:contain;display:none;flex-shrink:0;border-radius:3px;
+        flex:1;min-height:0;max-width:100%;object-fit:contain;display:none;border-radius:3px;
     `;
     const coverPickerText = document.createElement("span");
     coverPickerText.textContent = "选择封面（可选）";
-    coverPickerText.style.cssText = `min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`;
+    coverPickerText.style.cssText = `width:100%;min-width:0;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`;
 
     const dialogCoverInput = document.createElement("input");
     dialogCoverInput.type = "file";
@@ -470,23 +470,23 @@ export async function openSavePresetDialog(node, { defaultName = "", existingNam
                 diffBox.appendChild(row);
             };
             for (const e of diff.added) {
-                mkRow("+", `${dispName(e)}（model ${fmtStrength(e.strength_model)}）`, COLORS.success);
+                mkRow("+", `${dispName(e)}（model强度 ${fmtStrength(e.strength_model)}）`, COLORS.success);
             }
             for (const e of diff.removed) {
-                mkRow("−", `${dispName(e)}（model ${fmtStrength(e.strength_model)}）`, COLORS.danger);
+                mkRow("−", `${dispName(e)}（model强度 ${fmtStrength(e.strength_model)}）`, COLORS.danger);
             }
             for (const c of diff.changed) {
                 const parts = [];
                 if ((c.from.strength_model ?? 1) !== (c.to.strength_model ?? 1)) {
-                    parts.push(`model ${fmtStrength(c.from.strength_model)}→${fmtStrength(c.to.strength_model)}`);
+                    parts.push(`model强度 ${fmtStrength(c.from.strength_model)}→${fmtStrength(c.to.strength_model)}`);
                 }
                 if ((c.from.strength_clip ?? 1) !== (c.to.strength_clip ?? 1)) {
-                    parts.push(`clip ${fmtStrength(c.from.strength_clip)}→${fmtStrength(c.to.strength_clip)}`);
+                    parts.push(`clip强度 ${fmtStrength(c.from.strength_clip)}→${fmtStrength(c.to.strength_clip)}`);
                 }
                 if ((c.from.enabled !== false) !== (c.to.enabled !== false)) {
-                    parts.push(`启用 ${(c.from.enabled !== false) ? "开" : "关"}→${(c.to.enabled !== false) ? "开" : "关"}`);
+                    parts.push(`启用状态 ${(c.from.enabled !== false) ? "开" : "关"}→${(c.to.enabled !== false) ? "开" : "关"}`);
                 }
-                mkRow("~", `${dispName(c.to)}: ${parts.join(", ")}`, COLORS.warn);
+                mkRow("~", `${dispName(c.to)}: ${parts.join("，")}`, COLORS.warn);
             }
         }
         diffBox.style.display = "block";
