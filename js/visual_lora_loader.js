@@ -1520,21 +1520,23 @@ app.registerExtension({
                 createVisualLoraModal(node, loraList);
             });
 
-            // 创建一键清除按钮
+            // 创建一键清除按钮（低饱和暗红：高饱和亮红长时间观看易视觉疲劳）
+            const CLEAR_BTN_BG = "#b0524d";
+            const CLEAR_BTN_BG_HOVER = "#c26863";
             const clearBtn = document.createElement("button");
             clearBtn.textContent = "清除";
             clearBtn.style.cssText = `
                 padding:10px 16px;margin:8px 0;
-                background:${COLORS.danger};color:white;
+                background:${CLEAR_BTN_BG};color:white;
                 border:none;border-radius:6px;cursor:pointer;
                 font-size:13px;font-weight:500;
                 transition:background 0.2s;
             `;
             clearBtn.addEventListener("mouseenter", () => {
-                clearBtn.style.background = COLORS.dangerHover;
+                clearBtn.style.background = CLEAR_BTN_BG_HOVER;
             });
             clearBtn.addEventListener("mouseleave", () => {
-                clearBtn.style.background = COLORS.danger;
+                clearBtn.style.background = CLEAR_BTN_BG;
             });
             clearBtn.addEventListener("click", () => {
                 // 清除所有选择
@@ -2090,20 +2092,34 @@ app.registerExtension({
             }, { passive: false });
 
             // 全开/关切换：一键翻转所有已选 LoRA 的启用开关（位于清除按钮左侧）
+            // 配色用低饱和深色调（暗绿/暗琥珀）：与旁边的清除按钮同为高饱和亮色时容易视觉疲劳
+            const TOGGLE_ALL_IDLE_BG = "#2d6a4f";
+            const TOGGLE_ALL_IDLE_HOVER = "#388061";
+            const TOGGLE_ALL_ON_BG = "#a06a28";
+            const TOGGLE_ALL_ON_HOVER = "#b57c35";
+            const toggleAllState = () => loraData.length > 0 && loraData.every((lora) => lora?.enabled !== false);
+            const toggleAllBg = (allOn) => (allOn ? TOGGLE_ALL_ON_BG : TOGGLE_ALL_IDLE_BG);
+            const toggleAllHoverBg = (allOn) => (allOn ? TOGGLE_ALL_ON_HOVER : TOGGLE_ALL_IDLE_HOVER);
             const toggleAllBtn = document.createElement("button");
             toggleAllBtn.style.cssText = `
                 padding:10px 16px;margin:8px 0;
-                background:${COLORS.success};color:white;
+                background:${TOGGLE_ALL_IDLE_BG};color:white;
                 border:none;border-radius:6px;cursor:pointer;
                 font-size:13px;font-weight:500;flex:0 0 auto;
                 transition:background 0.2s;
             `;
             const refreshToggleAllLabel = () => {
-                const allOn = loraData.length > 0 && loraData.every((lora) => lora?.enabled !== false);
+                const allOn = toggleAllState();
                 toggleAllBtn.textContent = allOn ? "全部关闭" : "全部开启";
                 toggleAllBtn.title = allOn ? "一键关闭所有已选 LoRA" : "一键开启所有已选 LoRA";
-                toggleAllBtn.style.background = allOn ? COLORS.favorite : COLORS.success;
+                toggleAllBtn.style.background = toggleAllBg(allOn);
             };
+            toggleAllBtn.addEventListener("mouseenter", () => {
+                toggleAllBtn.style.background = toggleAllHoverBg(toggleAllState());
+            });
+            toggleAllBtn.addEventListener("mouseleave", () => {
+                toggleAllBtn.style.background = toggleAllBg(toggleAllState());
+            });
             toggleAllBtn.addEventListener("click", () => {
                 if (loraData.length === 0) return;
                 const allOn = loraData.every((lora) => lora?.enabled !== false);
