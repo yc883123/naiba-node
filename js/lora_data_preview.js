@@ -1002,6 +1002,8 @@ function createLoraDataPreviewModal(node, loraList) {
 
     // ========== 构建文件夹结构 ==========
     function buildFolderStructure(loraList) {
+        // 每次全量重建：复用旧对象会残留已删除文件的目录条目与父目录引用
+        // （删除后子目录里出现幽灵条目）。从零构建保证与 loraList 严格一致。
         const structure = { "/": [] };
         loraList.forEach(lora => {
             const parts = lora.split(/[\\/]/);
@@ -3194,14 +3196,29 @@ function createLoraDataPreviewModal(node, loraList) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: loraName, confirm: true }),
             });
-            const result = await resp.json();
+            // 非 JSON 响应（典型：后端未重启，路由不存在返回 "405: Method Not Allowed" 纯文本）
+            const rawText = await resp.text();
+            let result;
+            try {
+                result = JSON.parse(rawText);
+            } catch (parseError) {
+                console.error("[LoraDataPreview] 删除接口返回非 JSON:", resp.status, rawText);
+                throw new Error(
+                    resp.status === 405 || resp.status === 404
+                        ? "删除接口不存在：请重启 ComfyUI 后端后再试（本次未删除任何文件）"
+                        : `服务返回异常响应 (HTTP ${resp.status})：${rawText.slice(0, 120)}`
+                );
+            }
             if (!result.success) {
                 const failDetail = (result.failed || []).map((f) => `${f.file}: ${f.error}`).join("\n");
                 throw new Error(failDetail || result.error || "未知错误");
             }
-            // 从内存列表与状态集中移除，避免幽灵条目
-            const idx = loraList.indexOf(loraName);
-            if (idx >= 0) loraList.splice(idx, 1);
+            // 从内存列表与状态集中移除，避免幽灵条目。
+            // 卡片名是目录树拼接形态（/test/a），loraList 存 object_info 原始名（test\a），
+            // 直接 indexOf 会静默失配（返回 -1 不报错），必须归一化后定位
+            const delIdx = loraList.findIndex((l) => normLoraPath(l) === normLoraPath(loraName));
+            if (delIdx >= 0) loraList.splice(delIdx, 1);
+            else console.warn("[LoraDataPreview] 删除目标未在内存列表中命中（可能已过期）:", loraName);
             selDelete(loraName);
             favoriteLoras.delete(loraName);
             folderStructure = buildFolderStructure(loraList);

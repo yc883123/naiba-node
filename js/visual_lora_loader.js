@@ -591,8 +591,9 @@ function createVisualLoraModal(node, loraList) {
 
     // ========== 构建文件夹结构 ==========
     function buildFolderStructure(loraList) {
+        // 每次全量重建：复用旧对象会残留已删除文件的目录条目与父目录引用
         const structure = { "/": [] };
-        
+
         loraList.forEach(lora => {
             const parts = lora.split(/[\\/]/);
             if (parts.length === 1) {
