@@ -2371,6 +2371,178 @@ async def delete_metadata_preview_handler(request):
 
 
 # ============================================================
+# API 路由：把 LoRA 及其全部关联文件移入系统回收站（安全删除）
+# ============================================================
+
+# 直接同名图片扩展名（lora.png 这类按命名约定即该 LoRA 的封面）
+_LORA_IMAGE_EXTS = tuple(_EXT_MIME_MAP.keys())
+
+
+def _win_send_to_recycle_bin(path: str) -> bool:
+    """Windows 零依赖回收站删除：ctypes 调用 shell32.SHFileOperationW。
+
+    FOF_ALLOWUNDO 使删除进入回收站；FOF_NOCONFIRMATION|FOF_SILENT|FOF_NOERRORUI
+    静默执行。文件被占用等失败会返回非 0，由调用方按失败处理。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [
+            ("hwnd", wintypes.HWND),
+            ("wFunc", ctypes.c_uint),
+            ("pFrom", ctypes.c_wchar_p),
+            ("pTo", ctypes.c_wchar_p),
+            ("fFlags", ctypes.c_ushort),
+            ("fAnyOperationsAborted", wintypes.BOOL),
+            ("hNameMappings", ctypes.c_void_p),
+            ("lpszProgressTitle", ctypes.c_wchar_p),
+        ]
+
+    FO_DELETE = 3
+    FOF_ALLOWUNDO = 0x40
+    FOF_NOCONFIRMATION = 0x10
+    FOF_SILENT = 0x4
+    FOF_NOERRORUI = 0x400
+
+    op = SHFILEOPSTRUCTW()
+    op.hwnd = None
+    op.wFunc = FO_DELETE
+    # pFrom 需要双 NUL 结尾：c_wchar_p 自带一个终止 NUL，字符串内再补一个
+    op.pFrom = path + "\0"
+    op.pTo = "\0"
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI
+    result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+    return result == 0 and not op.fAnyOperationsAborted
+
+
+def _send_to_recycle_bin(path: str) -> bool:
+    """把单个文件移入系统回收站。
+
+    优先使用 send2trash（若已安装）；否则 Windows 上用系统 shell API 兜底。
+    两者都不可用时抛错——绝不退化成永久删除。
+    """
+    abs_path = os.path.abspath(path)
+    if not os.path.isfile(abs_path):
+        return False
+    try:
+        from send2trash import send2trash  # type: ignore
+        send2trash(abs_path)
+        return True
+    except ImportError:
+        pass
+    if os.name == "nt":
+        return _win_send_to_recycle_bin(abs_path)
+    raise RuntimeError("回收站删除需要安装 send2trash（pip install send2trash），或使用 Windows 系统")
+
+
+def collect_lora_related_files(lora_path: str) -> list:
+    """收集 LoRA 本体与全部关联文件路径（元数据/自定义数据/封面）。
+
+    关联范围（与 /naiba/lora/preview 的搜索约定一致）：
+    - 本体: {base}.safetensors 等
+    - 元数据: {base}.civitai.info.json
+    - 自定义数据: {base}.custom.info.json
+    - Civitai 封面: {base}.preview.*（含视频/GIF 残留与抽帧 png）
+    - 自定义封面: {base}.custom.preview.*
+    - 直接同名图片: {base}.png/.jpg/...（命名约定即封面）
+    """
+    lora_dir = os.path.dirname(lora_path)
+    base_name = os.path.splitext(os.path.basename(lora_path))[0]
+    base_no_ext = os.path.splitext(lora_path)[0]
+
+    related = [lora_path]
+    for suffix in (".civitai.info.json", ".custom.info.json", ".naiba.preview.png"):
+        candidate = base_no_ext + suffix
+        if os.path.isfile(candidate):
+            related.append(candidate)
+
+    try:
+        for f in os.listdir(lora_dir):
+            if f.startswith(base_name + ".preview.") or f.startswith(base_name + ".custom.preview."):
+                candidate = os.path.join(lora_dir, f)
+                if os.path.isfile(candidate):
+                    related.append(candidate)
+                continue
+            stem, ext = os.path.splitext(f)
+            if stem == base_name and ext.lower() in _LORA_IMAGE_EXTS:
+                candidate = os.path.join(lora_dir, f)
+                if os.path.isfile(candidate):
+                    related.append(candidate)
+    except OSError as e:
+        print(f"[Naiba] 收集关联文件失败 {lora_dir}: {e}")
+    return related
+
+
+@PromptServer.instance.routes.post('/naiba/lora/delete')
+async def delete_lora_to_recycle_bin_handler(request):
+    """
+    把 LoRA 及其全部关联文件移入系统回收站（可从回收站还原）。
+
+    请求体: {"name": "子目录/文件.safetensors", "confirm": true}
+    - name 必须命中本地 LoRA（复用 validate_lora_name，防路径穿越）
+    - confirm 必须显式为 true，作为前端确认弹窗之外的第二道闸
+    关联文件：本体、.civitai.info.json、.custom.info.json、全部封面图
+    副作用：清理 sha256 缓存条目、图片缓存与收藏记录
+    """
+    try:
+        body = await request.json()
+        lora_name = str(body.get('name', '')).strip()
+        if not body.get('confirm'):
+            return web.json_response({"success": False, "error": "缺少 confirm 确认标志"}, status=400)
+        if not lora_name:
+            return web.json_response({"success": False, "error": "Missing lora name"}, status=400)
+
+        is_valid, error_msg, lora_path = validate_lora_name(lora_name)
+        if not is_valid:
+            status = 400 if "Missing" in error_msg else 404 if "not found" in error_msg else 403
+            return web.json_response({"success": False, "error": error_msg}, status=status)
+        if not os.path.isfile(lora_path):
+            return web.json_response({"success": False, "error": "LoRA 文件不存在"}, status=404)
+
+        related = collect_lora_related_files(lora_path)
+        trashed = []
+        failed = []
+        for path in related:
+            try:
+                if _send_to_recycle_bin(path):
+                    trashed.append(os.path.basename(path))
+                else:
+                    failed.append({"file": os.path.basename(path), "error": "系统拒绝（文件可能正被占用）"})
+            except Exception as e:
+                failed.append({"file": os.path.basename(path), "error": str(e)})
+
+        if not os.path.exists(lora_path):
+            # 本体已移除：清理缓存与收藏，避免幽灵条目
+            try:
+                from . import sha256_cache
+                sha256_cache.remove_entry(lora_name)
+            except Exception as e:
+                print(f"[Naiba] 清理 sha256 缓存失败 {lora_name}: {e}")
+            image_cache.delete(f"lora_preview:{lora_name}")
+            try:
+                favorites = load_favorites_data()
+                if lora_name in favorites:
+                    del favorites[lora_name]
+                    save_favorites_data(favorites)
+            except Exception as e:
+                print(f"[Naiba] 清理收藏记录失败 {lora_name}: {e}")
+
+        success = not failed
+        print(f"[Naiba] 回收站删除 {lora_name}: {len(trashed)} 个文件移入回收站, {len(failed)} 个失败")
+        return web.json_response({
+            "success": success,
+            "trashed": trashed,
+            "failed": failed,
+        }, status=200 if success else 207)
+    except web.HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting lora: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+# ============================================================
 # API 路由：列出所有本地LoRA文件（调试用）
 # ============================================================
 @PromptServer.instance.routes.get('/naiba/lora/list-all')

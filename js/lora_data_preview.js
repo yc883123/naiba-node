@@ -1508,10 +1508,10 @@ function createLoraDataPreviewModal(node, loraList) {
                 position:relative;
             `;
 
-            // 收藏按钮（右上角）
+            // 收藏按钮（右下角，与 Visual LoRA Loader 统一）
             const favBtn = document.createElement("div");
             favBtn.style.cssText = `
-                position:absolute;top:8px;right:8px;z-index:10;
+                position:absolute;bottom:8px;right:8px;z-index:10;
                 width:28px;height:28px;border-radius:50%;
                 display:flex;align-items:center;justify-content:center;
                 cursor:pointer;font-size:16px;
@@ -1532,6 +1532,32 @@ function createLoraDataPreviewModal(node, loraList) {
                 favBtn.style.transform = "scale(1)";
             });
             preview.appendChild(favBtn);
+
+            // 删除按钮（右上角，红色 X，移入系统回收站）
+            const deleteBtn = document.createElement("div");
+            deleteBtn.style.cssText = `
+                position:absolute;top:8px;right:8px;z-index:10;
+                width:28px;height:28px;border-radius:50%;
+                display:flex;align-items:center;justify-content:center;
+                cursor:pointer;font-size:14px;line-height:1;
+                background:rgba(0,0,0,0.5);backdrop-filter:blur(4px);
+                transition:all 0.2s;color:${COLORS.textDim};
+            `;
+            deleteBtn.textContent = "✕";
+            deleteBtn.title = "删除此 LoRA（移入系统回收站，可在回收站还原）";
+            deleteBtn.addEventListener("mouseenter", () => {
+                deleteBtn.style.background = COLORS.danger;
+                deleteBtn.style.color = "white";
+            });
+            deleteBtn.addEventListener("mouseleave", () => {
+                deleteBtn.style.background = "rgba(0,0,0,0.5)";
+                deleteBtn.style.color = COLORS.textDim;
+            });
+            deleteBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                deleteLoraToRecycleBin(lora, deleteBtn);
+            });
+            preview.appendChild(deleteBtn);
 
             // 预览图（object-fit:contain，最长边自动缩放适应容器，不裁切——与可视化 LoRA 选择器一致）
             // 用 visibility:hidden 而非 display:none：懒加载观察器对 display:none 的元素
@@ -3147,6 +3173,52 @@ function createLoraDataPreviewModal(node, loraList) {
         box.appendChild(btnRow);
         mgOverlay.appendChild(box);
         document.body.appendChild(mgOverlay);
+    }
+
+    // 把 LoRA 及关联文件移入系统回收站（后端逐文件回收，绝不永久删除）
+    async function deleteLoraToRecycleBin(loraName, button) {
+        const baseName = loraName.split('/').pop().split('\\').pop();
+        const confirmed = confirm(
+            `确定删除「${baseName}」吗？\n\n` +
+            `以下文件将移入系统回收站（可在回收站还原）：\n` +
+            `· LoRA 文件本体\n` +
+            `· .civitai.info.json / .custom.info.json\n` +
+            `· 全部封面图\n\n` +
+            `sha256 缓存与收藏记录会一并清理。`
+        );
+        if (!confirmed) return;
+        if (button) { button.style.pointerEvents = "none"; button.style.opacity = "0.5"; }
+        try {
+            const resp = await api.fetchApi('/naiba/lora/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: loraName, confirm: true }),
+            });
+            const result = await resp.json();
+            if (!result.success) {
+                const failDetail = (result.failed || []).map((f) => `${f.file}: ${f.error}`).join("\n");
+                throw new Error(failDetail || result.error || "未知错误");
+            }
+            // 从内存列表与状态集中移除，避免幽灵条目
+            const idx = loraList.indexOf(loraName);
+            if (idx >= 0) loraList.splice(idx, 1);
+            selDelete(loraName);
+            favoriteLoras.delete(loraName);
+            folderStructure = buildFolderStructure(loraList);
+            syncStatus.textContent = `已移入回收站: ${baseName}（${(result.trashed || []).length} 个文件）`;
+            syncStatus.style.color = COLORS.success;
+            // 文件列表与未同步统计都可能变化：失效修改时间缓存并刷新
+            ensureLoraMtimes(true).catch(() => {});
+            await Promise.all([refreshSha256CacheHint(), loadUnsyncedStatus()]);
+            renderLoraList();
+        } catch (error) {
+            console.error("[LoraDataPreview] 删除失败:", error);
+            syncStatus.textContent = `删除失败: ${error.message}`;
+            syncStatus.style.color = COLORS.danger;
+            alert(`删除失败: ${error.message}`);
+        } finally {
+            if (button) { button.style.pointerEvents = ""; button.style.opacity = ""; }
+        }
     }
 
     async function syncSingleLora(loraName, button) {
