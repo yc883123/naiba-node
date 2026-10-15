@@ -81,6 +81,350 @@ function hideShaProgress() {
     }
 }
 
+// ========== 上传预设封面 ==========
+async function uploadCover(name, file) {
+    const fd = new FormData();
+    fd.append("name", name);
+    fd.append("file", file);
+    const resp = await api.fetchApi("/naiba/presets/upload-image", { method: "POST", body: fd });
+    return resp.json();
+}
+
+const SUPPORTED_COVER_EXTENSIONS = /\.(png|jpe?g|webp|gif)$/i;
+
+function isSupportedCoverFile(file) {
+    if (!file) return false;
+    return ["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)
+        || SUPPORTED_COVER_EXTENSIONS.test(file.name || "");
+}
+
+// ========== 获取当前节点数据 ==========
+function getCurrentData(node) {
+    const loraDataWidget = node.widgets?.find((w) => w.name === "lora_data");
+    if (!loraDataWidget) return [];
+    try {
+        return JSON.parse(loraDataWidget.value || "[]");
+    } catch {
+        return [];
+    }
+}
+
+async function fetchPresetNames() {
+    try {
+        const resp = await api.fetchApi("/naiba/presets/list");
+        const result = await resp.json();
+        if (result.error || !Array.isArray(result.presets)) return [];
+        return result.presets;
+    } catch (e) {
+        console.error("[Presets] Failed to fetch preset names:", e);
+        return [];
+    }
+}
+
+// 保存预设数据，返回 { ok, error?, coverError? }；错误由调用方决定如何展示
+async function savePresetData(node, trimmedName, coverFile = null) {
+    const data = getCurrentData(node);
+    if (data.length === 0) {
+        return { ok: false, error: "当前没有 LoRA 配置可保存" };
+    }
+
+    try {
+        showShaProgress();
+        try {
+            const resp = await api.fetchApi("/naiba/presets/save", {
+                method: "POST",
+                body: JSON.stringify({ name: trimmedName, data }),
+            });
+            const result = await resp.json();
+
+            if (result.error) {
+                return { ok: false, error: result.error };
+            }
+
+            let coverError = "";
+            if (coverFile) {
+                try {
+                    const uploadResult = await uploadCover(trimmedName, coverFile);
+                    if (!uploadResult.success) {
+                        coverError = uploadResult.error || "未知错误";
+                    }
+                } catch (error) {
+                    coverError = error.message;
+                }
+            }
+            return { ok: true, coverError };
+        } finally {
+            hideShaProgress();
+        }
+    } catch (e) {
+        return { ok: false, error: e.message };
+    }
+}
+
+/**
+ * 打开保存预设对话框（可脱离预设管理模态框独立使用，如节点工具栏按钮）
+ * @param {Object} node - ComfyUI 节点实例
+ * @param {Object} [opts]
+ * @param {string} [opts.defaultName] - 预填的预设名（如最近导入的预设名，便于覆盖迭代）
+ * @param {string[]|null} [opts.existingNames] - 已有预设名列表；缺省时向后端拉取
+ * @param {Function} [opts.onSaved] - 保存成功后的回调（如刷新预设网格）
+ */
+export async function openSavePresetDialog(node, { defaultName = "", existingNames = null, onSaved = null } = {}) {
+    const existingNameList = Array.isArray(existingNames) ? existingNames.slice() : await fetchPresetNames();
+
+    const dialogOverlay = document.createElement("div");
+    dialogOverlay.style.cssText = `
+        position:fixed;left:0;top:0;width:100%;height:100%;
+        background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:10000;
+    `;
+
+    const box = document.createElement("div");
+    box.style.cssText = `
+        background:${COLORS.modalBg};border:1px solid ${COLORS.border};border-radius:6px;
+        padding:16px;width:min(360px,calc(100vw - 48px));box-shadow:0 4px 20px rgba(0,0,0,0.4);
+    `;
+
+    const title = document.createElement("div");
+    title.textContent = "保存预设";
+    title.style.cssText = `color:${COLORS.text};font-size:14px;font-weight:bold;margin-bottom:10px;`;
+
+    const input = document.createElement("input");
+    input.value = defaultName || "";
+    input.placeholder = "请输入预设名称";
+    input.style.cssText = `
+        width:100%;box-sizing:border-box;background:${COLORS.inputBg};border:1px solid ${COLORS.border};
+        color:${COLORS.text};padding:6px 8px;border-radius:3px;font-size:13px;outline:none;
+    `;
+
+    const warn = document.createElement("div");
+    warn.style.cssText = `color:${COLORS.warn};font-size:12px;margin-top:8px;display:none;`;
+
+    const dialogStatus = document.createElement("div");
+    dialogStatus.style.cssText = `color:${COLORS.danger};font-size:12px;margin-top:8px;display:none;`;
+
+    let dialogCoverFile = null;
+    let dialogCoverUrl = "";
+    let coverDragDepth = 0;
+    let saving = false;
+    // 覆盖已有预设时用于展示其当前封面（不选新封面则覆盖后原样保留）
+    let existingCoverNameShown = "";
+    let existingCoverAvailable = false;
+
+    const coverPicker = document.createElement("div");
+    coverPicker.tabIndex = 0;
+    coverPicker.style.cssText = `
+        min-height:72px;margin-top:10px;padding:8px;box-sizing:border-box;
+        display:flex;align-items:center;justify-content:center;gap:10px;
+        border:1px dashed ${COLORS.border};border-radius:4px;background:${COLORS.inputBg};
+        color:${COLORS.textDim};font-size:12px;cursor:pointer;transition:all 0.15s;
+    `;
+
+    const coverPreview = document.createElement("img");
+    coverPreview.style.cssText = `
+        width:56px;height:56px;object-fit:contain;display:none;flex-shrink:0;border-radius:3px;
+    `;
+    const coverPickerText = document.createElement("span");
+    coverPickerText.textContent = "选择封面（可选）";
+    coverPickerText.style.cssText = `min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`;
+
+    const dialogCoverInput = document.createElement("input");
+    dialogCoverInput.type = "file";
+    dialogCoverInput.accept = ".png,.jpg,.jpeg,.webp,.gif";
+    dialogCoverInput.style.display = "none";
+
+    const coverError = document.createElement("div");
+    coverError.style.cssText = `color:${COLORS.danger};font-size:11px;margin-top:6px;display:none;`;
+
+    function selectDialogCover(file) {
+        if (!isSupportedCoverFile(file)) {
+            coverError.textContent = "请选择 PNG、JPG、WEBP 或 GIF 图片";
+            coverError.style.display = "block";
+            return;
+        }
+        coverError.style.display = "none";
+        dialogCoverFile = file;
+        if (dialogCoverUrl) URL.revokeObjectURL(dialogCoverUrl);
+        dialogCoverUrl = URL.createObjectURL(file);
+        coverPreview.src = dialogCoverUrl;
+        coverPreview.style.display = "block";
+        coverPickerText.textContent = file.name;
+    }
+
+    const isExistingPresetName = (name) =>
+        !!name && existingNameList.some((n) => n.toLowerCase() === name.toLowerCase());
+
+    const coverPlaceholderText = () => {
+        if (dialogCoverFile) return dialogCoverFile.name;
+        if (isExistingPresetName(input.value.trim()) && existingCoverAvailable) return "覆盖后将保留原封面";
+        return "选择封面（可选）";
+    };
+
+    // 名称命中已有预设时，展示其当前封面，明确「不选新封面就直接复用原封面」
+    function refreshExistingCoverPreview() {
+        if (dialogCoverFile) return; // 已选择新封面，以新封面为准
+        const name = input.value.trim();
+        if (isExistingPresetName(name)) {
+            if (existingCoverNameShown === name) return;
+            existingCoverNameShown = name;
+            coverPreview.onload = () => {
+                if (dialogCoverFile) return;
+                existingCoverAvailable = true;
+                coverPreview.style.display = "block";
+                coverPickerText.textContent = coverPlaceholderText();
+            };
+            coverPreview.onerror = () => {
+                if (dialogCoverFile) return;
+                existingCoverAvailable = false;
+                existingCoverNameShown = "";
+                coverPreview.style.display = "none";
+                coverPickerText.textContent = "选择封面（可选）";
+            };
+            coverPreview.src = `/naiba/presets/image?name=${encodeURIComponent(name)}`;
+        } else {
+            existingCoverNameShown = "";
+            existingCoverAvailable = false;
+            coverPreview.onload = null;
+            coverPreview.onerror = null;
+            coverPreview.removeAttribute("src");
+            coverPreview.style.display = "none";
+            coverPickerText.textContent = coverPlaceholderText();
+        }
+    }
+
+    coverPicker.appendChild(coverPreview);
+    coverPicker.appendChild(coverPickerText);
+    coverPicker.addEventListener("click", () => dialogCoverInput.click());
+    coverPicker.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            dialogCoverInput.click();
+        }
+    });
+    dialogCoverInput.addEventListener("change", (e) => {
+        const file = e.target.files[0];
+        dialogCoverInput.value = "";
+        if (file) selectDialogCover(file);
+    });
+    coverPicker.addEventListener("dragenter", (e) => {
+        e.preventDefault();
+        coverDragDepth += 1;
+        coverPicker.style.borderColor = COLORS.accent;
+        coverPicker.style.color = COLORS.text;
+        coverPickerText.textContent = "松开选择封面";
+    });
+    coverPicker.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    });
+    coverPicker.addEventListener("dragleave", () => {
+        coverDragDepth -= 1;
+        if (coverDragDepth === 0) {
+            coverPicker.style.borderColor = COLORS.border;
+            coverPicker.style.color = COLORS.textDim;
+            coverPickerText.textContent = coverPlaceholderText();
+        }
+    });
+    coverPicker.addEventListener("drop", (e) => {
+        e.preventDefault();
+        coverDragDepth = 0;
+        coverPicker.style.borderColor = COLORS.border;
+        coverPicker.style.color = COLORS.textDim;
+        const files = Array.from(e.dataTransfer?.files || []);
+        const file = files.find(isSupportedCoverFile);
+        if (file) selectDialogCover(file);
+        else selectDialogCover(null);
+    });
+
+    const btnRow = document.createElement("div");
+    btnRow.style.cssText = `display:flex;justify-content:flex-end;gap:8px;margin-top:14px;`;
+
+    const btnStyle = (primary) =>
+        `padding:6px 14px;border-radius:3px;font-size:12px;cursor:pointer;` +
+        `border:1px solid ${primary ? COLORS.accent : COLORS.border};` +
+        `background:${primary ? COLORS.accent : "transparent"};` +
+        `color:${primary ? "#fff" : COLORS.text};`;
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.textContent = "取消";
+    cancelBtn.style.cssText = btnStyle(false);
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.style.cssText = btnStyle(true);
+
+    function updateWarn() {
+        const name = input.value.trim();
+        const dup = name && existingNameList.some((n) => n.toLowerCase() === name.toLowerCase());
+        if (dup) {
+            warn.textContent = `预设「${name}」已存在，将覆盖现有内容`;
+            warn.style.display = "block";
+            confirmBtn.textContent = "确认覆盖";
+        } else {
+            warn.style.display = "none";
+            confirmBtn.textContent = "保存";
+        }
+        dialogStatus.style.display = "none";
+        refreshExistingCoverPreview();
+    }
+
+    const close = () => {
+        if (dialogCoverUrl) URL.revokeObjectURL(dialogCoverUrl);
+        if (dialogOverlay.parentNode) dialogOverlay.parentNode.removeChild(dialogOverlay);
+    };
+
+    cancelBtn.addEventListener("click", close);
+    input.addEventListener("input", updateWarn);
+    input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") confirmBtn.click();
+        if (e.key === "Escape") close();
+    });
+    confirmBtn.addEventListener("click", async () => {
+        if (saving) return;
+        const name = input.value.trim();
+        if (!name) {
+            input.focus();
+            return;
+        }
+        saving = true;
+        confirmBtn.disabled = true;
+        const r = await savePresetData(node, name, dialogCoverFile);
+        saving = false;
+        confirmBtn.disabled = false;
+        if (!r.ok) {
+            dialogStatus.style.color = COLORS.danger;
+            dialogStatus.textContent = r.error;
+            dialogStatus.style.display = "block";
+            return;
+        }
+        if (typeof onSaved === "function") {
+            try { await onSaved(); } catch (e) { console.error("[Presets] onSaved callback failed:", e); }
+        }
+        if (r.coverError) {
+            // 数据已保存，仅封面上传失败：保留对话框便于重新选封面
+            dialogStatus.style.color = COLORS.warn;
+            dialogStatus.textContent = `预设已保存，但封面上传失败: ${r.coverError}`;
+            dialogStatus.style.display = "block";
+            return;
+        }
+        close();
+    });
+
+    box.appendChild(title);
+    box.appendChild(input);
+    box.appendChild(coverPicker);
+    box.appendChild(dialogCoverInput);
+    box.appendChild(coverError);
+    box.appendChild(warn);
+    box.appendChild(dialogStatus);
+    btnRow.appendChild(cancelBtn);
+    btnRow.appendChild(confirmBtn);
+    box.appendChild(btnRow);
+    dialogOverlay.appendChild(box);
+    document.body.appendChild(dialogOverlay);
+    input.focus();
+    input.select();
+    updateWarn();
+}
+
 /**
  * 创建预设管理模态框
  * @param {Object} node - ComfyUI 节点实例
@@ -343,23 +687,6 @@ export function createPresetsModal(node, onImport = null) {
         }
     }
 
-    // ========== 上传预设封面 ==========
-    async function uploadCover(name, file) {
-        const fd = new FormData();
-        fd.append("name", name);
-        fd.append("file", file);
-        const resp = await api.fetchApi("/naiba/presets/upload-image", { method: "POST", body: fd });
-        return resp.json();
-    }
-
-    const SUPPORTED_COVER_EXTENSIONS = /\.(png|jpe?g|webp|gif)$/i;
-
-    function isSupportedCoverFile(file) {
-        if (!file) return false;
-        return ["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)
-            || SUPPORTED_COVER_EXTENSIONS.test(file.name || "");
-    }
-
     async function applyCoverFile(name, file, item = null) {
         if (!isSupportedCoverFile(file)) {
             showStatus("请选择 PNG、JPG、WEBP 或 GIF 图片", true);
@@ -388,17 +715,6 @@ export function createPresetsModal(node, onImport = null) {
                 item._coverUploading = false;
                 item._setCoverBusy(false);
             }
-        }
-    }
-
-    // ========== 获取当前节点数据 ==========
-    function getCurrentData() {
-        const loraDataWidget = node.widgets?.find((w) => w.name === "lora_data");
-        if (!loraDataWidget) return [];
-        try {
-            return JSON.parse(loraDataWidget.value || "[]");
-        } catch {
-            return [];
         }
     }
 
@@ -793,6 +1109,8 @@ export function createPresetsModal(node, onImport = null) {
                 const resolved = await resolvePreset(result.data);
                 // 无论本地是否有所，完整套用所有条目（缺失项由选择器以 (missing) 显示）
                 setNodeData(resolved);
+                // 记录当前数据来源的预设名，供节点上的保存按钮预填（覆盖迭代）
+                node._naibaLoadedPresetName = selectedPreset;
                 showStatus(`已导入预设: ${selectedPreset}`);
                 closeModal();
                 // 调用导入回调（如果存在）
@@ -808,291 +1126,19 @@ export function createPresetsModal(node, onImport = null) {
         }
     });
 
-    // ========== 保存预设（自定义对话框：预填已选预设名 + 覆盖二次确认） ==========
-    async function doSavePreset(trimmedName, coverFile = null) {
-        const data = getCurrentData();
-        if (data.length === 0) {
-            showStatus("当前没有 LoRA 配置可保存", true);
-            return false;
-        }
-
-        try {
-            showShaProgress();
-            try {
-                const resp = await api.fetchApi("/naiba/presets/save", {
-                    method: "POST",
-                    body: JSON.stringify({ name: trimmedName, data }),
-                });
-                const result = await resp.json();
-
-                if (result.error) {
-                    showStatus(result.error, true);
-                    return false;
-                } else {
-                    let coverError = "";
-                    if (coverFile) {
-                        try {
-                            const uploadResult = await uploadCover(trimmedName, coverFile);
-                            if (!uploadResult.success) {
-                                coverError = uploadResult.error || "未知错误";
-                            }
-                        } catch (error) {
-                            coverError = error.message;
-                        }
-                    }
-                    await loadPresetList();
-                    showStatus(
-                        coverError ? `预设已保存，但封面上传失败: ${coverError}` : "预设保存成功",
-                        !!coverError,
-                    );
-                    return true;
-                }
-            } finally {
-                hideShaProgress();
-            }
-        } catch (e) {
-            showStatus("保存失败: " + e.message, true);
-            return false;
-        }
-    }
-
-    function openSavePresetDialog() {
-        // 已有预设名（大小写不敏感比较）用于判断覆盖
-        const existingNames = presetItems.map((el) => el._name);
-
-        const dialogOverlay = document.createElement("div");
-        dialogOverlay.style.cssText = `
-            position:fixed;left:0;top:0;width:100%;height:100%;
-            background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:10000;
-        `;
-
-        const box = document.createElement("div");
-        box.style.cssText = `
-            background:${COLORS.modalBg};border:1px solid ${COLORS.border};border-radius:6px;
-            padding:16px;width:min(360px,calc(100vw - 48px));box-shadow:0 4px 20px rgba(0,0,0,0.4);
-        `;
-
-        const title = document.createElement("div");
-        title.textContent = "保存预设";
-        title.style.cssText = `color:${COLORS.text};font-size:14px;font-weight:bold;margin-bottom:10px;`;
-
-        const input = document.createElement("input");
-        // 默认预填当前选中的预设名（满足「自动弹出已有的预设名」）
-        input.value = selectedPreset != null ? selectedPreset : "";
-        input.placeholder = "请输入预设名称";
-        input.style.cssText = `
-            width:100%;box-sizing:border-box;background:${COLORS.inputBg};border:1px solid ${COLORS.border};
-            color:${COLORS.text};padding:6px 8px;border-radius:3px;font-size:13px;outline:none;
-        `;
-
-        const warn = document.createElement("div");
-        warn.style.cssText = `color:${COLORS.warn};font-size:12px;margin-top:8px;display:none;`;
-
-        let dialogCoverFile = null;
-        let dialogCoverUrl = "";
-        let coverDragDepth = 0;
-        // 覆盖已有预设时用于展示其当前封面（不选新封面则覆盖后原样保留）
-        let existingCoverNameShown = "";
-        let existingCoverAvailable = false;
-
-        const coverPicker = document.createElement("div");
-        coverPicker.tabIndex = 0;
-        coverPicker.style.cssText = `
-            min-height:72px;margin-top:10px;padding:8px;box-sizing:border-box;
-            display:flex;align-items:center;justify-content:center;gap:10px;
-            border:1px dashed ${COLORS.border};border-radius:4px;background:${COLORS.inputBg};
-            color:${COLORS.textDim};font-size:12px;cursor:pointer;transition:all 0.15s;
-        `;
-
-        const coverPreview = document.createElement("img");
-        coverPreview.style.cssText = `
-            width:56px;height:56px;object-fit:contain;display:none;flex-shrink:0;border-radius:3px;
-        `;
-        const coverPickerText = document.createElement("span");
-        coverPickerText.textContent = "选择封面（可选）";
-        coverPickerText.style.cssText = `min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`;
-
-        const dialogCoverInput = document.createElement("input");
-        dialogCoverInput.type = "file";
-        dialogCoverInput.accept = ".png,.jpg,.jpeg,.webp,.gif";
-        dialogCoverInput.style.display = "none";
-
-        const coverError = document.createElement("div");
-        coverError.style.cssText = `color:${COLORS.danger};font-size:11px;margin-top:6px;display:none;`;
-
-        function selectDialogCover(file) {
-            if (!isSupportedCoverFile(file)) {
-                coverError.textContent = "请选择 PNG、JPG、WEBP 或 GIF 图片";
-                coverError.style.display = "block";
-                return;
-            }
-            coverError.style.display = "none";
-            dialogCoverFile = file;
-            if (dialogCoverUrl) URL.revokeObjectURL(dialogCoverUrl);
-            dialogCoverUrl = URL.createObjectURL(file);
-            coverPreview.src = dialogCoverUrl;
-            coverPreview.style.display = "block";
-            coverPickerText.textContent = file.name;
-        }
-
-        const isExistingPresetName = (name) =>
-            !!name && existingNames.some((n) => n.toLowerCase() === name.toLowerCase());
-
-        const coverPlaceholderText = () => {
-            if (dialogCoverFile) return dialogCoverFile.name;
-            if (isExistingPresetName(input.value.trim()) && existingCoverAvailable) return "覆盖后将保留原封面";
-            return "选择封面（可选）";
-        };
-
-        // 名称命中已有预设时，展示其当前封面，明确「不选新封面就直接复用原封面」
-        function refreshExistingCoverPreview() {
-            if (dialogCoverFile) return; // 已选择新封面，以新封面为准
-            const name = input.value.trim();
-            if (isExistingPresetName(name)) {
-                if (existingCoverNameShown === name) return;
-                existingCoverNameShown = name;
-                coverPreview.onload = () => {
-                    if (dialogCoverFile) return;
-                    existingCoverAvailable = true;
-                    coverPreview.style.display = "block";
-                    coverPickerText.textContent = coverPlaceholderText();
-                };
-                coverPreview.onerror = () => {
-                    if (dialogCoverFile) return;
-                    existingCoverAvailable = false;
-                    existingCoverNameShown = "";
-                    coverPreview.style.display = "none";
-                    coverPickerText.textContent = "选择封面（可选）";
-                };
-                coverPreview.src = `/naiba/presets/image?name=${encodeURIComponent(name)}`;
-            } else {
-                existingCoverNameShown = "";
-                existingCoverAvailable = false;
-                coverPreview.onload = null;
-                coverPreview.onerror = null;
-                coverPreview.removeAttribute("src");
-                coverPreview.style.display = "none";
-                coverPickerText.textContent = coverPlaceholderText();
-            }
-        }
-
-        coverPicker.appendChild(coverPreview);
-        coverPicker.appendChild(coverPickerText);
-        coverPicker.addEventListener("click", () => dialogCoverInput.click());
-        coverPicker.addEventListener("keydown", (e) => {
-            if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                dialogCoverInput.click();
-            }
-        });
-        dialogCoverInput.addEventListener("change", (e) => {
-            const file = e.target.files[0];
-            dialogCoverInput.value = "";
-            if (file) selectDialogCover(file);
-        });
-        coverPicker.addEventListener("dragenter", (e) => {
-            e.preventDefault();
-            coverDragDepth += 1;
-            coverPicker.style.borderColor = COLORS.accent;
-            coverPicker.style.color = COLORS.text;
-            coverPickerText.textContent = "松开选择封面";
-        });
-        coverPicker.addEventListener("dragover", (e) => {
-            e.preventDefault();
-            if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
-        });
-        coverPicker.addEventListener("dragleave", () => {
-            coverDragDepth = Math.max(0, coverDragDepth - 1);
-            if (coverDragDepth === 0) {
-                coverPicker.style.borderColor = COLORS.border;
-                coverPicker.style.color = COLORS.textDim;
-                coverPickerText.textContent = coverPlaceholderText();
-            }
-        });
-        coverPicker.addEventListener("drop", (e) => {
-            e.preventDefault();
-            coverDragDepth = 0;
-            coverPicker.style.borderColor = COLORS.border;
-            coverPicker.style.color = COLORS.textDim;
-            const files = Array.from(e.dataTransfer?.files || []);
-            const file = files.find(isSupportedCoverFile);
-            if (file) selectDialogCover(file);
-            else selectDialogCover(null);
-        });
-
-        const btnRow = document.createElement("div");
-        btnRow.style.cssText = `display:flex;justify-content:flex-end;gap:8px;margin-top:14px;`;
-
-        const btnStyle = (primary) =>
-            `padding:6px 14px;border-radius:3px;font-size:12px;cursor:pointer;` +
-            `border:1px solid ${primary ? COLORS.accent : COLORS.border};` +
-            `background:${primary ? COLORS.accent : "transparent"};` +
-            `color:${primary ? "#fff" : COLORS.text};`;
-
-        const cancelBtn = document.createElement("button");
-        cancelBtn.textContent = "取消";
-        cancelBtn.style.cssText = btnStyle(false);
-
-        const confirmBtn = document.createElement("button");
-        confirmBtn.style.cssText = btnStyle(true);
-
-        function updateWarn() {
-            const name = input.value.trim();
-            const dup = name && existingNames.some((n) => n.toLowerCase() === name.toLowerCase());
-            if (dup) {
-                warn.textContent = `预设「${name}」已存在，将覆盖现有内容`;
-                warn.style.display = "block";
-                confirmBtn.textContent = "确认覆盖";
-            } else {
-                warn.style.display = "none";
-                confirmBtn.textContent = "保存";
-            }
-            refreshExistingCoverPreview();
-        }
-
-        const close = () => {
-            if (dialogCoverUrl) URL.revokeObjectURL(dialogCoverUrl);
-            if (dialogOverlay.parentNode) dialogOverlay.parentNode.removeChild(dialogOverlay);
-        };
-
-        cancelBtn.addEventListener("click", close);
-        input.addEventListener("input", updateWarn);
-        input.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") confirmBtn.click();
-            if (e.key === "Escape") close();
-        });
-        confirmBtn.addEventListener("click", async () => {
-            const name = input.value.trim();
-            if (!name) {
-                input.focus();
-                return;
-            }
-            const ok = await doSavePreset(name, dialogCoverFile);
-            if (ok) close();
-        });
-
-        box.appendChild(title);
-        box.appendChild(input);
-        box.appendChild(coverPicker);
-        box.appendChild(dialogCoverInput);
-        box.appendChild(coverError);
-        box.appendChild(warn);
-        btnRow.appendChild(cancelBtn);
-        btnRow.appendChild(confirmBtn);
-        box.appendChild(btnRow);
-        dialogOverlay.appendChild(box);
-        document.body.appendChild(dialogOverlay);
-        input.focus();
-        input.select();
-        updateWarn();
-    }
-
     saveBtn.addEventListener("click", () => {
         if (!hasNode) {
             showStatus("请先在画布中放置 Lora Data Preview 节点", true);
             return;
         }
-        openSavePresetDialog();
+        openSavePresetDialog(node, {
+            defaultName: selectedPreset || "",
+            existingNames: presetItems.map((el) => el._name),
+            onSaved: async () => {
+                await loadPresetList();
+                showStatus("预设保存成功");
+            },
+        });
     });
 
     // 删除预设
@@ -1142,7 +1188,7 @@ export function createPresetsModal(node, onImport = null) {
             showStatus("请先在画布中放置 Lora Data Preview 节点", true);
             return;
         }
-        const data = getCurrentData();
+        const data = getCurrentData(node);
         if (data.length === 0) {
             showStatus("当前没有 LoRA 配置可导出", true);
             return;
@@ -1212,6 +1258,8 @@ export function createPresetsModal(node, onImport = null) {
                     const resolved = await resolvePreset(data);
                     // 无论本地是否有所，完整套用所有条目（缺失项由选择器以 (missing) 显示）
                     setNodeData(resolved);
+                    // 文件导入无法对应已有预设名，清空来源记录
+                    node._naibaLoadedPresetName = null;
                     showStatus("已从文件导入预设");
                     closeModal();
                     // 调用导入回调（如果存在）

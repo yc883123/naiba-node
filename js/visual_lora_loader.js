@@ -5,7 +5,7 @@
 
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { createPresetsModal } from "./naiba_preset_utils.js";
+import { createPresetsModal, openSavePresetDialog } from "./naiba_preset_utils.js";
 
 // ========== 颜色常量 ==========
 const COLORS = {
@@ -17,6 +17,7 @@ const COLORS = {
     danger: "#ff6b6b",
     dangerHover: "#ff8b8b",
     success: "#2ed573",
+    successHover: "#48e589",
     favorite: "#ff9f43",      // 收藏按钮颜色（橙色）
     favoriteActive: "#ff6b6b", // 已收藏颜色（红色）
     text: "#e0e0e0",
@@ -1594,6 +1595,8 @@ app.registerExtension({
                     const loraDataWidget = node.widgets?.find((w) => w.name === "lora_data");
                     if (loraDataWidget) loraDataWidget.value = "[]";
                 }
+                // 数据已清空，来源预设记录一并失效
+                node._naibaLoadedPresetName = null;
                 // 同步清空弹窗内的选中状态（若弹窗已打开）
                 if (node._visualSelectedLoras) {
                     node._visualSelectedLoras.clear();
@@ -1662,6 +1665,29 @@ app.registerExtension({
             });
 
             buttonRow.appendChild(presetBtn);
+
+            // 保存预设按钮（预填最近导入的预设名与封面，方便覆盖迭代）
+            const savePresetBtn = document.createElement("button");
+            savePresetBtn.textContent = "保存";
+            savePresetBtn.title = "保存当前选择为预设";
+            savePresetBtn.style.cssText = `
+                padding:10px 16px;margin:8px 0;
+                background:${COLORS.success};color:white;
+                border:none;border-radius:6px;cursor:pointer;
+                font-size:13px;font-weight:500;
+                transition:background 0.2s;
+            `;
+            savePresetBtn.addEventListener("mouseenter", () => {
+                savePresetBtn.style.background = COLORS.successHover;
+            });
+            savePresetBtn.addEventListener("mouseleave", () => {
+                savePresetBtn.style.background = COLORS.success;
+            });
+            savePresetBtn.addEventListener("click", () => {
+                openSavePresetDialog(node, { defaultName: node._naibaLoadedPresetName || "" });
+            });
+
+            buttonRow.appendChild(savePresetBtn);
 
             buttonRow.appendChild(clearBtn);
 
