@@ -31,6 +31,7 @@ const COLORS = {
     cardBorder: "#2a3a5c",
     sidebarBg: "#0d1117",
     listItemBg: "#1c2333",
+    listItemActive: "#2a3a6a", // 目录树选中行背景（与 Visual LoRA Loader 保持一致）
     favoriteBorder: "#ff9f43", // 收藏卡片边框颜色
 };
 
@@ -265,7 +266,7 @@ function createLoraDataPreviewModal(node, loraList) {
     // ========== 工具栏 ==========
     const toolbar = document.createElement("div");
     toolbar.style.cssText = `
-        display:flex;align-items:center;gap:12px;padding:8px 16px;
+        display:flex;align-items:center;gap:12px;padding:8px 16px;flex-wrap:wrap;
         background:${COLORS.headerBg};border-bottom:1px solid ${COLORS.border};
     `;
 
@@ -786,8 +787,13 @@ function createLoraDataPreviewModal(node, loraList) {
                 loraList.length = 0;
                 loraList.push(...newList);
                 folderStructure = buildFolderStructure(loraList);
-                currentFolder = "/";
-                setCurrentPathText("/");
+                // 保持当前目录不变（仅当目录在刷新后已不存在时才回退根目录）
+                if (!folderStructure[currentFolder]) {
+                    currentFolder = "/";
+                    setCurrentPathText("/");
+                } else {
+                    setCurrentPathText(currentFolder);
+                }
                 statusDisplay.textContent = `共 ${loraList.length} 个LoRA文件`;
                 renderFolderTree();
                 renderLoraList();
@@ -857,9 +863,10 @@ function createLoraDataPreviewModal(node, loraList) {
     `;
     closeFooterBtn.addEventListener("click", () => closeModal());
 
-    buttonGroup.appendChild(refreshBtn);
-    buttonGroup.appendChild(selectAllBtn);
-    buttonGroup.appendChild(clearSelectBtn);
+    // 刷新/全选/清除移到顶部工具栏（与 Visual LoRA Loader 一致），底部只保留 应用选中 + 关闭
+    toolbar.insertBefore(refreshBtn, statusDisplay);
+    toolbar.insertBefore(selectAllBtn, statusDisplay);
+    toolbar.insertBefore(clearSelectBtn, statusDisplay);
     if (applyBtn) buttonGroup.appendChild(applyBtn);
     buttonGroup.appendChild(closeFooterBtn);
 
@@ -1366,10 +1373,10 @@ function createLoraDataPreviewModal(node, loraList) {
                 if (applyBtn) applyBtn.textContent = `应用选中 (${selectedLoras.size})`;
             });
 
-            // 图片预览区域
+            // 图片预览区域（1:1 方形，与 Visual LoRA Loader 一致）
             const preview = document.createElement("div");
             preview.style.cssText = `
-                width:100%;height:160px;background:${COLORS.inputBg};
+                width:100%;aspect-ratio:1/1;background:${COLORS.inputBg};
                 border-radius:4px;margin-bottom:8px;display:flex;
                 align-items:center;justify-content:center;
                 color:${COLORS.textDim};font-size:12px;overflow:hidden;
@@ -1404,13 +1411,20 @@ function createLoraDataPreviewModal(node, loraList) {
             // 预览图（object-fit:contain，最长边自动缩放适应容器，不裁切——与可视化 LoRA 选择器一致）
             const previewImg = document.createElement("img");
             previewImg.style.cssText = `
-                width:100%;height:100%;object-fit:contain;
+                width:100%;height:100%;object-fit:contain;display:none;
             `;
 
             // 封面加载失败：仅显示占位，不再自动请求元数据（性能优化）
+            previewImg.onload = () => {
+                previewImg.style.display = "block";
+                preview.querySelectorAll("[data-no-preview]").forEach((el) => el.remove());
+            };
             previewImg.onerror = () => {
+                // 默认隐藏 + onload 才显示：404 时浏览器会在 onerror 前画出破损图标，先隐藏避免闪烁
                 previewImg.style.display = 'none';
+                preview.querySelectorAll("[data-no-preview]").forEach((el) => el.remove());
                 const ph = document.createElement("div");
+                ph.dataset.noPreview = "1";
                 ph.style.cssText = `color:${COLORS.textDim};font-size:11px;`;
                 ph.textContent = "无预览图";
                 preview.appendChild(ph);
@@ -4230,13 +4244,12 @@ function createLoraDataPreviewModal(node, loraList) {
 
     // ========== 初始化 ==========
     // 加载收藏数据后渲染列表
-    loadFavorites().then(() => {
+    loadFavorites().then(async () => {
         renderFolderTree();
+        // 打开页面时先强制拉取最新修改时间，确保时间排序首次渲染即正确
+        // （此前先按字母序渲染再异步重排，看起来像"排序不生效"）
+        try { await ensureLoraMtimes(true); } catch (e) { /* 拉取失败时排序退化为字母序 */ }
         renderLoraList();
-        // 上次会话选择了时间倒序时，预取修改时间并重排
-        if (sortMode === "time") {
-            ensureLoraMtimes().then(() => { if (sortMode === "time") renderLoraList(); });
-        }
     });
 
     // 设置单例
