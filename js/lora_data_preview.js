@@ -1323,10 +1323,10 @@ function createLoraDataPreviewModal(node, loraList) {
             return;
         }
 
-        // 网格视图
+        // 网格视图（列宽公式与 Visual LoRA Loader 一致，标准 1200px 弹窗宽度下正好 1 行 4 个）
         const grid = document.createElement("div");
         grid.style.cssText = `
-            display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));
+            display:grid;grid-template-columns:repeat(auto-fill, minmax(200px, 1fr));
             gap:12px;padding:8px;
         `;
 
