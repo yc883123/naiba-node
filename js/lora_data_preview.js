@@ -777,12 +777,13 @@ function createLoraDataPreviewModal(node, loraList) {
     const isDirExcludedEntry = (entry) => String(entry || "").endsWith("/");
 
     // 未同步列表按当前目录过滤（根目录 = 全部；用于未同步页的目录浏览与"排除此目录"上下文）
+    // currentFolder 来自目录树拼接，带前导斜杠（/test）；unsyncedList 的条目无前导斜杠
+    // （test/a.safetensors），必须先归一化再匹配前缀，否则整目录过滤恒为空
+    const normLoraPath = (n) => String(n || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
     const getUnsyncedInCurrentFolder = () => {
         if (!currentFolder || currentFolder === "/") return unsyncedList.slice();
-        const prefix = `${String(currentFolder).replace(/^\/+|\/+$/g, "").casefold()}/`;
-        return unsyncedList.filter((n) =>
-            String(n || "").replace(/\\/g, "/").replace(/^\/+/, "").casefold().startsWith(prefix)
-        );
+        const prefix = `${normLoraPath(currentFolder).toLowerCase()}/`;
+        return unsyncedList.filter((n) => normLoraPath(n).toLowerCase().startsWith(prefix));
     };
 
     // 把某个目录（含子目录）加入同步排除名单
@@ -1254,15 +1255,22 @@ function createLoraDataPreviewModal(node, loraList) {
             exManageBtn.addEventListener("click", () => openExcludedManager());
             exBar.appendChild(exText);
             exBar.appendChild(exManageBtn);
-            // 非根目录时提供一键排除当前目录（根目录不放，避免误排除全部）
-            if (currentFolder && currentFolder !== "/") {
-                const exFolderBtn = document.createElement("button");
-                exFolderBtn.textContent = `排除此目录（${String(currentFolder).replace(/^\/+|\/+$/g, "")}）`;
-                exFolderBtn.title = `把 ${currentFolder} 下所有 LoRA（含子目录）加入同步排除`;
-                exFolderBtn.style.cssText = `padding:4px 10px;background:transparent;color:${COLORS.warning};border:1px solid ${COLORS.warning};border-radius:4px;cursor:pointer;font-size:11px;`;
+            // 排除目录按钮常驻：根目录置灰禁用（一键排除等于排除全部），子目录才可点
+            const isRoot = !currentFolder || currentFolder === "/";
+            const exFolderBtn = document.createElement("button");
+            exFolderBtn.textContent = isRoot
+                ? "排除此目录（请先选择子目录）"
+                : `排除此目录（${String(currentFolder).replace(/^\/+|\/+$/g, "")}）`;
+            exFolderBtn.title = isRoot
+                ? "切换到左侧某个子目录后，可将该目录下所有 LoRA（含子目录）加入同步排除"
+                : `把 ${currentFolder} 下所有 LoRA（含子目录）加入同步排除`;
+            exFolderBtn.style.cssText = `padding:4px 10px;background:transparent;color:${isRoot ? COLORS.textDim : COLORS.warning};border:1px solid ${isRoot ? COLORS.border : COLORS.warning};border-radius:4px;cursor:${isRoot ? "not-allowed" : "pointer"};font-size:11px;opacity:${isRoot ? "0.55" : "1"};`;
+            if (isRoot) {
+                exFolderBtn.disabled = true;
+            } else {
                 exFolderBtn.addEventListener("click", () => excludeFolderFromSync(currentFolder, exFolderBtn));
-                exBar.appendChild(exFolderBtn);
             }
+            exBar.appendChild(exFolderBtn);
             mainContent.appendChild(exBar);
         }
 
@@ -3051,8 +3059,8 @@ function createLoraDataPreviewModal(node, loraList) {
                 const nameEl = document.createElement("span");
                 const isDir = isDirExcludedEntry(entry);
                 if (isDir) {
-                    const prefix = String(entry).casefold();
-                    const hitCount = dirExcludedLoras.filter((n) => String(n || "").casefold().startsWith(prefix)).length;
+                    const prefix = String(entry).toLowerCase();
+                    const hitCount = dirExcludedLoras.filter((n) => String(n || "").toLowerCase().startsWith(prefix)).length;
                     nameEl.textContent = `📁 ${entry}（${hitCount} 个 LoRA 被跳过）`;
                     nameEl.title = `目录排除：${entry} 下所有 LoRA（含子目录）都不参与同步`;
                     nameEl.style.cssText = `flex:1;min-width:0;color:${COLORS.favorite};font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
