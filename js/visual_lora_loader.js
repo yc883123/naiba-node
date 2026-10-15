@@ -768,7 +768,7 @@ function createVisualLoraModal(node, loraList) {
             sidebar.appendChild(rootItem);
             
             // 渲染文件夹树
-            renderFolderLevel("/", sidebar, 0);
+            renderFolderLevel("/", sidebar);
         } else if (currentCategory === "selected") {
             // 已选择类别下，显示提示信息
             const info = document.createElement("div");
@@ -791,13 +791,15 @@ function createVisualLoraModal(node, loraList) {
     }
 
     // ========== 递归渲染文件夹层级 ==========
-    function renderFolderLevel(folder, container, depth) {
+    // ancestorLines: 每个祖先层是否需要延续线（true=│，false=空位），用于树形制表符
+    function renderFolderLevel(folder, container, ancestorLines = []) {
         const items = folderStructure[folder] || [];
         const folders = items.filter(item => item.endsWith("/"));
 
-        folders.forEach(folderItem => {
+        folders.forEach((folderItem, idx) => {
             const folderName = folderItem.slice(0, -1);
             const fullPath = folder === "/" ? `/${folderName}` : `${folder}/${folderName}`;
+            const isLast = idx === folders.length - 1;
 
             const folderElement = document.createElement("div");
             folderElement.style.cssText = `
@@ -807,16 +809,18 @@ function createVisualLoraModal(node, loraList) {
                 background:${currentFolder === fullPath ? COLORS.listItemActive : "transparent"};
             `;
 
-            // 制表符引导线：每层一个竖线缩进块，目录嵌套一目了然
-            for (let i = 0; i < depth; i++) {
-                const guide = document.createElement("span");
-                guide.style.cssText = `
-                    flex:0 0 14px;align-self:stretch;
-                    border-left:1px solid ${COLORS.border};
-                    margin-left:6px;
-                `;
-                folderElement.appendChild(guide);
-            }
+            // 树形制表符：祖先层画延续线（│）或空位，本层画 ├/└ 分支符（等宽字体对齐）
+            const guideStyle = "flex:0 0 16px;font-family:Consolas,'Courier New',monospace;font-size:12px;line-height:1;text-align:center;";
+            ancestorLines.forEach(hasLine => {
+                const g = document.createElement("span");
+                g.textContent = hasLine ? "│" : " ";
+                g.style.cssText = guideStyle + `color:${COLORS.textDim};opacity:0.5;`;
+                folderElement.appendChild(g);
+            });
+            const branch = document.createElement("span");
+            branch.textContent = isLast ? "└" : "├";
+            branch.style.cssText = guideStyle + `color:${COLORS.textDim};`;
+            folderElement.appendChild(branch);
 
             const folderIcon = document.createElement("span");
             folderIcon.textContent = "📁";
@@ -838,8 +842,8 @@ function createVisualLoraModal(node, loraList) {
 
             container.appendChild(folderElement);
 
-            // 递归渲染子文件夹
-            renderFolderLevel(fullPath, container, depth + 1);
+            // 递归渲染子文件夹：本层是否延续线取决于自己是不是最后一个兄弟
+            renderFolderLevel(fullPath, container, ancestorLines.concat([!isLast]));
         });
     }
 
