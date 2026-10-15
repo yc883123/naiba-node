@@ -1021,14 +1021,24 @@ function createLoraDataPreviewModal(node, loraList) {
             const fullPath = folder === "/" ? `/${folderName}` : `${folder}/${folderName}`;
             const folderElement = document.createElement("div");
             folderElement.style.cssText = `
-                padding:4px 8px 4px ${8 + depth * 16}px;cursor:pointer;font-size:12px;
+                display:flex;align-items:center;cursor:pointer;font-size:12px;
+                padding:4px 8px;border-radius:4px;margin-bottom:2px;
                 color:${currentFolder === fullPath ? COLORS.accent : COLORS.text};
                 background:${currentFolder === fullPath ? COLORS.listItemActive : "transparent"};
-                border-radius:4px;margin-bottom:2px;
             `;
+            // 制表符引导线：每层一个竖线缩进块，目录嵌套一目了然
+            for (let i = 0; i < depth; i++) {
+                const guide = document.createElement("span");
+                guide.style.cssText = `
+                    flex:0 0 14px;align-self:stretch;
+                    border-left:1px solid ${COLORS.border};
+                    margin-left:6px;
+                `;
+                folderElement.appendChild(guide);
+            }
             const folderIcon = document.createElement("span");
-            folderIcon.textContent = "📁 ";
-            folderIcon.style.cssText = "margin-right:4px;";
+            folderIcon.textContent = "📁";
+            folderIcon.style.cssText = "flex:0 0 auto;margin-right:4px;";
             const folderText = document.createElement("span");
             folderText.textContent = folderName;
             folderElement.appendChild(folderIcon);
