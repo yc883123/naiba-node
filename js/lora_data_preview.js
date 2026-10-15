@@ -350,7 +350,7 @@ function createLoraDataPreviewModal(node, loraList) {
             : loraList;
         
         if (currentCategory === "selected") {
-            const selectedCount = baseLoras.filter(l => selectedLoras.has(l)).length;
+            const selectedCount = baseLoras.filter(l => selHas(l)).length;
             statusDisplay.textContent = searchTerm 
                 ? `已选择: ${selectedCount} 个结果` 
                 : `已选择: ${selectedCount} 个LoRA`;
@@ -830,7 +830,7 @@ function createLoraDataPreviewModal(node, loraList) {
         else if (currentCategory === "favorite") list = Array.from(favoriteLoras.keys());
         else list = getLorasInFolder(currentFolder);
         if (searchTerm) list = list.filter(lora => lora.toLowerCase().includes(searchTerm));
-        list.forEach(lora => selectedLoras.add(lora));
+        list.forEach(lora => selAdd(lora));
         renderLoraList();
     });
 
@@ -888,6 +888,14 @@ function createLoraDataPreviewModal(node, loraList) {
     let filteredLoras = [...loraList];
     let isSyncing = false;
     let selectedLoras = new Set(); // 已选中的LoRA集合（支持多选）
+
+    // 选中键归一化（规范形：正斜杠分隔、无前导斜杠，与 lora_data 存储格式一致）：
+    // 卡片名来自目录树拼接（"/anima/xxx"），lora_data 恢复的是规范名（"anima/xxx"），
+    // 不归一化会让恢复的选中在「全部」视图里显示为未选中
+    const normalizeSelectionKey = (name) => String(name || "").replace(/\\/g, "/").replace(/^\/+/, "");
+    const selHas = (name) => selectedLoras.has(normalizeSelectionKey(name));
+    const selAdd = (name) => selectedLoras.add(normalizeSelectionKey(name));
+    const selDelete = (name) => selectedLoras.delete(normalizeSelectionKey(name));
     let favoriteLoras = new Map(); // 收藏的LoRA集合 (name -> {custom_prompt, custom_image_path, favorited_at})
     let modalTimestamp = Date.now(); // 模态框级别时间戳，用于缓存破坏，确保预览图一致性
 
@@ -931,7 +939,7 @@ function createLoraDataPreviewModal(node, loraList) {
                 const existingData = JSON.parse(existingDataWidget.value || "[]");
                 existingData.forEach(item => {
                     if (item.name) {
-                        selectedLoras.add(item.name);
+                        selAdd(item.name);
                     }
                 });
             } catch (e) {
@@ -1275,7 +1283,7 @@ function createLoraDataPreviewModal(node, loraList) {
             const list = document.createElement("div");
             list.style.cssText = "display:flex;flex-direction:column;gap:4px;padding:8px;";
             pageLoras.forEach(lora => {
-                const isSelected = selectedLoras.has(lora);
+                const isSelected = selHas(lora);
                 const isFavorited = favoriteLoras.has(lora);
                 const item = document.createElement("div");
                 item.style.cssText = `
@@ -1321,9 +1329,9 @@ function createLoraDataPreviewModal(node, loraList) {
                 item.appendChild(favBtn);
                 item.appendChild(btnWrap);
                 item.addEventListener("click", () => {
-                    const nowSelected = !selectedLoras.has(lora);
-                    if (nowSelected) selectedLoras.add(lora);
-                    else selectedLoras.delete(lora);
+                    const nowSelected = !selHas(lora);
+                    if (nowSelected) selAdd(lora);
+                    else selDelete(lora);
                     // 局部更新：只改当前项边框 + 计数
                     item.style.border = nowSelected
                         ? `2px solid ${COLORS.accent}`
@@ -1345,10 +1353,10 @@ function createLoraDataPreviewModal(node, loraList) {
         `;
 
         pageLoras.forEach(lora => {
-            const isSelected = selectedLoras.has(lora);
+            const isSelected = selHas(lora);
             const isFavorited = favoriteLoras.has(lora);
             const card = document.createElement("div");
-            
+
             // 卡片边框样式：选中=绿色，收藏=橙色，普通=默认
             let borderColor = COLORS.cardBorder;
             let boxShadow = '';
@@ -1369,11 +1377,11 @@ function createLoraDataPreviewModal(node, loraList) {
 
             // 卡片点击事件 - 切换选中状态（支持多选）
             card.addEventListener("click", () => {
-                const nowSelected = !selectedLoras.has(lora);
+                const nowSelected = !selHas(lora);
                 if (nowSelected) {
-                    selectedLoras.add(lora);
+                    selAdd(lora);
                 } else {
-                    selectedLoras.delete(lora);
+                    selDelete(lora);
                 }
                 // 局部更新：只改当前卡片边框 + 计数，不再整页重建
                 if (nowSelected) {

@@ -477,10 +477,12 @@ function createVisualLoraModal(node, loraList) {
     // 选中状态提升为节点级，确保画布显示区与弹窗内部始终保持一致
     const selectedLoras = (node._visualSelectedLoras = node._visualSelectedLoras || new Map()); // name -> {strength_model, strength_clip, enabled}
 
-    // 选中键归一化匹配：lora_data 中的名字可能是 "/" 分隔（历史工作流/预设导入），
-    // 而文件列表来自 object_info 在 Windows 下是 "\" 分隔。
-    // 直接用原始字符串 has() 会导致「全部」视图下已选 LoRA 显示为未选中（连带启用状态也错）。
-    const normalizeSelectionKey = (name) => String(name || "").replace(/\\/g, "/");
+    // 选中键归一化匹配（规范形：正斜杠分隔、无前导斜杠，与 lora_data 存储格式一致）：
+    // - lora_data 中的名字是 "anima/xxx"（无前导斜杠）
+    // - 「全部」视图卡片名来自 getLorasInFolder，输出 "/anima/xxx"（带前导斜杠）
+    // - 刷新按钮路径的名字来自 object_info，Windows 下是 "anima\xxx"（反斜杠）
+    // 三种形态必须视为同一个文件，否则「全部」视图下已选 LoRA 显示为未选中（连带启用状态也错）
+    const normalizeSelectionKey = (name) => String(name || "").replace(/\\/g, "/").replace(/^\/+/, "");
     const findSelectionKey = (lora) => {
         const target = normalizeSelectionKey(lora);
         for (const key of selectedLoras.keys()) {
@@ -557,12 +559,13 @@ function createVisualLoraModal(node, loraList) {
             const data = JSON.parse(loraDataWidget.value || "[]");
             data.forEach(item => {
                 if (item.name) {
-                    // 保留所有字段（包括 sha256 等额外字段）
+                    // 保留所有字段（包括 sha256 等额外字段）；键规范化，
+                    // 避免 "/anima/x" 与 "anima/x" 两种历史形态并存造成重复条目
                     const config = { ...item };
                     config.strength_model = config.strength_model || 1.0;
                     config.strength_clip = config.strength_clip || 1.0;
                     if (config.enabled === undefined) config.enabled = true;
-                    selectedLoras.set(item.name, config);
+                    selectedLoras.set(normalizeSelectionKey(item.name), config);
                 }
             });
         } catch (e) {
