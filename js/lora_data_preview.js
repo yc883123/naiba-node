@@ -1070,10 +1070,21 @@ function createLoraDataPreviewModal(node, loraList) {
                 color:${currentFolder === fullPath ? COLORS.accent : COLORS.text};
                 background:${currentFolder === fullPath ? COLORS.listItemActive : "transparent"};
             `;
-            // 纯缩进：每层一个固定宽度占位（不画任何符号，用户偏好）
-            // 缩进格数 = 祖先层数 + 1（根层也有一个占位宽度的缩进）
-            const guideStyle = "flex:0 0 16px;";
-            for (let i = 0; i < ancestorLines.length + 1; i++) {
+            // 树形制表符：根层只缩进不画符号（用户偏好）；子层祖先画 │/空位，本层画 ├/└
+            const guideStyle = "flex:0 0 16px;font-family:Consolas,'Courier New',monospace;font-size:12px;line-height:1;text-align:center;";
+            ancestorLines.forEach(hasLine => {
+                const g = document.createElement("span");
+                g.textContent = hasLine ? "│" : " ";
+                g.style.cssText = guideStyle + `color:${COLORS.textDim};opacity:0.5;`;
+                folderElement.appendChild(g);
+            });
+            if (ancestorLines.length > 0) {
+                const branch = document.createElement("span");
+                branch.textContent = isLast ? "└" : "├";
+                branch.style.cssText = guideStyle + `color:${COLORS.textDim};`;
+                folderElement.appendChild(branch);
+            } else {
+                // 根层：占一个引导位宽度的纯缩进，保持子层符号与父目录文字对齐
                 const indent = document.createElement("span");
                 indent.style.cssText = guideStyle;
                 folderElement.appendChild(indent);
