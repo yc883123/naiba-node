@@ -174,7 +174,10 @@ function diffPresetData(oldData, newData) {
             continue;
         }
         matchedOld.add(o);
-        if ((o.strength_model ?? 1) !== (e.strength_model ?? 1) || (o.strength_clip ?? 1) !== (e.strength_clip ?? 1)) {
+        const onOff = (v) => v !== false;
+        if ((o.strength_model ?? 1) !== (e.strength_model ?? 1)
+            || (o.strength_clip ?? 1) !== (e.strength_clip ?? 1)
+            || onOff(o.enabled) !== onOff(e.enabled)) {
             changed.push({ from: o, to: e });
         }
     }
@@ -479,6 +482,9 @@ export async function openSavePresetDialog(node, { defaultName = "", existingNam
                 }
                 if ((c.from.strength_clip ?? 1) !== (c.to.strength_clip ?? 1)) {
                     parts.push(`clip ${fmtStrength(c.from.strength_clip)}→${fmtStrength(c.to.strength_clip)}`);
+                }
+                if ((c.from.enabled !== false) !== (c.to.enabled !== false)) {
+                    parts.push(`启用 ${(c.from.enabled !== false) ? "开" : "关"}→${(c.to.enabled !== false) ? "开" : "关"}`);
                 }
                 mkRow("~", `${dispName(c.to)}: ${parts.join(", ")}`, COLORS.warn);
             }
