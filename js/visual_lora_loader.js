@@ -809,7 +809,7 @@ function createVisualLoraModal(node, loraList) {
                 background:${currentFolder === fullPath ? COLORS.listItemActive : "transparent"};
             `;
 
-            // 树形制表符：祖先层画延续线（│）或空位，本层画 ├/└ 分支符（等宽字体对齐）
+            // 树形制表符：根层只缩进不画符号；子层祖先画 │/空位，本层画 ├/└
             const guideStyle = "flex:0 0 16px;font-family:Consolas,'Courier New',monospace;font-size:12px;line-height:1;text-align:center;";
             ancestorLines.forEach(hasLine => {
                 const g = document.createElement("span");
@@ -817,10 +817,17 @@ function createVisualLoraModal(node, loraList) {
                 g.style.cssText = guideStyle + `color:${COLORS.textDim};opacity:0.5;`;
                 folderElement.appendChild(g);
             });
-            const branch = document.createElement("span");
-            branch.textContent = isLast ? "└" : "├";
-            branch.style.cssText = guideStyle + `color:${COLORS.textDim};`;
-            folderElement.appendChild(branch);
+            if (ancestorLines.length > 0) {
+                const branch = document.createElement("span");
+                branch.textContent = isLast ? "└" : "├";
+                branch.style.cssText = guideStyle + `color:${COLORS.textDim};`;
+                folderElement.appendChild(branch);
+            } else {
+                // 根层：占一个引导位宽度的纯缩进，保持子层符号与父目录文字对齐
+                const indent = document.createElement("span");
+                indent.style.cssText = guideStyle;
+                folderElement.appendChild(indent);
+            }
 
             const folderIcon = document.createElement("span");
             folderIcon.textContent = "📁";
