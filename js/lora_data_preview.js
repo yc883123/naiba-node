@@ -1439,9 +1439,15 @@ function createLoraDataPreviewModal(node, loraList) {
                 // 加载成功才显示：404 时浏览器画出的破损图标因 visibility:hidden 不可见，避免闪烁
                 previewImg.style.visibility = 'hidden';
                 preview.querySelectorAll("[data-no-preview]").forEach((el) => el.remove());
+                // 绝对定位居中：visibility:hidden 的 img 仍占 flex 布局空间，
+                // 占位作为普通子项会被 100% 宽的 img 挤到容器右缘
                 const ph = document.createElement("div");
                 ph.dataset.noPreview = "1";
-                ph.style.cssText = `color:${COLORS.textDim};font-size:11px;`;
+                ph.style.cssText = `
+                    color:${COLORS.textDim};font-size:11px;text-align:center;
+                    position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+                    pointer-events:none;white-space:nowrap;
+                `;
                 ph.textContent = "无预览图";
                 preview.appendChild(ph);
             };
