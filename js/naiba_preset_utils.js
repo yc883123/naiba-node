@@ -298,7 +298,7 @@ export async function openSavePresetDialog(node, { defaultName = "", existingNam
 
     const coverPreview = document.createElement("img");
     coverPreview.style.cssText = `
-        flex:1;min-height:0;max-width:100%;object-fit:contain;display:none;border-radius:3px;
+        flex:1;min-height:0;width:100%;object-fit:contain;display:none;border-radius:3px;
     `;
     const coverPickerText = document.createElement("span");
     coverPickerText.textContent = "选择封面（可选）";
