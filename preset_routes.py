@@ -400,11 +400,21 @@ def rename_preset_image(old_name, new_name):
 # ============================================================
 @PromptServer.instance.routes.get('/naiba/presets/list')
 async def list_presets_handler(request):
-    """列出所有可用的预设名称"""
+    """列出所有可用的预设名称（附带各预设文件的修改时间，供前端"最新优先"排序用）"""
     try:
-        files = [f[:-5] for f in os.listdir(PRESETS_DIR) if f.endswith('.json')]
+        files = []
+        mtimes = {}
+        for f in os.listdir(PRESETS_DIR):
+            if not f.endswith('.json'):
+                continue
+            name = f[:-5]
+            files.append(name)
+            try:
+                mtimes[name] = int(os.path.getmtime(os.path.join(PRESETS_DIR, f)) * 1000)
+            except OSError as e:
+                print(f"[Naiba] 获取预设修改时间失败 {name}: {e}")
         files.sort()
-        return web.json_response({"presets": files})
+        return web.json_response({"presets": files, "mtimes": mtimes})
     except Exception as e:
         print(f"Error listing presets: {e}")
         return web.json_response({"error": str(e)}, status=500)

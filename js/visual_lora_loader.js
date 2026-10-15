@@ -471,6 +471,22 @@ function createVisualLoraModal(node, loraList) {
     let currentCategory = "all"; // "all", "selected", 或 "favorite"
     // 选中状态提升为节点级，确保画布显示区与弹窗内部始终保持一致
     const selectedLoras = (node._visualSelectedLoras = node._visualSelectedLoras || new Map()); // name -> {strength_model, strength_clip, enabled}
+
+    // 选中键归一化匹配：lora_data 中的名字可能是 "/" 分隔（历史工作流/预设导入），
+    // 而文件列表来自 object_info 在 Windows 下是 "\" 分隔。
+    // 直接用原始字符串 has() 会导致「全部」视图下已选 LoRA 显示为未选中（连带启用状态也错）。
+    const normalizeSelectionKey = (name) => String(name || "").replace(/\\/g, "/");
+    const findSelectionKey = (lora) => {
+        const target = normalizeSelectionKey(lora);
+        for (const key of selectedLoras.keys()) {
+            if (normalizeSelectionKey(key) === target) return key;
+        }
+        return null;
+    };
+    const getSelectionConfig = (lora) => {
+        const key = findSelectionKey(lora);
+        return key === null ? null : selectedLoras.get(key);
+    };
     let favoriteLoras = new Map(); // name -> {custom_prompt, custom_image_path, favorited_at}
     let filteredLoras = [...loraList];
     let folderStructure = buildFolderStructure(loraList);
@@ -855,9 +871,10 @@ function createVisualLoraModal(node, loraList) {
             `;
 
             lorasToRender.forEach(lora => {
-                const isSelected = selectedLoras.has(lora);
+                const selKey = findSelectionKey(lora);
+                const isSelected = selKey !== null;
                 const isFavorited = favoriteLoras.has(lora);
-                const isEnabled = isSelected ? (selectedLoras.get(lora).enabled !== false) : true;
+                const isEnabled = isSelected ? (selectedLoras.get(selKey).enabled !== false) : true;
                 const card = document.createElement("div");
                 
                 // 卡片边框样式：选中=高亮紫(强对比)，收藏=橙色，普通=默认，禁用=灰色
@@ -988,7 +1005,7 @@ function createVisualLoraModal(node, loraList) {
 
                 const mInput = document.createElement("input");
                 mInput.type = "number";
-                mInput.value = selectedLoras.has(lora) ? selectedLoras.get(lora).strength_model : 1.0;
+                mInput.value = getSelectionConfig(lora)?.strength_model ?? 1.0;
                 mInput.min = -10;
                 mInput.max = 10;
                 mInput.step = 0.1;
@@ -999,8 +1016,9 @@ function createVisualLoraModal(node, loraList) {
                 `;
                 mInput.addEventListener("change", (e) => {
                     e.stopPropagation();
-                    if (selectedLoras.has(lora)) {
-                        selectedLoras.get(lora).strength_model = parseFloat(mInput.value);
+                    const selKey = findSelectionKey(lora);
+                    if (selKey !== null) {
+                        selectedLoras.get(selKey).strength_model = parseFloat(mInput.value);
                     }
                 });
                 mInput.addEventListener("click", (e) => e.stopPropagation());
@@ -1011,7 +1029,7 @@ function createVisualLoraModal(node, loraList) {
 
                 const cInput = document.createElement("input");
                 cInput.type = "number";
-                cInput.value = selectedLoras.has(lora) ? selectedLoras.get(lora).strength_clip : 1.0;
+                cInput.value = getSelectionConfig(lora)?.strength_clip ?? 1.0;
                 cInput.min = -10;
                 cInput.max = 10;
                 cInput.step = 0.1;
@@ -1022,8 +1040,9 @@ function createVisualLoraModal(node, loraList) {
                 `;
                 cInput.addEventListener("change", (e) => {
                     e.stopPropagation();
-                    if (selectedLoras.has(lora)) {
-                        selectedLoras.get(lora).strength_clip = parseFloat(cInput.value);
+                    const selKey = findSelectionKey(lora);
+                    if (selKey !== null) {
+                        selectedLoras.get(selKey).strength_clip = parseFloat(cInput.value);
                     }
                 });
                 cInput.addEventListener("click", (e) => e.stopPropagation());
@@ -1072,9 +1091,10 @@ function createVisualLoraModal(node, loraList) {
 
                 // 增量刷新单张卡片外观（避免整体 renderLoraList 重渲染带来的迟滞）
                 const refreshCardState = () => {
-                    const sel = selectedLoras.has(lora);
+                    const selKey = findSelectionKey(lora);
+                    const sel = selKey !== null;
                     const fav = favoriteLoras.has(lora);
-                    const en = sel ? (selectedLoras.get(lora).enabled !== false) : true;
+                    const en = sel ? (selectedLoras.get(selKey).enabled !== false) : true;
                     let bc = COLORS.cardBorder, bs = "none", bw = "1px", bg = COLORS.cardBg;
                     if (!en) {
                         bc = COLORS.disabled; bs = `0 0 0 1px ${COLORS.disabled}40`;
@@ -1097,14 +1117,15 @@ function createVisualLoraModal(node, loraList) {
 
                 toggleSwitch.addEventListener("click", (e) => {
                     e.stopPropagation();
-                    if (!selectedLoras.has(lora)) {
-                        selectedLoras.set(lora, {
+                    const selKey = findSelectionKey(lora);
+                    if (selKey === null) {
+                        selectedLoras.set(normalizeSelectionKey(lora), {
                             strength_model: parseFloat(mInput.value) || 1.0,
                             strength_clip: parseFloat(cInput.value) || 1.0,
                             enabled: true
                         });
                     } else {
-                        const config = selectedLoras.get(lora);
+                        const config = selectedLoras.get(selKey);
                         config.enabled = !config.enabled;
                     }
                     updateSelectedCount();
@@ -1116,11 +1137,12 @@ function createVisualLoraModal(node, loraList) {
                 card.appendChild(toggleRow);
 
                 card.addEventListener("click", () => {
-                    const wasSelected = selectedLoras.has(lora);
+                    const selKey = findSelectionKey(lora);
+                    const wasSelected = selKey !== null;
                     if (wasSelected) {
-                        selectedLoras.delete(lora);
+                        selectedLoras.delete(selKey);
                     } else {
-                        selectedLoras.set(lora, {
+                        selectedLoras.set(normalizeSelectionKey(lora), {
                             strength_model: parseFloat(mInput.value) || 1.0,
                             strength_clip: parseFloat(cInput.value) || 1.0,
                             enabled: true
@@ -1147,9 +1169,10 @@ function createVisualLoraModal(node, loraList) {
             `;
 
             lorasToRender.forEach(lora => {
-                const isSelected = selectedLoras.has(lora);
+                const selKey = findSelectionKey(lora);
+                const isSelected = selKey !== null;
                 const isFavorited = favoriteLoras.has(lora);
-                const isEnabled = isSelected ? (selectedLoras.get(lora).enabled !== false) : true;
+                const isEnabled = isSelected ? (selectedLoras.get(selKey).enabled !== false) : true;
                 const item = document.createElement("div");
 
                 // 列表项边框样式：禁用=灰色，选中=绿色，收藏=橙色
@@ -1181,7 +1204,7 @@ function createVisualLoraModal(node, loraList) {
                 // 复选框
                 const checkbox = document.createElement("input");
                 checkbox.type = "checkbox";
-                checkbox.checked = selectedLoras.has(lora);
+                checkbox.checked = findSelectionKey(lora) !== null;
                 checkbox.style.cssText = "accent-color: #6c5ce7;";
 
                 // LoRA名称
@@ -1227,7 +1250,7 @@ function createVisualLoraModal(node, loraList) {
 
                     const mInput = document.createElement("input");
                     mInput.type = "number";
-                    mInput.value = selectedLoras.has(lora) ? selectedLoras.get(lora).strength_model : 1.0;
+                    mInput.value = getSelectionConfig(lora)?.strength_model ?? 1.0;
                     mInput.min = -10;
                     mInput.max = 10;
                     mInput.step = 0.1;
@@ -1237,8 +1260,9 @@ function createVisualLoraModal(node, loraList) {
                         color:${COLORS.text};font-size:11px;text-align:center;
                     `;
                     mInput.addEventListener("change", () => {
-                        if (selectedLoras.has(lora)) {
-                            selectedLoras.get(lora).strength_model = parseFloat(mInput.value);
+                        const selKey = findSelectionKey(lora);
+                        if (selKey !== null) {
+                            selectedLoras.get(selKey).strength_model = parseFloat(mInput.value);
                         }
                     });
 
@@ -1248,7 +1272,7 @@ function createVisualLoraModal(node, loraList) {
 
                     const cInput = document.createElement("input");
                     cInput.type = "number";
-                    cInput.value = selectedLoras.has(lora) ? selectedLoras.get(lora).strength_clip : 1.0;
+                    cInput.value = getSelectionConfig(lora)?.strength_clip ?? 1.0;
                     cInput.min = -10;
                     cInput.max = 10;
                     cInput.step = 0.1;
@@ -1258,8 +1282,9 @@ function createVisualLoraModal(node, loraList) {
                         color:${COLORS.text};font-size:11px;text-align:center;
                     `;
                     cInput.addEventListener("change", () => {
-                        if (selectedLoras.has(lora)) {
-                            selectedLoras.get(lora).strength_clip = parseFloat(cInput.value);
+                        const selKey = findSelectionKey(lora);
+                        if (selKey !== null) {
+                            selectedLoras.get(selKey).strength_clip = parseFloat(cInput.value);
                         }
                     });
 
@@ -1297,14 +1322,15 @@ function createVisualLoraModal(node, loraList) {
                 toggleSwitch.title = isEnabled ? "点击禁用" : "点击启用";
                 toggleSwitch.addEventListener("click", (e) => {
                     e.stopPropagation();
-                    if (!selectedLoras.has(lora)) {
-                        selectedLoras.set(lora, {
+                    const selKey = findSelectionKey(lora);
+                    if (selKey === null) {
+                        selectedLoras.set(normalizeSelectionKey(lora), {
                             strength_model: parseFloat(mInput.value) || 1.0,
                             strength_clip: parseFloat(cInput.value) || 1.0,
                             enabled: true
                         });
                     } else {
-                        const config = selectedLoras.get(lora);
+                        const config = selectedLoras.get(selKey);
                         config.enabled = !config.enabled;
                     }
                     renderLoraList();
@@ -1315,11 +1341,12 @@ function createVisualLoraModal(node, loraList) {
 
                 item.addEventListener("click", (e) => {
                     if (e.target.tagName === "INPUT") return;
-                    const wasSelected = selectedLoras.has(lora);
+                    const selKey = findSelectionKey(lora);
+                    const wasSelected = selKey !== null;
                     if (wasSelected) {
-                        selectedLoras.delete(lora);
+                        selectedLoras.delete(selKey);
                     } else {
-                        selectedLoras.set(lora, {
+                        selectedLoras.set(normalizeSelectionKey(lora), {
                             strength_model: parseFloat(mInput.value) || 1.0,
                             strength_clip: parseFloat(cInput.value) || 1.0,
                             enabled: true

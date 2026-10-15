@@ -239,6 +239,54 @@ export function createPresetsModal(node, onImport = null) {
     let presetItems = [];
     let coverTargetItem = null;
 
+    // 排序方式切换（字母序 / 修改时间倒序），选择持久化到 localStorage
+    const PRESET_SORT_MODE_STORAGE_KEY = "naiba_preset_sort_mode";
+    let presetSortMode = "name";
+    let presetMtimes = {}; // name -> ms，由 /naiba/presets/list 附带返回
+    try {
+        if (localStorage.getItem(PRESET_SORT_MODE_STORAGE_KEY) === "time") presetSortMode = "time";
+    } catch (e) { /* localStorage 不可用时保持默认字母序 */ }
+
+    // 原地重排网格（不重建卡片，避免封面重新加载闪烁）
+    function reorderPresetGrid() {
+        const items = presetItems.slice();
+        if (presetSortMode === "time") {
+            items.sort((a, b) =>
+                ((presetMtimes[b._name] ?? 0) - (presetMtimes[a._name] ?? 0)) || a._name.localeCompare(b._name)
+            );
+        } else {
+            items.sort((a, b) => a._name.localeCompare(b._name));
+        }
+        items.forEach((item) => presetList.appendChild(item));
+    }
+
+    // 排序按钮（字母序 / 最新优先，与 LoRA 浏览器一致）
+    const presetSortBtn = document.createElement("button");
+    presetSortBtn.style.cssText = `
+        padding:7px 12px;border:1px solid ${COLORS.border};
+        border-radius:4px;cursor:pointer;font-size:12px;white-space:nowrap;
+    `;
+    const updatePresetSortBtnUI = () => {
+        if (presetSortMode === "time") {
+            presetSortBtn.textContent = "排序: 最新优先";
+            presetSortBtn.title = "当前按预设文件修改时间倒序（最新在前），点击恢复字母序";
+        } else {
+            presetSortBtn.textContent = "排序: 字母序";
+            presetSortBtn.title = "当前按字母序，点击切换为修改时间倒序（最新在前）";
+        }
+        presetSortBtn.style.background = presetSortMode === "time" ? COLORS.accent : "transparent";
+        presetSortBtn.style.color = presetSortMode === "time" ? "white" : COLORS.textDim;
+        presetSortBtn.style.borderColor = presetSortMode === "time" ? COLORS.accent : COLORS.border;
+    };
+    presetSortBtn.addEventListener("click", () => {
+        presetSortMode = presetSortMode === "time" ? "name" : "time";
+        try { localStorage.setItem(PRESET_SORT_MODE_STORAGE_KEY, presetSortMode); } catch (e) { /* 忽略持久化失败 */ }
+        updatePresetSortBtnUI();
+        reorderPresetGrid();
+    });
+    updatePresetSortBtnUI();
+    toolbar.appendChild(presetSortBtn);
+
     // 选中已有预设时，保存按钮文案切换为「覆盖预设」，与保存对话框的覆盖语义一致
     const refreshSaveBtnLabel = () => {
         saveBtn.textContent = selectedPreset ? "覆盖预设" : "保存预设";
@@ -425,6 +473,7 @@ export function createPresetsModal(node, onImport = null) {
 
             presetList.innerHTML = "";
             presetItems = [];
+            presetMtimes = result.mtimes || {};
 
             if (result.presets.length === 0) {
                 const emptyMsg = document.createElement("div");
@@ -434,7 +483,15 @@ export function createPresetsModal(node, onImport = null) {
                 return;
             }
 
-            for (const name of result.presets) {
+            // 按当前排序方式决定构建顺序（服务端默认字母序；时间模式最新在前，无时间的排末尾按名称）
+            const orderedNames = result.presets.slice();
+            if (presetSortMode === "time") {
+                orderedNames.sort((a, b) =>
+                    ((presetMtimes[b] ?? 0) - (presetMtimes[a] ?? 0)) || a.localeCompare(b)
+                );
+            }
+
+            for (const name of orderedNames) {
                 const item = document.createElement("div");
                 item._name = name;
                 item._selected = false;
