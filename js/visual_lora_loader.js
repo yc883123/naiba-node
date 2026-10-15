@@ -30,6 +30,7 @@ const COLORS = {
     cardBorder: "#2a3a5c",
     favoriteBorder: "#ff9f43", // 收藏卡片边框颜色
     disabled: "#555555",       // 禁用状态颜色（灰色）
+    disabledSelected: "#d98a8a", // 选中但禁用的边框颜色（淡红：与未选中区分，不与危险红混淆）
 };
 
 // ========== 开关组件 ==========
@@ -885,27 +886,34 @@ function createVisualLoraModal(node, loraList) {
                 const isEnabled = isSelected ? (selectedLoras.get(selKey).enabled !== false) : true;
                 const card = document.createElement("div");
                 
-                // 卡片边框样式：选中=高亮紫(强对比)，收藏=橙色，普通=默认，禁用=灰色
+                // 卡片边框样式：选中=高亮紫(强对比)，选中但禁用=淡红边框(与未选中区分)，
+                // 收藏=橙色，普通=默认，未选中禁用=灰色
                 let borderColor = COLORS.cardBorder;
                 let boxShadow = '';
-                if (!isEnabled) {
+                let borderWidth = "1px";
+                if (isSelected && !isEnabled) {
+                    borderColor = COLORS.disabledSelected;
+                    borderWidth = "2px";
+                    boxShadow = `box-shadow:0 0 0 2px ${COLORS.disabledSelected}55;`;
+                } else if (!isEnabled) {
                     borderColor = COLORS.disabled;
                     boxShadow = `box-shadow:0 0 0 1px ${COLORS.disabled}40;`;
                 } else if (isSelected) {
                     borderColor = COLORS.accent;
+                    borderWidth = "2px";
                     boxShadow = `box-shadow:0 0 0 3px ${COLORS.accent}, 0 0 14px ${COLORS.accent}90;`;
                 } else if (isFavorited) {
                     borderColor = COLORS.favoriteBorder;
                     boxShadow = `box-shadow:0 0 0 2px ${COLORS.favoriteBorder}40;`;
                 }
-                
+
                 card.style.cssText = `
                     background:${isSelected && isEnabled ? "#242145" : COLORS.cardBg};
-                    border:${isSelected && isEnabled ? "2px" : "1px"} solid ${borderColor};
+                    border:${borderWidth} solid ${borderColor};
                     border-radius:6px;padding:12px;cursor:pointer;
                     transition:all 0.15s;position:relative;
                     ${boxShadow}
-                    ${!isEnabled ? "opacity:0.5;filter:grayscale(0.6);" : ""}
+                    ${!isEnabled ? "opacity:0.6;filter:grayscale(0.4);" : ""}
                 `;
 
                 // 图片预览区域
@@ -1104,7 +1112,12 @@ function createVisualLoraModal(node, loraList) {
                     const fav = favoriteLoras.has(lora);
                     const en = sel ? (selectedLoras.get(selKey).enabled !== false) : true;
                     let bc = COLORS.cardBorder, bs = "none", bw = "1px", bg = COLORS.cardBg;
-                    if (!en) {
+                    if (sel && !en) {
+                        // 选中但禁用：淡红边框，与未选中的灰色禁用卡区分
+                        bc = COLORS.disabledSelected;
+                        bw = "2px";
+                        bs = `0 0 0 2px ${COLORS.disabledSelected}55`;
+                    } else if (!en) {
                         bc = COLORS.disabled; bs = `0 0 0 1px ${COLORS.disabled}40`;
                     } else if (sel) {
                         bc = COLORS.accent; bs = `0 0 0 3px ${COLORS.accent}, 0 0 14px ${COLORS.accent}90`;
@@ -1116,8 +1129,8 @@ function createVisualLoraModal(node, loraList) {
                     card.style.borderWidth = bw;
                     card.style.boxShadow = bs;
                     card.style.background = bg;
-                    card.style.opacity = en ? "1" : "0.5";
-                    card.style.filter = en ? "none" : "grayscale(0.6)";
+                    card.style.opacity = en ? "1" : "0.6";
+                    card.style.filter = en ? "none" : "grayscale(0.4)";
                     toggleLabel.textContent = en ? "已启用" : "已禁用";
                     toggleLabel.style.color = en ? COLORS.success : COLORS.disabled;
                     paintSwitch(en);
@@ -1183,10 +1196,13 @@ function createVisualLoraModal(node, loraList) {
                 const isEnabled = isSelected ? (selectedLoras.get(selKey).enabled !== false) : true;
                 const item = document.createElement("div");
 
-                // 列表项边框样式：禁用=灰色，选中=绿色，收藏=橙色
+                // 列表项边框样式：选中但禁用=淡红，未选中禁用=灰色，选中=紫色，收藏=橙色
                 let borderColor = "transparent";
                 let borderStyle = "";
-                if (!isEnabled) {
+                if (isSelected && !isEnabled) {
+                    borderColor = COLORS.disabledSelected;
+                    borderStyle = `border:2px solid ${borderColor};box-shadow:0 0 0 2px ${COLORS.disabledSelected}55;`;
+                } else if (!isEnabled) {
                     borderColor = COLORS.disabled;
                     borderStyle = `border:1px solid ${borderColor};box-shadow:0 0 0 1px ${COLORS.disabled}40;`;
                 } else if (isSelected) {
@@ -1204,7 +1220,7 @@ function createVisualLoraModal(node, loraList) {
                     padding:8px 12px;background:${COLORS.listItemBg};
                     border-radius:4px;cursor:pointer;
                     transition:all 0.2s;position:relative;
-                    ${!isEnabled ? "opacity:0.6;filter:grayscale(0.5);" : ""}
+                    ${!isEnabled ? "opacity:0.6;filter:grayscale(0.4);" : ""}
                     ${isSelected && isEnabled ? `background:${COLORS.listItemActive};` : ""}
                     ${borderStyle}
                 `;
