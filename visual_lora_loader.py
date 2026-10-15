@@ -66,6 +66,76 @@ def _load_lora_cached_sha256(lora_name: str) -> str | None:
     return None
 
 
+def _load_lora_download_url(lora_name: str) -> str | None:
+    """
+    读取 LoRA 的 Civitai 下载链接。
+    从模型同目录的 .civitai.info.json 中取 version_id，
+    按 Civitai 官方下载地址格式构造链接（与 civitai_utils.build_civitai_version_info 的回退逻辑一致）。
+
+    Args:
+        lora_name: LoRA 文件名（可能带前导斜杠/反斜杠）
+
+    Returns:
+        str | None: 下载链接，未同步或读取失败时返回 None
+    """
+    if not lora_name:
+        return None
+    try:
+        lora_path = folder_paths.get_full_path("loras", lora_name)
+        if not lora_path or not os.path.exists(lora_path):
+            return None
+        metadata_path = os.path.splitext(lora_path)[0] + ".civitai.info.json"
+        if not os.path.exists(metadata_path):
+            return None
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+        if isinstance(metadata, dict):
+            version_id = metadata.get("version_id")
+            if version_id:
+                return f"https://civitai.com/api/download/models/{version_id}"
+    except (OSError, ValueError, TypeError) as e:
+        print(f"[VisualLoRALoader] 读取 LoRA 下载链接失败 {lora_name}: {e}")
+    return None
+
+
+def _build_lora_info_text(lora_configs: list) -> str:
+    """
+    把 LoRA 配置列表渲染成人类可读的多行文本。
+
+    每行格式: 序号. [开关状态] 名称 | M:模型权重 C:CLIP权重 | 下载链接
+    """
+    if not lora_configs:
+        return "（未选择任何 LoRA）"
+    lines = []
+    for index, config in enumerate(lora_configs, start=1):
+        if not isinstance(config, dict):
+            lines.append(f"{index}. [配置无效]")
+            continue
+        name = str(config.get("name", "")).replace("\\", "/")
+        enabled = bool(config.get("enabled", False))
+        enabled_label = "开" if enabled else "关"
+        try:
+            strength_model = float(config.get("strength_model", 1.0))
+            strength_clip = float(config.get("strength_clip", 1.0))
+        except (TypeError, ValueError):
+            strength_model = 1.0
+            strength_clip = 1.0
+        # 防御性解析：info 输出绝不打断模型加载本身
+        try:
+            resolved_name = resolve_lora_name(config)
+        except Exception as e:
+            print(f"[VisualLoRALoader] 解析 LoRA 名称失败 {name}: {e}")
+            resolved_name = name
+        resolved_display = str(resolved_name).replace("\\", "/")
+        download_url = _load_lora_download_url(str(resolved_name)) or _load_lora_download_url(name)
+        download_label = download_url if download_url else "（未同步到 Civitai，无下载链接）"
+        lines.append(
+            f"{index}. [{enabled_label}] {resolved_display} | "
+            f"M:{strength_model:.2f} C:{strength_clip:.2f} | {download_label}"
+        )
+    return "\n".join(lines)
+
+
 class VisualLoRALoader:
     """
     可视化LoRA加载器节点
@@ -89,8 +159,8 @@ class VisualLoRALoader:
             }
         }
 
-    RETURN_TYPES = ("MODEL", "CLIP", "STRING", "STRING")
-    RETURN_NAMES = ("model", "clip", "lora_names", "preset_json")
+    RETURN_TYPES = ("MODEL", "CLIP", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("model", "clip", "lora_names", "preset_json", "lora_info")
     FUNCTION = "load_loras"
     CATEGORY = "naiba-node"
     DESCRIPTION = (
@@ -200,8 +270,16 @@ class VisualLoRALoader:
             preset_json = json.dumps(loras_with_sha256, ensure_ascii=False, indent=2)
         except Exception:
             preset_json = lora_data if lora_data.strip() else "[]"
-        
-        return (model, clip, lora_names_json, preset_json)
+
+        # 输出人类可读的 LoRA 信息（名称/开关/权重/Civitai下载链接）
+        try:
+            lora_info_text = _build_lora_info_text(loras_with_sha256)
+        except Exception as e:
+            # 信息输出失败不影响模型加载，但要留日志并明确报错占位
+            print(f"[VisualLoRALoader] 生成 lora_info 失败: {e}")
+            lora_info_text = "（生成 LoRA 信息失败，详见控制台日志）"
+
+        return (model, clip, lora_names_json, preset_json, lora_info_text)
 
 
 # 节点映射

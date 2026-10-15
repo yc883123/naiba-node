@@ -896,15 +896,21 @@ function createVisualLoraModal(node, loraList) {
                 // 尝试加载预览图 - 使用本地匹配 API
                 const previewImg = document.createElement("img");
                 previewImg.style.cssText = `
-                    width:100%;height:100%;object-fit:contain;
+                    width:100%;height:100%;object-fit:contain;display:none;
                 `;
-                
+
                 // 图片加载失败时显示文字提示，但保留其他元素（收藏按钮、红叉按钮）
+                previewImg.onload = () => {
+                    previewImg.style.display = "block";
+                    preview.querySelectorAll("[data-no-preview]").forEach((el) => el.remove());
+                };
                 previewImg.onerror = () => {
-                    // 隐藏图片
+                    // 默认隐藏 + onload 才显示：404 时浏览器会在 onerror 触发前画出破损图标，先隐藏避免闪烁
                     previewImg.style.display = "none";
+                    preview.querySelectorAll("[data-no-preview]").forEach((el) => el.remove());
                     // 创建文字提示
                     const noPreviewText = document.createElement("div");
+                    noPreviewText.dataset.noPreview = "1";
                     noPreviewText.style.cssText = `
                         color:${COLORS.textDim};font-size:11px;
                         position:absolute;top:50%;left:50%;
@@ -1374,15 +1380,26 @@ function createVisualLoraModal(node, loraList) {
     }
 
     // ========== 初始化 ==========
-    loadFavorites().then(() => {
+    loadFavorites().then(async () => {
         renderFolderTree();
+        // 打开弹窗时立即拉取最新文件列表与修改时间，确保首次渲染即为正确的时间排序
+        // （此前复用页面加载时捕获的旧列表，必须手动点刷新排序才正确）
+        try {
+            const resp = await api.fetchApi("/object_info/LoraLoader");
+            const info = await resp.json();
+            if (info.LoraLoader?.input?.required?.lora_name) {
+                const newList = info.LoraLoader.input.required.lora_name[0] || [];
+                loraList.length = 0;
+                loraList.push(...newList);
+                folderStructure = buildFolderStructure(loraList);
+            }
+        } catch (e) {
+            console.warn("[VisualLoRALoader] 打开时刷新列表失败，使用页面加载时的列表:", e);
+        }
+        try { await ensureLoraMtimes(true); } catch (e) { /* 拉取失败时排序退化为字母序 */ }
         filteredLoras = getLorasInFolder("/");
         renderLoraList();
         updateSelectedCount();
-        // 上次会话选择了时间倒序时，预取修改时间并重排
-        if (sortMode === "time") {
-            ensureLoraMtimes().then(() => { if (sortMode === "time") renderLoraList(); });
-        }
     });
 
     // 设置单例
@@ -1832,6 +1849,7 @@ app.registerExtension({
             const renderDisplayArea = (reloadData = true) => {
                 cancelDrag();
                 if (reloadData) loraData = readLoraData();
+                refreshToggleAllLabel();
 
                 const searchTerm = normalizedSearch();
                 const entries = loraData.map((lora, index) => ({ lora, index }));
@@ -2043,6 +2061,31 @@ app.registerExtension({
                 displayArea.scrollTop += event.deltaY;
                 updateDropTarget(dragState.clientY);
             }, { passive: false });
+
+            // 全开/关切换：一键翻转所有已选 LoRA 的启用开关（位于清除按钮左侧）
+            const toggleAllBtn = document.createElement("button");
+            toggleAllBtn.style.cssText = `
+                padding:10px 16px;margin:8px 0;
+                background:${COLORS.success};color:white;
+                border:none;border-radius:6px;cursor:pointer;
+                font-size:13px;font-weight:500;flex:0 0 auto;
+                transition:background 0.2s;
+            `;
+            const refreshToggleAllLabel = () => {
+                const allOn = loraData.length > 0 && loraData.every((lora) => lora?.enabled !== false);
+                toggleAllBtn.textContent = allOn ? "全部关闭" : "全部开启";
+                toggleAllBtn.title = allOn ? "一键关闭所有已选 LoRA" : "一键开启所有已选 LoRA";
+                toggleAllBtn.style.background = allOn ? COLORS.favorite : COLORS.success;
+            };
+            toggleAllBtn.addEventListener("click", () => {
+                if (loraData.length === 0) return;
+                const allOn = loraData.every((lora) => lora?.enabled !== false);
+                const next = !allOn;
+                loraData.forEach((lora) => { lora.enabled = next; });
+                commitLoraData(loraData, true);
+            });
+            // 插入到清除按钮左侧
+            buttonRow.insertBefore(toggleAllBtn, clearBtn);
 
             // 将renderDisplayArea附加到节点对象上，以便在模态框中调用
             node._updateVisualLoraDisplay = () => renderDisplayArea(true);
