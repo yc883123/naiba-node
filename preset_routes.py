@@ -2749,7 +2749,19 @@ async def get_lora_detail_handler(request):
 
         # 获取自定义数据
         custom_data = load_custom_data(lora_path)
-        
+
+        # Civitai 直达链接（已同步条目才有）：模型页优先，回退按 version_id 构造下载地址
+        civitai_model_url = None
+        civitai_download_url = None
+        if isinstance(metadata, dict) and metadata.get("version_id"):
+            version_id = metadata.get("version_id")
+            civitai_download_url = f"https://civitai.com/api/download/models/{version_id}"
+            if metadata.get("model_id"):
+                civitai_model_url = (
+                    f"https://civitai.com/models/{metadata['model_id']}"
+                    f"?modelVersionId={version_id}"
+                )
+
         return web.json_response({
             "success": True,
             "metadata": metadata,
@@ -2759,7 +2771,9 @@ async def get_lora_detail_handler(request):
             "has_cached_metadata": has_full_metadata,
             "has_local_preview": local_preview is not None,
             "has_metadata_preview": metadata_preview is not None,
-            "has_custom_data": custom_data is not None
+            "has_custom_data": custom_data is not None,
+            "civitai_model_url": civitai_model_url,
+            "civitai_download_url": civitai_download_url,
         })
         
     except Exception as e:

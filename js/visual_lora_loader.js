@@ -30,7 +30,7 @@ const COLORS = {
     cardBorder: "#2a3a5c",
     favoriteBorder: "#ff9f43", // 收藏卡片边框颜色
     disabled: "#555555",       // 禁用状态颜色（灰色）
-    disabledSelected: "#d98a8a", // 选中但禁用的边框颜色（淡红：与未选中区分，不与危险红混淆）
+    disabledSelected: "#e8a0a0", // 选中但禁用的边框颜色（淡红：与未选中区分，不与危险红混淆）
 };
 
 // ========== 开关组件 ==========
@@ -1938,11 +1938,12 @@ app.registerExtension({
                     const isMissing = !!lora.name && !availableLoraPaths.has(normalizeLoraPath(lora.name));
                     const row = document.createElement("div");
                     row.dataset.loraRowIndex = String(index);
+                    // 统一 2px 边框：禁用行淡红、缺失行红、启用行默认，与弹窗卡片观感一致
                     row.style.cssText = `
                         display:flex;align-items:center;gap:6px;
                         padding:4px 6px;margin:3px 0;border-radius:4px;
                         background:${isMissing ? "rgba(255,107,107,0.12)" : (isEnabled ? COLORS.listItemBg : "rgba(22,33,62,0.4)")};
-                        border:1px solid ${isMissing ? COLORS.danger : (isEnabled ? COLORS.cardBorder : COLORS.disabled)};
+                        border:2px solid ${isMissing ? COLORS.danger : (isEnabled ? COLORS.cardBorder : COLORS.disabledSelected)};
                         ${!isEnabled && !isMissing ? "opacity:0.55;" : ""}
                     `;
 

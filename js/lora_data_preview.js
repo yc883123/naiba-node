@@ -4127,7 +4127,22 @@ function createLoraDataPreviewModal(node, loraList) {
                         </div>
                     </div>`;
                 }
-                
+
+                // Civitai 直达链接（仅已同步条目有 version_id 时返回）
+                if (result.civitai_model_url || result.civitai_download_url) {
+                    metadataHtml += `<div style="margin-bottom:12px;">
+                        <div style="color:${COLORS.textDim};font-size:12px;margin-bottom:4px;">Civitai 链接</div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                            ${result.civitai_model_url ? `<a href="${result.civitai_model_url}" target="_blank" rel="noopener"
+                                style="padding:5px 12px;background:${COLORS.accent};color:white;border-radius:4px;
+                                font-size:11px;text-decoration:none;">打开模型页面</a>` : ""}
+                            ${result.civitai_download_url ? `<a href="${result.civitai_download_url}" target="_blank" rel="noopener"
+                                style="padding:5px 12px;background:transparent;color:${COLORS.accent};border:1px solid ${COLORS.accent};
+                                border-radius:4px;font-size:11px;text-decoration:none;">下载页</a>` : ""}
+                        </div>
+                    </div>`;
+                }
+
                 metadataHtml += `</div>`;
                 metadataHtml += `</div>`;
                 
