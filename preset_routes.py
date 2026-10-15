@@ -1228,22 +1228,23 @@ async def batch_sync_handler(request):
         
         # 被用户排除的 LoRA（云端无数据、永远无法同步）不参与同步，
         # 两种模式（同步未同步的 / 同步全部）都跳过，避免每次全量重试浪费时间。
-        # 排除名单支持目录条目（"/" 结尾），命中目录（含子目录）的 LoRA 一并跳过
+        # 排除名单支持目录条目（"/" 结尾），命中目录（含子目录）的 LoRA 一并跳过。
+        # 目录键统一为 "dir/"（无前导斜杠、有尾斜杠），防御调用方传 "/dir/" 等形态
         from . import naiba_sync_exclude
         _excluded_raw = naiba_sync_exclude.get_excluded()
         excluded_file_keys = {
-            str(n).replace("\\", "/").casefold()
+            str(n).replace("\\", "/").strip("/").casefold()
             for n in _excluded_raw
-            if not str(n).endswith("/")
+            if not str(n).replace("\\", "/").endswith("/")
         }
         excluded_dir_keys = tuple(
-            str(n).replace("\\", "/").casefold()
+            f"{str(n).replace(chr(92), '/').strip('/').casefold()}/"
             for n in _excluded_raw
-            if str(n).endswith("/")
+            if str(n).replace("\\", "/").endswith("/")
         )
 
         def _is_sync_excluded(lora_name: str) -> bool:
-            key = str(lora_name).replace("\\", "/").casefold()
+            key = str(lora_name).replace("\\", "/").strip("/").casefold()
             if key in excluded_file_keys:
                 return True
             return any(key.startswith(d) for d in excluded_dir_keys)
@@ -1484,19 +1485,20 @@ def _get_unsynced_loras():
     from . import naiba_sync_exclude
 
     excluded = naiba_sync_exclude.get_excluded()
+    # 目录键统一为 "dir/"（无前导斜杠、有尾斜杠），防御历史名单里 "/dir/" 这类形态
     file_keys = {
-        str(n).replace("\\", "/").casefold()
+        str(n).replace("\\", "/").strip("/").casefold()
         for n in excluded
-        if not str(n).endswith("/")
+        if not str(n).replace("\\", "/").endswith("/")
     }
     dir_keys = tuple(
-        str(n).replace("\\", "/").casefold()
+        f"{str(n).replace(chr(92), '/').strip('/').casefold()}/"
         for n in excluded
-        if str(n).endswith("/")
+        if str(n).replace("\\", "/").endswith("/")
     )
 
     def _is_excluded(name: str) -> bool:
-        key = name.casefold()
+        key = str(name).replace("\\", "/").strip("/").casefold()
         if key in file_keys:
             return True
         return any(key.startswith(d) for d in dir_keys)
@@ -1507,7 +1509,9 @@ def _get_unsynced_loras():
         name = str(raw_name).replace("\\", "/")
         if _is_excluded(name):
             # 记录因目录排除被跳过的条目，供前端在管理弹窗里透明展示
-            if dir_keys and any(name.casefold().startswith(d) for d in dir_keys):
+            if dir_keys and _is_excluded(name) and not any(
+                name.replace("\\", "/").strip("/").casefold() == k.rstrip("/") for k in file_keys
+            ):
                 dir_excluded.append(name)
             continue
         try:

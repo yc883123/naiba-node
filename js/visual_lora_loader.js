@@ -281,7 +281,8 @@ function createVisualLoraModal(node, loraList) {
     let loraMtimesPromise = null;
     const ensureLoraMtimes = (force = false) => {
         if (force) { loraMtimes = null; loraMtimesPromise = null; }
-        if (loraMtimes) return Promise.resolve(loraMtimes);
+        // 空对象视为未就绪：拉取失败后再次调用会真正重新请求，而不是永远拿到空缓存
+        if (loraMtimes && Object.keys(loraMtimes).length > 0) return Promise.resolve(loraMtimes);
         if (!loraMtimesPromise) {
             loraMtimesPromise = api.fetchApi("/naiba/lora/mtimes")
                 .then((r) => r.json())

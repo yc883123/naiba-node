@@ -22,15 +22,24 @@ _MEM = None  # type: list | None
 
 
 def _norm(name):
-    """统一 LoRA 名分隔符为正斜杠，兼容 Windows 反斜杠与 folder_paths 风格。"""
+    """统一 LoRA 名分隔符为正斜杠，兼容 Windows 反斜杠与 folder_paths 风格。
+
+    同时去掉前导斜杠（前端目录树会传 "/anima/edit" 这类带根斜杠的形态）
+    与尾部斜杠（目录条目由 add_excluded 统一补 "/"，避免 "dir//" 这类双斜杠条目）。
+    """
     if not name:
         return name
-    return str(name).replace("\\", "/")
+    return str(name).replace("\\", "/").strip("/")
 
 
 def _is_dir_entry(name):
-    """目录条目：以 / 结尾。"""
+    """目录条目：以 / 结尾（add_excluded 保证存储形态恒为 "dir/"）。"""
     return bool(name) and str(name).endswith("/")
+
+
+def _dir_entry_prefix(entry):
+    """目录条目的匹配前缀："dir/" 形态（无前导斜杠、有尾斜杠）。"""
+    return _norm(entry) if _norm(entry).endswith("/") else f"{_norm(entry)}/"
 
 
 def _load():
@@ -42,10 +51,19 @@ def _load():
         if os.path.exists(_LIST_PATH):
             with open(_LIST_PATH, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
+            raw_items = []
             if isinstance(loaded, list):
-                data = [_norm(n) for n in loaded if n]
+                raw_items = loaded
             elif isinstance(loaded, dict) and isinstance(loaded.get("excluded"), list):
-                data = [_norm(n) for n in loaded["excluded"] if n]
+                raw_items = loaded["excluded"]
+            # 目录语义以原始输入的尾斜杠判定：_norm 会 strip("/")，先判后规整并补回
+            for n in raw_items:
+                if not n:
+                    continue
+                normalized = _norm(n)
+                if str(n).replace("\\", "/").endswith("/") and normalized and not normalized.endswith("/"):
+                    normalized = f"{normalized}/"
+                data.append(normalized)
     except json.JSONDecodeError as e:
         print(f"[Naiba-SyncExclude] 名单 JSON 解析失败，使用空名单: {e}")
     except Exception as e:  # noqa: BLE001
@@ -86,8 +104,8 @@ def is_excluded(name):
     with _LOCK:
         for entry in _load():
             entry_norm = _norm(entry).casefold()
-            if _is_dir_entry(entry_norm):
-                if target.startswith(entry_norm):
+            if _is_dir_entry(entry):
+                if target.startswith(_dir_entry_prefix(entry).casefold()):
                     return True
             elif entry_norm == target:
                 return True
@@ -95,7 +113,10 @@ def is_excluded(name):
 
 
 def add_excluded(names):
-    """把 LoRA 或目录（"/" 结尾）加入排除名单（去重、规整），返回最终名单。"""
+    """把 LoRA 或目录加入排除名单（去重、规整），返回最终名单。
+
+    目录条目自动补尾部 "/"（调用方可传 "dir"、"/dir"、"dir/" 任意形态）。
+    """
     if isinstance(names, str):
         names = [names]
     with _LOCK:
@@ -106,6 +127,9 @@ def add_excluded(names):
             if not n:
                 continue
             normalized = _norm(n)
+            # 目录语义（原始输入以 / 结尾）统一规整成 "dir/" 存储
+            if str(n).replace("\\", "/").endswith("/") and not normalized.endswith("/"):
+                normalized = f"{normalized}/"
             key = normalized.casefold()
             if key not in seen:
                 seen.add(key)
