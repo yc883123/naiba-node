@@ -301,11 +301,16 @@ function createVisualLoraModal(node, loraList) {
     const applyCurrentSort = (list) => {
         if (sortMode !== "time") return list;
         const mtimes = loraMtimes || {};
+        // mtimes 的键是 object_info 原始名（Windows 下 "\" 分隔），而目录树拼接出的
+        // 显示名是 "/" 分隔且带前导斜杠（如 "/anima/xxx"），直接查表会让子目录文件
+        // 全部拿不到时间、退化成字母序（此前只有刷新按钮路径用原始名，排序才"碰巧"正确）。
+        const norm = (n) => String(n || "").replace(/\\/g, "/").replace(/^\/+/, "");
+        const timeOf = new Map(Object.entries(mtimes).map(([k, v]) => [norm(k), v]));
         return [...list].sort((a, b) => {
-            const ta = mtimes[a] ?? 0;
-            const tb = mtimes[b] ?? 0;
+            const ta = timeOf.get(norm(a)) ?? 0;
+            const tb = timeOf.get(norm(b)) ?? 0;
             if (tb !== ta) return tb - ta;
-            return a.localeCompare(b);
+            return norm(a).localeCompare(norm(b));
         });
     };
 
