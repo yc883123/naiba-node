@@ -102,7 +102,7 @@ def _build_lora_info_text(lora_configs: list) -> str:
     """
     把 LoRA 配置列表渲染成人类可读的多行文本。
 
-    每行格式: 序号. [开关状态] 名称 | M:模型权重 C:CLIP权重 | 下载链接
+    每行格式: 序号. [开关状态] 名称 | M:模型权重 C:CLIP权重 | 下载链接 | sha256: 哈希
     """
     if not lora_configs:
         return "（未选择任何 LoRA）"
@@ -129,9 +129,12 @@ def _build_lora_info_text(lora_configs: list) -> str:
         resolved_display = str(resolved_name).replace("\\", "/")
         download_url = _load_lora_download_url(str(resolved_name)) or _load_lora_download_url(name)
         download_label = download_url if download_url else "（未同步到 Civitai，无下载链接）"
+        # sha256 已由 load_loras 统一回填（全局缓存/元数据文件），缺失时明确标注
+        sha256 = str(config.get("sha256") or "").strip()
+        sha_label = sha256 if sha256 else "（无 sha256）"
         lines.append(
             f"{index}. [{enabled_label}] {resolved_display} | "
-            f"M:{strength_model:.2f} C:{strength_clip:.2f} | {download_label}"
+            f"M:{strength_model:.2f} C:{strength_clip:.2f} | {download_label} | sha256: {sha_label}"
         )
     return "\n".join(lines)
 
