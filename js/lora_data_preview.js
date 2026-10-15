@@ -362,10 +362,10 @@ function createLoraDataPreviewModal(node, loraList) {
         } else if (currentCategory === "civitai-check") {
             statusDisplay.textContent = "Civitai校验模式";
         } else if (currentCategory === "unsynced") {
-            const unsyncedSet = new Set(unsyncedList);
+            const inFolder = getUnsyncedInCurrentFolder();
             const cnt = searchTerm
-                ? baseLoras.filter(l => unsyncedSet.has(l)).length
-                : unsyncedList.length;
+                ? inFolder.filter(l => l.toLowerCase().includes(searchTerm)).length
+                : inFolder.length;
             statusDisplay.textContent = searchTerm
                 ? `未同步: ${cnt} 个结果`
                 : `未同步: ${cnt} 个LoRA`;
@@ -775,6 +775,15 @@ function createLoraDataPreviewModal(node, loraList) {
 
     // 目录条目判定（与后端约定一致：以 "/" 结尾）
     const isDirExcludedEntry = (entry) => String(entry || "").endsWith("/");
+
+    // 未同步列表按当前目录过滤（根目录 = 全部；用于未同步页的目录浏览与"排除此目录"上下文）
+    const getUnsyncedInCurrentFolder = () => {
+        if (!currentFolder || currentFolder === "/") return unsyncedList.slice();
+        const prefix = `${String(currentFolder).replace(/^\/+|\/+$/g, "").casefold()}/`;
+        return unsyncedList.filter((n) =>
+            String(n || "").replace(/\\/g, "/").replace(/^\/+/, "").casefold().startsWith(prefix)
+        );
+    };
 
     // 把某个目录（含子目录）加入同步排除名单
     async function excludeFolderFromSync(folderPath, button) {
@@ -1221,16 +1230,23 @@ function createLoraDataPreviewModal(node, loraList) {
             mainContent.appendChild(sortNote);
         }
 
-        // "未同步"视图：排除名单提示条
-        if (currentCategory === "unsynced" && syncExcludedList.length > 0) {
+        // "未同步"视图：排除名单提示条（常驻，承载"排除此目录"入口）
+        if (currentCategory === "unsynced") {
+            const hasExclusions = syncExcludedList.length > 0;
             const exBar = document.createElement("div");
             exBar.style.cssText = `display:flex;align-items:center;gap:10px;margin:0 8px 10px;padding:8px 12px;background:${COLORS.inputBg};border:1px dashed ${COLORS.border};border-radius:4px;color:${COLORS.textDim};font-size:12px;`;
             const exText = document.createElement("span");
-            const dirExcludedCount = syncExcludedList.filter(isDirExcludedEntry).length;
-            const fileExcludedCount = syncExcludedList.length - dirExcludedCount;
-            exText.textContent = dirExcludedCount > 0
-                ? `已排除 ${fileExcludedCount} 个 + ${dirExcludedCount} 个目录（不计入统计，批量同步跳过）`
-                : `已排除 ${syncExcludedList.length} 个（不计入统计，批量同步跳过）`;
+            if (hasExclusions) {
+                const dirExcludedCount = syncExcludedList.filter(isDirExcludedEntry).length;
+                const fileExcludedCount = syncExcludedList.length - dirExcludedCount;
+                exText.textContent = dirExcludedCount > 0
+                    ? `已排除 ${fileExcludedCount} 个 + ${dirExcludedCount} 个目录（不计入统计，批量同步跳过）`
+                    : `已排除 ${syncExcludedList.length} 个（不计入统计，批量同步跳过）`;
+            } else {
+                exText.textContent = currentFolder && currentFolder !== "/"
+                    ? "当前目录下没有未同步的 LoRA，或可将整个目录加入排除"
+                    : "暂无排除项；选中左侧子目录后可将整个目录加入排除";
+            }
             exText.style.cssText = "flex:1;";
             const exManageBtn = document.createElement("button");
             exManageBtn.textContent = "管理排除";
@@ -1241,7 +1257,7 @@ function createLoraDataPreviewModal(node, loraList) {
             // 非根目录时提供一键排除当前目录（根目录不放，避免误排除全部）
             if (currentFolder && currentFolder !== "/") {
                 const exFolderBtn = document.createElement("button");
-                exFolderBtn.textContent = "排除此目录";
+                exFolderBtn.textContent = `排除此目录（${String(currentFolder).replace(/^\/+|\/+$/g, "")}）`;
                 exFolderBtn.title = `把 ${currentFolder} 下所有 LoRA（含子目录）加入同步排除`;
                 exFolderBtn.style.cssText = `padding:4px 10px;background:transparent;color:${COLORS.warning};border:1px solid ${COLORS.warning};border-radius:4px;cursor:pointer;font-size:11px;`;
                 exFolderBtn.addEventListener("click", () => excludeFolderFromSync(currentFolder, exFolderBtn));
@@ -1265,7 +1281,7 @@ function createLoraDataPreviewModal(node, loraList) {
             renderCivitaiCheckView();
             return;
         } else if (currentCategory === "unsynced") {
-            displayLoras = unsyncedList.slice();
+            displayLoras = getUnsyncedInCurrentFolder();
         } else {
             displayLoras = getLorasInFolder(currentFolder);
         }
@@ -1329,7 +1345,11 @@ function createLoraDataPreviewModal(node, loraList) {
             } else if (currentCategory === "favorite") {
                 emptyMsg.textContent = "尚未收藏任何LoRA";
             } else if (currentCategory === "unsynced") {
-                if (unsyncedLoaded && unsyncedList.length === 0) {
+                if (!unsyncedLoaded) {
+                    emptyMsg.textContent = "正在加载未同步列表...";
+                } else if (currentFolder && currentFolder !== "/" && unsyncedList.length > 0) {
+                    emptyMsg.textContent = "该目录下没有未同步的 LoRA";
+                } else if (unsyncedList.length === 0) {
                     emptyMsg.textContent = "所有 LoRA 都已同步";
                     if (syncExcludedList.length > 0) {
                         const note = document.createElement("div");
@@ -1345,8 +1365,6 @@ function createLoraDataPreviewModal(node, loraList) {
                         manageBtn.addEventListener("click", () => openExcludedManager());
                         emptyMsg.appendChild(manageBtn);
                     }
-                } else {
-                    emptyMsg.textContent = "正在加载未同步列表...";
                 }
             } else {
                 emptyMsg.textContent = searchTerm ? "没有匹配的LoRA文件" : "没有找到LoRA文件";
