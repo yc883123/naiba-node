@@ -452,7 +452,7 @@ export function createPresetsModal(node, onImport = null) {
                     justify-content:center;position:relative;
                 `;
                 const coverImg = document.createElement("img");
-                coverImg.style.cssText = "width:100%;height:100%;object-fit:contain;display:block;";
+                coverImg.style.cssText = "width:100%;height:100%;object-fit:contain;display:none;";
                 coverImg.draggable = false;
                 const coverPlaceholder = document.createElement("div");
                 coverPlaceholder.textContent = "无封面";
@@ -495,7 +495,8 @@ export function createPresetsModal(node, onImport = null) {
                 cover.appendChild(dropHint);
                 item._coverImg = coverImg;
                 item._refreshCover = () => {
-                    coverImg.style.display = "block";
+                    // 先隐藏再加载：404 时浏览器会在 onerror 触发前画出破损图标，先隐藏避免闪烁
+                    coverImg.style.display = "none";
                     coverPlaceholder.style.display = "none";
                     coverImg.src = `/naiba/presets/image?name=${encodeURIComponent(item._name)}&t=${Date.now()}`;
                 };
