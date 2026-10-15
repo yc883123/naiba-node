@@ -1072,9 +1072,10 @@ function createLoraDataPreviewModal(node, loraList) {
             `;
             // 树形制表符：根层只缩进不画符号（用户偏好）；子层祖先画 │/空位，本层画 ├/└
             const guideStyle = "flex:0 0 16px;font-family:Consolas,'Courier New',monospace;font-size:12px;line-height:1;text-align:center;";
-            ancestorLines.forEach(hasLine => {
+            ancestorLines.forEach((hasLine, level) => {
                 const g = document.createElement("span");
-                g.textContent = hasLine ? "│" : " ";
+                // level 0 是根层祖先：永远画空位，不画延续线（根目录下不延伸竖线）
+                g.textContent = (level === 0 || !hasLine) ? " " : "│";
                 g.style.cssText = guideStyle + `color:${COLORS.textDim};opacity:0.5;`;
                 folderElement.appendChild(g);
             });
