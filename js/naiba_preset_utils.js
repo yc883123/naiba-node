@@ -121,6 +121,69 @@ async function fetchPresetNames() {
     }
 }
 
+// ========== 当前数据来源预设名（持久化到节点 properties，随工作流保存/加载） ==========
+export function getLoadedPresetName(node) {
+    return (node && node.properties && node.properties.naiba_loaded_preset) || "";
+}
+
+export function setLoadedPresetName(node, name) {
+    if (!node) return;
+    if (name) {
+        if (!node.properties) node.properties = {};
+        node.properties.naiba_loaded_preset = name;
+    } else if (node.properties) {
+        delete node.properties.naiba_loaded_preset;
+    }
+}
+
+async function fetchPresetData(name) {
+    try {
+        const resp = await api.fetchApi(`/naiba/presets/load?name=${encodeURIComponent(name)}`);
+        const result = await resp.json();
+        if (result.error || !Array.isArray(result.data)) return null;
+        return result.data;
+    } catch (e) {
+        console.warn("[Presets] Failed to load preset data for diff:", e);
+        return null;
+    }
+}
+
+// 条目身份匹配：优先 sha256（文件改名仍可对上），回退到归一化路径（手动添加的条目尚未回填 sha）
+function normLoraPath(name) {
+    return String(name || "").replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase();
+}
+
+function diffPresetData(oldData, newData) {
+    const oldList = Array.isArray(oldData) ? oldData : [];
+    const newList = Array.isArray(newData) ? newData : [];
+    const oldBySha = new Map();
+    const oldByName = new Map();
+    for (const e of oldList) {
+        if (e?.sha256) oldBySha.set(String(e.sha256).toLowerCase(), e);
+        oldByName.set(normLoraPath(e?.name), e);
+    }
+    const matchedOld = new Set();
+    const added = [];
+    const removed = [];
+    const changed = [];
+    for (const e of newList) {
+        let o = e?.sha256 ? oldBySha.get(String(e.sha256).toLowerCase()) : null;
+        if (!o) o = oldByName.get(normLoraPath(e?.name)) || null;
+        if (!o) {
+            added.push(e);
+            continue;
+        }
+        matchedOld.add(o);
+        if ((o.strength_model ?? 1) !== (e.strength_model ?? 1) || (o.strength_clip ?? 1) !== (e.strength_clip ?? 1)) {
+            changed.push({ from: o, to: e });
+        }
+    }
+    for (const o of oldList) {
+        if (!matchedOld.has(o)) removed.push(o);
+    }
+    return { added, removed, changed };
+}
+
 // 保存预设数据，返回 { ok, error?, coverError? }；错误由调用方决定如何展示
 async function savePresetData(node, trimmedName, coverFile = null) {
     const data = getCurrentData(node);
@@ -199,6 +262,15 @@ export async function openSavePresetDialog(node, { defaultName = "", existingNam
     const warn = document.createElement("div");
     warn.style.cssText = `color:${COLORS.warn};font-size:12px;margin-top:8px;display:none;`;
 
+    // 覆盖已有预设时展示与当前内容的 git 风格差异（+新增 −移除 ~强度修改）
+    const diffBox = document.createElement("div");
+    diffBox.style.cssText = `
+        display:none;margin-top:8px;padding:6px 8px;box-sizing:border-box;
+        background:${COLORS.inputBg};border:1px solid ${COLORS.border};border-radius:3px;
+        font-size:11px;line-height:1.7;max-height:150px;overflow-y:auto;
+        font-family:Consolas,monospace;
+    `;
+
     const dialogStatus = document.createElement("div");
     dialogStatus.style.cssText = `color:${COLORS.danger};font-size:12px;margin-top:8px;display:none;`;
 
@@ -206,6 +278,8 @@ export async function openSavePresetDialog(node, { defaultName = "", existingNam
     let dialogCoverUrl = "";
     let coverDragDepth = 0;
     let saving = false;
+    let diffTimer = null;
+    let diffSeq = 0;
     // 覆盖已有预设时用于展示其当前封面（不选新封面则覆盖后原样保留）
     let existingCoverNameShown = "";
     let existingCoverAvailable = false;
@@ -364,6 +438,68 @@ export async function openSavePresetDialog(node, { defaultName = "", existingNam
         }
         dialogStatus.style.display = "none";
         refreshExistingCoverPreview();
+        if (diffTimer) clearTimeout(diffTimer);
+        diffTimer = setTimeout(refreshDiff, 250);
+    }
+
+    // ========== 覆盖差异对比（git 风格） ==========
+    const fmtStrength = (v) => Number(v ?? 1).toFixed(2);
+    const dispName = (e) => String(e?.name || "?").split(/[\\/]/).pop();
+
+    function renderDiffBox(diff, name) {
+        diffBox.innerHTML = "";
+        const noChange = diff.added.length === 0 && diff.removed.length === 0 && diff.changed.length === 0;
+        if (noChange) {
+            const row = document.createElement("div");
+            row.textContent = `与已保存预设「${name}」内容一致`;
+            row.style.color = COLORS.textDim;
+            diffBox.appendChild(row);
+        } else {
+            const header = document.createElement("div");
+            header.textContent = "覆盖将产生以下变更（+ 新增  − 移除  ~ 强度修改）：";
+            header.style.color = COLORS.text;
+            diffBox.appendChild(header);
+            const mkRow = (sign, text, color) => {
+                const row = document.createElement("div");
+                row.textContent = `${sign} ${text}`;
+                row.style.color = color;
+                row.title = text;
+                diffBox.appendChild(row);
+            };
+            for (const e of diff.added) {
+                mkRow("+", `${dispName(e)}（model ${fmtStrength(e.strength_model)}）`, COLORS.success);
+            }
+            for (const e of diff.removed) {
+                mkRow("−", `${dispName(e)}（model ${fmtStrength(e.strength_model)}）`, COLORS.danger);
+            }
+            for (const c of diff.changed) {
+                const parts = [];
+                if ((c.from.strength_model ?? 1) !== (c.to.strength_model ?? 1)) {
+                    parts.push(`model ${fmtStrength(c.from.strength_model)}→${fmtStrength(c.to.strength_model)}`);
+                }
+                if ((c.from.strength_clip ?? 1) !== (c.to.strength_clip ?? 1)) {
+                    parts.push(`clip ${fmtStrength(c.from.strength_clip)}→${fmtStrength(c.to.strength_clip)}`);
+                }
+                mkRow("~", `${dispName(c.to)}: ${parts.join(", ")}`, COLORS.warn);
+            }
+        }
+        diffBox.style.display = "block";
+    }
+
+    async function refreshDiff() {
+        const seq = ++diffSeq;
+        const name = input.value.trim();
+        if (!name || !isExistingPresetName(name)) {
+            diffBox.style.display = "none";
+            return;
+        }
+        const presetData = await fetchPresetData(name);
+        if (seq !== diffSeq) return; // 名称已再次变化，丢弃过期结果
+        if (!presetData) {
+            diffBox.style.display = "none";
+            return;
+        }
+        renderDiffBox(diffPresetData(presetData, getCurrentData(node)), name);
     }
 
     const close = () => {
@@ -398,6 +534,8 @@ export async function openSavePresetDialog(node, { defaultName = "", existingNam
         if (typeof onSaved === "function") {
             try { await onSaved(); } catch (e) { console.error("[Presets] onSaved callback failed:", e); }
         }
+        // 保存成功后数据来源切换为该预设，同步持久化记录
+        setLoadedPresetName(node, name);
         if (r.coverError) {
             // 数据已保存，仅封面上传失败：保留对话框便于重新选封面
             dialogStatus.style.color = COLORS.warn;
@@ -414,6 +552,7 @@ export async function openSavePresetDialog(node, { defaultName = "", existingNam
     box.appendChild(dialogCoverInput);
     box.appendChild(coverError);
     box.appendChild(warn);
+    box.appendChild(diffBox);
     box.appendChild(dialogStatus);
     btnRow.appendChild(cancelBtn);
     btnRow.appendChild(confirmBtn);
@@ -1109,8 +1248,8 @@ export function createPresetsModal(node, onImport = null) {
                 const resolved = await resolvePreset(result.data);
                 // 无论本地是否有所，完整套用所有条目（缺失项由选择器以 (missing) 显示）
                 setNodeData(resolved);
-                // 记录当前数据来源的预设名，供节点上的保存按钮预填（覆盖迭代）
-                node._naibaLoadedPresetName = selectedPreset;
+                // 记录当前数据来源的预设名（持久化到节点 properties），供保存按钮预填覆盖迭代
+                setLoadedPresetName(node, selectedPreset);
                 showStatus(`已导入预设: ${selectedPreset}`);
                 closeModal();
                 // 调用导入回调（如果存在）
@@ -1259,7 +1398,7 @@ export function createPresetsModal(node, onImport = null) {
                     // 无论本地是否有所，完整套用所有条目（缺失项由选择器以 (missing) 显示）
                     setNodeData(resolved);
                     // 文件导入无法对应已有预设名，清空来源记录
-                    node._naibaLoadedPresetName = null;
+                    setLoadedPresetName(node, null);
                     showStatus("已从文件导入预设");
                     closeModal();
                     // 调用导入回调（如果存在）

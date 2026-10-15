@@ -5,7 +5,7 @@
 
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { createPresetsModal, openSavePresetDialog } from "./naiba_preset_utils.js";
+import { createPresetsModal, openSavePresetDialog, getLoadedPresetName, setLoadedPresetName } from "./naiba_preset_utils.js";
 
 // ========== 颜色常量 ==========
 const COLORS = {
@@ -1595,8 +1595,8 @@ app.registerExtension({
                     const loraDataWidget = node.widgets?.find((w) => w.name === "lora_data");
                     if (loraDataWidget) loraDataWidget.value = "[]";
                 }
-                // 数据已清空，来源预设记录一并失效
-                node._naibaLoadedPresetName = null;
+                // 数据已清空，来源预设记录一并失效（持久化记录同步移除）
+                setLoadedPresetName(node, null);
                 // 同步清空弹窗内的选中状态（若弹窗已打开）
                 if (node._visualSelectedLoras) {
                     node._visualSelectedLoras.clear();
@@ -1684,7 +1684,7 @@ app.registerExtension({
                 savePresetBtn.style.background = COLORS.success;
             });
             savePresetBtn.addEventListener("click", () => {
-                openSavePresetDialog(node, { defaultName: node._naibaLoadedPresetName || "" });
+                openSavePresetDialog(node, { defaultName: getLoadedPresetName(node) });
             });
 
             buttonRow.appendChild(savePresetBtn);
