@@ -445,7 +445,8 @@ function createLoraDataPreviewModal(node, loraList) {
     let loraMtimesPromise = null;
     const ensureLoraMtimes = (force = false) => {
         if (force) { loraMtimes = null; loraMtimesPromise = null; }
-        if (loraMtimes) return Promise.resolve(loraMtimes);
+        // 空对象视为未就绪：拉取失败后再次调用会真正重新请求，而不是永远拿到空缓存
+        if (loraMtimes && Object.keys(loraMtimes).length > 0) return Promise.resolve(loraMtimes);
         if (!loraMtimesPromise) {
             loraMtimesPromise = api.fetchApi("/naiba/lora/mtimes")
                 .then((r) => r.json())
@@ -466,11 +467,16 @@ function createLoraDataPreviewModal(node, loraList) {
     const applyCurrentSort = (list) => {
         if (sortMode !== "time") return list;
         const mtimes = loraMtimes || {};
+        // mtimes 的键是 object_info 原始名（Windows 下 "\" 分隔），而目录树拼接出的
+        // 显示名是 "/" 分隔且带前导斜杠（如 "/anima/xxx"），直接查表会让子目录文件
+        // 全部拿不到时间、退化成字母序。归一化（统一 "/" 并去掉前导斜杠）后排序。
+        const norm = (n) => String(n || "").replace(/\\/g, "/").replace(/^\/+/, "");
+        const timeOf = new Map(Object.entries(mtimes).map(([k, v]) => [norm(k), v]));
         return [...list].sort((a, b) => {
-            const ta = mtimes[a] ?? 0;
-            const tb = mtimes[b] ?? 0;
+            const ta = timeOf.get(norm(a)) ?? 0;
+            const tb = timeOf.get(norm(b)) ?? 0;
             if (tb !== ta) return tb - ta;
-            return a.localeCompare(b);
+            return norm(a).localeCompare(norm(b));
         });
     };
 
@@ -1135,6 +1141,14 @@ function createLoraDataPreviewModal(node, loraList) {
         // 进度条（批量同步时显示）
         mainContent.appendChild(progressBarContainer);
 
+        // 时间排序数据未就绪时明确提示（此前会静默退化为字母序，看起来像"排序坏了"）
+        if (sortMode === "time" && (!loraMtimes || Object.keys(loraMtimes).length === 0)) {
+            const sortNote = document.createElement("div");
+            sortNote.textContent = "时间排序数据未加载，当前按字母序显示（网络恢复后点击排序按钮切换即可重试）";
+            sortNote.style.cssText = `margin:8px;padding:6px 10px;border:1px dashed ${COLORS.warning};border-radius:4px;color:${COLORS.warning};font-size:12px;`;
+            mainContent.appendChild(sortNote);
+        }
+
         // "未同步"视图：排除名单提示条
         if (currentCategory === "unsynced" && syncExcludedList.length > 0) {
             const exBar = document.createElement("div");
@@ -1409,19 +1423,21 @@ function createLoraDataPreviewModal(node, loraList) {
             preview.appendChild(favBtn);
 
             // 预览图（object-fit:contain，最长边自动缩放适应容器，不裁切——与可视化 LoRA 选择器一致）
+            // 用 visibility:hidden 而非 display:none：懒加载观察器对 display:none 的元素
+            // 永远不触发（没有布局盒子），src 不会被设置，封面会全部消失
             const previewImg = document.createElement("img");
             previewImg.style.cssText = `
-                width:100%;height:100%;object-fit:contain;display:none;
+                width:100%;height:100%;object-fit:contain;visibility:hidden;
             `;
 
             // 封面加载失败：仅显示占位，不再自动请求元数据（性能优化）
             previewImg.onload = () => {
-                previewImg.style.display = "block";
+                previewImg.style.visibility = "visible";
                 preview.querySelectorAll("[data-no-preview]").forEach((el) => el.remove());
             };
             previewImg.onerror = () => {
-                // 默认隐藏 + onload 才显示：404 时浏览器会在 onerror 前画出破损图标，先隐藏避免闪烁
-                previewImg.style.display = 'none';
+                // 加载成功才显示：404 时浏览器画出的破损图标因 visibility:hidden 不可见，避免闪烁
+                previewImg.style.visibility = 'hidden';
                 preview.querySelectorAll("[data-no-preview]").forEach((el) => el.remove());
                 const ph = document.createElement("div");
                 ph.dataset.noPreview = "1";
