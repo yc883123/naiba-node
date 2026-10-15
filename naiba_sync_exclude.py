@@ -6,6 +6,9 @@
 - 批量同步的两种模式（同步未同步的 / 同步全部）都跳过，避免每次全量重试注定失败的条目
 - 单个 LoRA 的手动同步不受限制（用户明确点击时允许重试）
 
+支持目录条目：以 "/" 结尾的条目（如 "anima/edit/"）表示排除整个目录，
+该目录（含各级子目录）下的所有 LoRA 都按排除处理。文件条目精确匹配。
+
 独立于 sha256 缓存：排除的是「同步」语义，与本地哈希缓存无关。
 """
 
@@ -23,6 +26,11 @@ def _norm(name):
     if not name:
         return name
     return str(name).replace("\\", "/")
+
+
+def _is_dir_entry(name):
+    """目录条目：以 / 结尾。"""
+    return bool(name) and str(name).endswith("/")
 
 
 def _load():
@@ -68,15 +76,26 @@ def get_excluded():
 
 
 def is_excluded(name):
-    """判断某 LoRA 是否在排除名单（大小写/分隔符不敏感）。"""
+    """判断某 LoRA 是否被排除（大小写/分隔符不敏感）。
+
+    文件条目精确匹配；目录条目（"/" 结尾）按前缀匹配，覆盖各级子目录。
+    """
     if not name:
         return False
     target = _norm(name).casefold()
-    return any(_norm(n).casefold() == target for n in _load())
+    with _LOCK:
+        for entry in _load():
+            entry_norm = _norm(entry).casefold()
+            if _is_dir_entry(entry_norm):
+                if target.startswith(entry_norm):
+                    return True
+            elif entry_norm == target:
+                return True
+    return False
 
 
 def add_excluded(names):
-    """把 LoRA 加入排除名单（去重、规整），返回最终名单。"""
+    """把 LoRA 或目录（"/" 结尾）加入排除名单（去重、规整），返回最终名单。"""
     if isinstance(names, str):
         names = [names]
     with _LOCK:
@@ -98,7 +117,10 @@ def add_excluded(names):
 
 
 def remove_excluded(names):
-    """把 LoRA 从排除名单移除（大小写/分隔符不敏感），返回最终名单。"""
+    """把 LoRA 或目录从排除名单移除（大小写/分隔符不敏感），返回最终名单。
+
+    移除目录条目只删除该目录条目本身，不展开删除其下的文件条目。
+    """
     if isinstance(names, str):
         names = [names]
     drop = {_norm(n).casefold() for n in names or [] if n}

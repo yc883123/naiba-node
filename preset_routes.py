@@ -1227,11 +1227,26 @@ async def batch_sync_handler(request):
                         all_lora_paths.append((rel_path, file_path))
         
         # 被用户排除的 LoRA（云端无数据、永远无法同步）不参与同步，
-        # 两种模式（同步未同步的 / 同步全部）都跳过，避免每次全量重试浪费时间
+        # 两种模式（同步未同步的 / 同步全部）都跳过，避免每次全量重试浪费时间。
+        # 排除名单支持目录条目（"/" 结尾），命中目录（含子目录）的 LoRA 一并跳过
         from . import naiba_sync_exclude
-        excluded_keys = {
-            str(n).replace("\\", "/").casefold() for n in naiba_sync_exclude.get_excluded()
+        _excluded_raw = naiba_sync_exclude.get_excluded()
+        excluded_file_keys = {
+            str(n).replace("\\", "/").casefold()
+            for n in _excluded_raw
+            if not str(n).endswith("/")
         }
+        excluded_dir_keys = tuple(
+            str(n).replace("\\", "/").casefold()
+            for n in _excluded_raw
+            if str(n).endswith("/")
+        )
+
+        def _is_sync_excluded(lora_name: str) -> bool:
+            key = str(lora_name).replace("\\", "/").casefold()
+            if key in excluded_file_keys:
+                return True
+            return any(key.startswith(d) for d in excluded_dir_keys)
 
         # 根据模式过滤需要同步的LoRA
         lora_paths = []
@@ -1239,7 +1254,7 @@ async def batch_sync_handler(request):
         excluded_count = 0
 
         for lora_name, lora_path in all_lora_paths:
-            if str(lora_name).replace("\\", "/").casefold() in excluded_keys:
+            if _is_sync_excluded(lora_name):
                 excluded_count += 1
                 continue
             if not force:
@@ -1459,21 +1474,41 @@ async def sha256_cache_status_handler(request):
 # 扣除用户排除名单，供前端「未同步」标签页展示）
 # ============================================================
 def _get_unsynced_loras():
-    """遍历本地 LoRA，返回 (未同步列表, 排除名单)。
+    """遍历本地 LoRA，返回 (未同步列表, 排除名单, 因目录排除的条目)。
 
     未同步判定与 batch-sync 的 sync_unsynced 过滤完全一致：
     无 .civitai.info.json 或元数据缺少 Civitai model/version 匹配即视为未同步。
+    排除名单支持目录条目（"/" 结尾），命中目录的 LoRA 一并扣除。
     """
     from .civitai_utils import get_metadata_path, load_cached_metadata, has_synced_metadata
     from . import naiba_sync_exclude
 
     excluded = naiba_sync_exclude.get_excluded()
-    excluded_keys = {str(n).replace("\\", "/").casefold() for n in excluded}
+    file_keys = {
+        str(n).replace("\\", "/").casefold()
+        for n in excluded
+        if not str(n).endswith("/")
+    }
+    dir_keys = tuple(
+        str(n).replace("\\", "/").casefold()
+        for n in excluded
+        if str(n).endswith("/")
+    )
+
+    def _is_excluded(name: str) -> bool:
+        key = name.casefold()
+        if key in file_keys:
+            return True
+        return any(key.startswith(d) for d in dir_keys)
 
     unsynced = []
+    dir_excluded = []
     for raw_name in folder_paths.get_filename_list("loras"):
         name = str(raw_name).replace("\\", "/")
-        if name.casefold() in excluded_keys:
+        if _is_excluded(name):
+            # 记录因目录排除被跳过的条目，供前端在管理弹窗里透明展示
+            if dir_keys and any(name.casefold().startswith(d) for d in dir_keys):
+                dir_excluded.append(name)
             continue
         try:
             lora_path = folder_paths.get_full_path("loras", name)
@@ -1484,20 +1519,22 @@ def _get_unsynced_loras():
         metadata = load_cached_metadata(get_metadata_path(lora_path))
         if not has_synced_metadata(metadata):
             unsynced.append(name)
-    return unsynced, excluded
+    return unsynced, excluded, dir_excluded
 
 
 @PromptServer.instance.routes.get('/naiba/lora/unsynced')
 async def unsynced_loras_handler(request):
-    """返回未同步的 LoRA 列表（已扣除排除名单）与排除名单本身。"""
+    """返回未同步的 LoRA 列表（已扣除排除名单与排除目录）与排除名单本身。"""
     try:
-        unsynced, excluded = _get_unsynced_loras()
+        unsynced, excluded, dir_excluded = _get_unsynced_loras()
         return web.json_response({
             "success": True,
             "unsynced": unsynced,
             "count": len(unsynced),
             "excluded": excluded,
             "excluded_count": len(excluded),
+            "dir_excluded_loras": dir_excluded,
+            "dir_excluded_count": len(dir_excluded),
         })
     except Exception as e:
         print(f"[Naiba] unsynced list error: {e}")

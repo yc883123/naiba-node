@@ -750,7 +750,8 @@ function createLoraDataPreviewModal(node, loraList) {
 
     // ========== 未同步 LoRA 状态（与批量同步 sync_unsynced 同口径，扣除排除名单） ==========
     let unsyncedList = [];       // 未同步的本地 LoRA（已扣除排除项）
-    let syncExcludedList = [];   // 已被排除出同步统计的本地 LoRA
+    let syncExcludedList = [];   // 已被排除出同步统计的条目（文件名或 "目录/" 条目）
+    let dirExcludedLoras = [];   // 因目录排除而被跳过的具体 LoRA（管理弹窗透明展示用）
     let unsyncedLoaded = false;
 
     async function loadUnsyncedStatus() {
@@ -763,11 +764,52 @@ function createLoraDataPreviewModal(node, loraList) {
             if (data && data.success) {
                 unsyncedList = Array.isArray(data.unsynced) ? data.unsynced : [];
                 syncExcludedList = Array.isArray(data.excluded) ? data.excluded : [];
+                dirExcludedLoras = Array.isArray(data.dir_excluded_loras) ? data.dir_excluded_loras : [];
                 unsyncedLoaded = true;
                 tabUnsynced.textContent = unsyncedList.length > 0 ? `未同步 (${unsyncedList.length})` : "未同步";
             }
         } catch (e) {
             console.warn("[LoraDataPreview] 加载未同步列表失败:", e);
+        }
+    }
+
+    // 目录条目判定（与后端约定一致：以 "/" 结尾）
+    const isDirExcludedEntry = (entry) => String(entry || "").endsWith("/");
+
+    // 把某个目录（含子目录）加入同步排除名单
+    async function excludeFolderFromSync(folderPath, button) {
+        const dirEntry = `${String(folderPath || "").replace(/^\/+|\/+$/g, "")}/`;
+        if (!dirEntry || dirEntry === "/") return;
+        const rawCount = loraList.filter((l) => {
+            const key = String(l || "").replace(/\\/g, "/").replace(/^\/+/, "");
+            return key.startsWith(dirEntry);
+        }).length;
+        const confirmed = confirm(
+            `确定排除整个目录「${dirEntry}」吗？\n\n` +
+            `· 该目录下 ${rawCount} 个 LoRA（含子目录）都不再计入「未同步」统计\n` +
+            `· 批量同步（含"同步全部"模式）会跳过它们\n` +
+            `· 随时可在「管理排除」中恢复整个目录`
+        );
+        if (!confirmed) return;
+        if (button) { button.disabled = true; button.textContent = "排除中..."; }
+        try {
+            const resp = await api.fetchApi('/naiba/lora/sync-excluded', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ names: [dirEntry], action: 'add' }),
+            });
+            const result = await resp.json();
+            if (!result.success) throw new Error(result.error || "未知错误");
+            syncStatus.textContent = `已排除目录: ${dirEntry}`;
+            syncStatus.style.color = COLORS.success;
+            await loadUnsyncedStatus();
+            renderLoraList();
+        } catch (error) {
+            console.error("[LoraDataPreview] 排除目录失败:", error);
+            syncStatus.textContent = `排除目录失败: ${error.message}`;
+            syncStatus.style.color = COLORS.danger;
+        } finally {
+            if (button) { button.disabled = false; button.textContent = "排除此目录"; }
         }
     }
 
@@ -1172,7 +1214,11 @@ function createLoraDataPreviewModal(node, loraList) {
             const exBar = document.createElement("div");
             exBar.style.cssText = `display:flex;align-items:center;gap:10px;margin:0 8px 10px;padding:8px 12px;background:${COLORS.inputBg};border:1px dashed ${COLORS.border};border-radius:4px;color:${COLORS.textDim};font-size:12px;`;
             const exText = document.createElement("span");
-            exText.textContent = `已排除 ${syncExcludedList.length} 个（不计入统计，批量同步跳过）`;
+            const dirExcludedCount = syncExcludedList.filter(isDirExcludedEntry).length;
+            const fileExcludedCount = syncExcludedList.length - dirExcludedCount;
+            exText.textContent = dirExcludedCount > 0
+                ? `已排除 ${fileExcludedCount} 个 + ${dirExcludedCount} 个目录（不计入统计，批量同步跳过）`
+                : `已排除 ${syncExcludedList.length} 个（不计入统计，批量同步跳过）`;
             exText.style.cssText = "flex:1;";
             const exManageBtn = document.createElement("button");
             exManageBtn.textContent = "管理排除";
@@ -1180,6 +1226,15 @@ function createLoraDataPreviewModal(node, loraList) {
             exManageBtn.addEventListener("click", () => openExcludedManager());
             exBar.appendChild(exText);
             exBar.appendChild(exManageBtn);
+            // 非根目录时提供一键排除当前目录（根目录不放，避免误排除全部）
+            if (currentFolder && currentFolder !== "/") {
+                const exFolderBtn = document.createElement("button");
+                exFolderBtn.textContent = "排除此目录";
+                exFolderBtn.title = `把 ${currentFolder} 下所有 LoRA（含子目录）加入同步排除`;
+                exFolderBtn.style.cssText = `padding:4px 10px;background:transparent;color:${COLORS.warning};border:1px solid ${COLORS.warning};border-radius:4px;cursor:pointer;font-size:11px;`;
+                exFolderBtn.addEventListener("click", () => excludeFolderFromSync(currentFolder, exFolderBtn));
+                exBar.appendChild(exFolderBtn);
+            }
             mainContent.appendChild(exBar);
         }
 
@@ -2945,7 +3000,7 @@ function createLoraDataPreviewModal(node, loraList) {
         title.style.cssText = `color:${COLORS.text};font-size:14px;font-weight:600;padding:12px 16px;background:${COLORS.headerBg};border-bottom:1px solid ${COLORS.border};`;
 
         const hint = document.createElement("div");
-        hint.textContent = "已排除的 LoRA 不计入「未同步」统计，批量同步（含同步全部模式）会跳过；恢复后重新计入。";
+        hint.textContent = "已排除的条目不计入「未同步」统计，批量同步（含同步全部模式）会跳过；恢复后重新计入。目录条目（以 / 结尾）排除整个目录。";
         hint.style.cssText = `color:${COLORS.textDim};font-size:11px;padding:8px 16px 0;`;
 
         const listWrap = document.createElement("div");
@@ -2960,13 +3015,22 @@ function createLoraDataPreviewModal(node, loraList) {
                 listWrap.appendChild(empty);
                 return;
             }
-            syncExcludedList.forEach((name) => {
+            syncExcludedList.forEach((entry) => {
                 const row = document.createElement("div");
                 row.style.cssText = "display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(42,58,92,0.4);";
                 const nameEl = document.createElement("span");
-                nameEl.textContent = name;
-                nameEl.title = name;
-                nameEl.style.cssText = `flex:1;min-width:0;color:${COLORS.text};font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+                const isDir = isDirExcludedEntry(entry);
+                if (isDir) {
+                    const prefix = String(entry).casefold();
+                    const hitCount = dirExcludedLoras.filter((n) => String(n || "").casefold().startsWith(prefix)).length;
+                    nameEl.textContent = `📁 ${entry}（${hitCount} 个 LoRA 被跳过）`;
+                    nameEl.title = `目录排除：${entry} 下所有 LoRA（含子目录）都不参与同步`;
+                    nameEl.style.cssText = `flex:1;min-width:0;color:${COLORS.favorite};font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+                } else {
+                    nameEl.textContent = entry;
+                    nameEl.title = entry;
+                    nameEl.style.cssText = `flex:1;min-width:0;color:${COLORS.text};font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;
+                }
                 const restoreBtn = document.createElement("button");
                 restoreBtn.textContent = "恢复";
                 restoreBtn.style.cssText = `padding:3px 10px;background:transparent;color:${COLORS.success};border:1px solid ${COLORS.border};border-radius:3px;cursor:pointer;font-size:11px;flex-shrink:0;`;
@@ -2977,7 +3041,7 @@ function createLoraDataPreviewModal(node, loraList) {
                         const resp = await api.fetchApi('/naiba/lora/sync-excluded', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ names: [name], action: 'remove' }),
+                            body: JSON.stringify({ names: [entry], action: 'remove' }),
                         });
                         const result = await resp.json();
                         if (!result.success) throw new Error(result.error || "未知错误");
