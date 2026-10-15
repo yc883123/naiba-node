@@ -1938,12 +1938,12 @@ app.registerExtension({
                     const isMissing = !!lora.name && !availableLoraPaths.has(normalizeLoraPath(lora.name));
                     const row = document.createElement("div");
                     row.dataset.loraRowIndex = String(index);
-                    // 统一 2px 边框：禁用行淡红、缺失行红、启用行默认，与弹窗卡片观感一致
+                    // 节点面板行不加边框（用户偏好），仅用背景色区分状态
                     row.style.cssText = `
                         display:flex;align-items:center;gap:6px;
                         padding:4px 6px;margin:3px 0;border-radius:4px;
                         background:${isMissing ? "rgba(255,107,107,0.12)" : (isEnabled ? COLORS.listItemBg : "rgba(22,33,62,0.4)")};
-                        border:2px solid ${isMissing ? COLORS.danger : (isEnabled ? COLORS.cardBorder : COLORS.disabledSelected)};
+                        border:1px solid transparent;
                         ${!isEnabled && !isMissing ? "opacity:0.55;" : ""}
                     `;
 
