@@ -98,6 +98,82 @@ def _load_lora_download_url(lora_name: str) -> str | None:
     return None
 
 
+def _load_lora_trigger_words(lora_name: str) -> list[str]:
+    """
+    读取 LoRA 的 Civitai 触发词（只读模型同目录的 .civitai.info.json）。
+
+    Args:
+        lora_name: 已解析的 LoRA 名称
+
+    Returns:
+        list[str]: 去空后的触发词列表；无元数据/无词条/解析失败时返回空列表
+    """
+    if not lora_name:
+        return []
+    try:
+        lora_path = folder_paths.get_full_path("loras", lora_name)
+        if not lora_path:
+            return []
+        metadata_path = os.path.splitext(lora_path)[0] + ".civitai.info.json"
+        if not os.path.exists(metadata_path):
+            return []
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+    except (OSError, ValueError, TypeError) as e:
+        print(
+            f"[VisualLoRALoader] 读取触发词失败 {lora_name}: "
+            f"{type(e).__name__}: {e}"
+        )
+        return []
+
+    if not isinstance(metadata, dict):
+        print(f"[VisualLoRALoader] 触发词元数据格式无效 {lora_name}: 顶层不是对象")
+        return []
+
+    raw_words = metadata.get("trigger_words", []) or metadata.get("trained_words", [])
+    if isinstance(raw_words, str):
+        raw_words = [raw_words]
+    if not isinstance(raw_words, list):
+        print(f"[VisualLoRALoader] 触发词元数据格式无效 {lora_name}: 词条不是数组")
+        return []
+
+    words = []
+    for word in raw_words:
+        if word is None:
+            continue
+        # 折叠换行/连续空白，避免多行词条破坏单行提示词
+        text = " ".join(str(word).split())
+        if text:
+            words.append(text)
+    return words
+
+
+def _build_trigger_words_text(lora_configs: list) -> str:
+    """
+    汇总所有已启用 LoRA 的 Civitai 触发词。
+
+    判定只看 enabled 开关（不要求实际加载成功或权重非 0）。按配置顺序收集，
+    重复词保留首次出现，最终以英文逗号+空格连接。
+    """
+    words = []
+    seen = set()
+    for config in lora_configs:
+        if not isinstance(config, dict) or not config.get("enabled", False):
+            continue
+        try:
+            lora_name = resolve_lora_name(config)
+        except Exception as e:
+            # 名称解析失败（如 SHA256 对应多个本地路径）不应影响模型加载，
+            # 回退到配置名并留下日志，便于用户核对。
+            lora_name = str(config.get("name", "")).replace("\\", "/")
+            print(f"[VisualLoRALoader] 解析触发词来源名称失败 {lora_name}: {e}")
+        for word in _load_lora_trigger_words(str(lora_name)):
+            if word not in seen:
+                seen.add(word)
+                words.append(word)
+    return ", ".join(words)
+
+
 def _build_lora_info_text(lora_configs: list) -> str:
     """
     把 LoRA 配置列表渲染成人类可读的多行文本。
@@ -162,15 +238,49 @@ class VisualLoRALoader:
             }
         }
 
-    RETURN_TYPES = ("MODEL", "CLIP", "STRING", "STRING", "STRING")
-    RETURN_NAMES = ("model", "clip", "lora_names", "preset_json", "lora_info")
+    @classmethod
+    def IS_CHANGED(cls, lora_data="[]", model=None, clip=None):
+        """把已启用 LoRA 的 .civitai.info.json 的 mtime+size 纳入缓存签名。
+
+        Civitai 同步更新触发词后，本节点会重新执行，trigger_words 输出不会停留在旧缓存。
+        """
+        try:
+            loras = parse_lora_list(lora_data, "lora_data")
+        except ValueError:
+            # JSON 无效时交给 execute() 报明确错误；这里返回稳定签名避免反复重跑
+            return f"invalid-json:{lora_data}"
+
+        parts = []
+        for config in loras:
+            if not isinstance(config, dict) or not config.get("enabled", False):
+                continue
+            try:
+                lora_name = resolve_lora_name(config)
+            except Exception as e:
+                lora_name = str(config.get("name", "")).replace("\\", "/")
+                print(f"[VisualLoRALoader] IS_CHANGED 解析 LoRA 名称失败 {lora_name}: {e}")
+            lora_path = folder_paths.get_full_path("loras", str(lora_name))
+            if not lora_path:
+                parts.append(f"{lora_name}=missing")
+                continue
+            metadata_path = os.path.splitext(lora_path)[0] + ".civitai.info.json"
+            try:
+                stat = os.stat(metadata_path)
+                parts.append(f"{lora_name}={stat.st_mtime_ns}:{stat.st_size}")
+            except OSError:
+                parts.append(f"{lora_name}=no-metadata")
+        return "|".join(parts)
+
+    RETURN_TYPES = ("MODEL", "CLIP", "STRING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("model", "clip", "lora_names", "preset_json", "lora_info", "trigger_words")
     FUNCTION = "load_loras"
     CATEGORY = "naiba-node"
     DESCRIPTION = (
         "可视化LoRA加载器节点 - 点击按钮弹出全屏模态弹窗选择LoRA。\n"
         "弹窗支持图片预览、搜索导航、文件夹浏览、网格/列表视图切换。\n"
         "每个LoRA都有独立的启用开关和M/C权重控制（M=Model, C=CLIP）。\n"
-        "配置会自动保存到工作流中，支持预设管理。"
+        "配置会自动保存到工作流中，支持预设管理。\n"
+        "trigger_words 输出所有已启用 LoRA 的 Civitai 触发词，英文逗号分隔。"
     )
     SEARCH_ALIASES = ["naiba", "visual lora", "lora picker", "lora browser", "lora gallery"]
 
@@ -282,7 +392,22 @@ class VisualLoRALoader:
             print(f"[VisualLoRALoader] 生成 lora_info 失败: {e}")
             lora_info_text = "（生成 LoRA 信息失败，详见控制台日志）"
 
-        return (model, clip, lora_names_json, preset_json, lora_info_text)
+        # 输出已启用 LoRA 的 Civitai 触发词（顺序同配置，去重，英文逗号分隔）
+        try:
+            trigger_words_text = _build_trigger_words_text(loras)
+        except Exception as e:
+            # 触发词属于辅助输出，失败不能让模型加载整体失败，但必须留日志
+            print(f"[VisualLoRALoader] 汇总 trigger_words 失败: {e}")
+            trigger_words_text = ""
+
+        return (
+            model,
+            clip,
+            lora_names_json,
+            preset_json,
+            lora_info_text,
+            trigger_words_text,
+        )
 
 
 # 节点映射

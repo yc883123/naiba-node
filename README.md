@@ -324,6 +324,10 @@
 |------|------|------|
 | model | MODEL | 应用LoRA后的模型 |
 | clip | CLIP? | 应用LoRA后的CLIP模型（可选） |
+| lora_names | STRING | 成功应用的 LoRA 名称（JSON 数组字符串） |
+| preset_json | STRING | 完整 LoRA 配置 JSON（含 sha256，与预设格式一致） |
+| lora_info | STRING | 人类可读的 LoRA 信息（开关/权重/下载链接/sha256） |
+| trigger_words | STRING | 所有已启用 LoRA 的 Civitai 触发词，按节点顺序去重后用英文逗号+空格连接；无词条时为空字符串 |
 
 #### 前端UI功能
 - **全屏模态弹窗**: 点击按钮弹出全屏弹窗选择LoRA
