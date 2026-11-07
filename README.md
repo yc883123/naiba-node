@@ -696,13 +696,12 @@
 | 输入 | 类型 | 说明 |
 |------|------|------|
 | 用户提示词 | STRING | 口语化需求（反推模式留空即触发反推） |
-| 图像_01~10 | IMAGE | 可选参考图（最多 10 张，前端 chip 条带动态增删端口） |
+| 图像_ | IMAGE | 可选参考图，通过 Autogrow 动态添加；插槽数量遵循框架上限，不另设更低限制，批次展开后的图像帧数也无自定义上限 |
 | 文生图模型 / 图生图模型 | COMBO | models/LLM 下的主模型 GGUF（默认优先选 PE-T2I / PE-I2I） |
 | 视觉模型 | COMBO | mmproj GGUF |
 | 输出语言 | COMBO | 自动（随输入语言）/ 中文 / English |
 | 透明背景 | BOOLEAN | 输出改写为透明背景 RGBA 描述（自动剔除矛盾背景描述） |
-| 种子值 / 种子模式 | INT/COMBO | 固定 / 随机（随机模式下每次出队自动换新种子，节点上还有 🎲 按钮） |
-| 卸载模型 | COMBO | 自动 / 保持加载 / 运行后自动卸载 / 运行前后自动卸载 |
+| 种子值 / 种子控制 | INT / ComfyUI 原生控制 | 使用 ComfyUI 原生 `control_after_generate` 控制，默认固定；不提供额外种子模式 |
 
 #### 输出
 
@@ -712,19 +711,19 @@
 | json | STRING | `{rewritten_prompt, wh_ratio[, ratio_follow]}` JSON 串（可接 ratio 解析类节点） |
 | 是否反推 | BOOLEAN | 本次执行是否为反推模式 |
 
-#### 节点 UI（与原版 goohai 版的差异）
+#### 节点 UI
 
-- 顶部**模式徽章条**随连接与输入自动变色（T2I 紫 / I2I 蓝 / 反推橙），右侧实时显示 llama-cpp 依赖状态
-- **图像 chip 条带**：已连图像显示缩略与计数（N/10），「＋加端口」一键扩位
+- 顶部显示 llama-cpp 依赖状态；安装入口对应 `/naiba/qwen_prompt_optimizer/install_llama`
+- **图像 chip 条带**显示已连接图像，并可通过 Autogrow 添加图像输入
 - **自适应高度提示词编辑区**：字数统计、一键清空、占位文案随模式变化
-- 参数分「模型 / 参数」两区收纳；输出语言挪进提示词操作行；种子一行内聚 + 🎲 随机按钮
-- 依赖未就绪时显示**安装横幅**，支持一键自动安装匹配当前 Python/CUDA 的 llama-cpp-python wheel（≥0.3.48）
+- 参数区包含模型、输出语言、透明背景与种子控件；种子由 ComfyUI 原生控制
+- 依赖未就绪时显示安装状态与安装入口；依赖检查使用 `/naiba/qwen_prompt_optimizer/llama_status`
 
 #### 注意事项
 - 需要 `models/LLM`（或 `models/llm`）目录下的 GGUF 模型与 mmproj 文件（`.gguf`），无该目录时节点自动注册
 - 依赖 `llama-cpp-python>=0.3.48` 与 `diskcache`（JamePeng fork，带 Qwen3.5 视觉处理器）；未安装时节点横幅可一键安装，装完需完全重启 ComfyUI
-- 显存不足时运行前会自动释放其它 ComfyUI 已加载模型；「自动」卸载策略在空闲显存低于一半时运行后卸载
-- 功能设计参考 goohai 同名节点的思路，代码为本项目全新实现；文生图/图片编辑 system prompt 取自 Qwen-Image 官方模板原文（Apache-2.0），反推模式规则自行撰写
+- 每次节点执行都会重新加载模型，并在本次执行结束时释放；模型不会跨执行缓存，也没有节点级卸载策略。耗时会随模型大小与磁盘速度变化
+- 文生图模板来源：[Qwen Image 2.1 PE-T2I system prompt](https://huggingface.co/Qwen/Qwen-Image-2.1-PE-T2I/blob/f3ed7985c788ad75b3ab7223e0c4c51e2a43545b/system_prompt.txt)；图片编辑模板来源：[Qwen Image 2.1 PE-I2I system prompt](https://huggingface.co/Qwen/Qwen-Image-2.1-PE-I2I/blob/72927bc08afc99b7888ceb7d7d51a12db3700bbd/system_prompt.txt)。两者仓库采用 Qwen Research License Agreement，仅限非商业研究与评估；商业用途需另行取得许可。当前只核对了模板开头内容，未验证本地模板与上游全文完全一致
 
 ---
 

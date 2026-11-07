@@ -1,204 +1,277 @@
-"""Naiba Qwen 提示词工作台 - 不依赖 ComfyUI 运行时的纯函数自测(独立脚本,无 pytest 依赖)。
+"""Single-module contract tests with dependency stubs; no live inference.
 
-运行：python_embeded\\python.exe tests\\test_naiba_qwen_prompt.py
+Run with the portable distribution's python_embeded/python.exe.
 """
-import ast
 import importlib.util
+import json
 import sys
 import types
+import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.stdout.reconfigure(encoding="utf-8")
-
-# ── 虚拟包加载(与 test_visual_lora_trigger_words.py 同套路,让相对导入生效) ──
-PACKAGE_NAME = "naiba_test_qwen_prompt"
-package = types.ModuleType(PACKAGE_NAME)
-package.__path__ = [str(ROOT)]
-sys.modules[PACKAGE_NAME] = package
 
 
-def load_module(filename):
-    module_path = ROOT / filename
-    module_name = f"{PACKAGE_NAME}.{filename.removesuffix('.py')}"
-    spec = importlib.util.spec_from_file_location(module_name, module_path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
+class _Input:
+    def __init__(self, name, **kwargs):
+        self.name = name
+        self.kwargs = kwargs
 
 
-templates = load_module("naiba_qwen_prompt_templates.py")
-rt = load_module("naiba_qwen_prompt_runtime.py")
+class _ImageInput(_Input):
+    pass
 
 
-def test_templates():
-    t2i = templates.t2i_prompt()
-    edit = templates.edit_prompt()
-    reverse = templates.reverse_prompt()
-    assert len(t2i) > 5000 and "rewritten_prompt" in t2i and "wh_ratio" in t2i
-    assert "ratio_follow" in edit
-    # 反推 = 文生图模板 + 反推补充规则
-    assert reverse.startswith(t2i.split("\n")[0]) and "Reverse-prompting mode" in reverse
-    assert "watermarks" in reverse.lower()
-    print("ok templates")
+class _AutogrowInput(_Input):
+    pass
 
 
-def test_select_language():
-    assert rt.select_language("中文", "hello") == "Chinese"
-    assert rt.select_language("English", "你好") == "English"
-    assert rt.select_language("自动", "一只猫") == "Chinese"
-    assert rt.select_language("自动", "a cat") == "English"
-    assert rt.select_language("自动", "") == "Chinese"
-    # 反推模式自动档固定中文,显式选择优先
-    assert rt.select_language("自动", "anything", reverse_mode=True) == "Chinese"
-    assert rt.select_language("English", "你好", reverse_mode=True) == "English"
-    print("ok select language")
+class _TemplatePrefix:
+    def __init__(self, template, **kwargs):
+        self.template = template
+        self.kwargs = kwargs
 
 
-def test_prompts_build():
-    system = rt.build_system_prompt(templates.t2i_prompt(), "Chinese", transparent=False, reverse_mode=False)
-    assert system.startswith(templates.t2i_prompt())
-    assert "OUTPUT LANGUAGE LOCK" in system and "使用中文" in system
-    system_t = rt.build_system_prompt(templates.t2i_prompt(), "English", transparent=True)
-    assert "TRANSPARENT BACKGROUND OVERRIDE" in system_t
-    system_r = rt.build_system_prompt(templates.reverse_prompt(), "Chinese", transparent=False, reverse_mode=True)
-    assert "never add ratio_follow" in system_r
-
-    user = rt.build_user_turn("把背景换成雪山", [object()] * 2, "Chinese", False, False)
-    assert "<image1>" in user and "<image2>" in user and "把背景换成雪山" in user
-    user_rev = rt.build_user_turn("", [object()], "Chinese", False, True)
-    assert "reverse-prompting rules" in user_rev
-    user_t = rt.build_user_turn("a cat", [], "English", True, False)
-    assert "transparent background" in user_t and "a cat" in user_t
-    print("ok prompts build")
+class _Schema:
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
 
 
-def test_extract_and_validate():
-    data = rt.extract_json('```json\n{"rewritten_prompt":"a cat","wh_ratio":"1:1"}\n```')
-    assert data["rewritten_prompt"] == "a cat"
-    data2 = rt.extract_json('<think>hmm</think>前置说明 {"rewritten_prompt":"x","wh_ratio":""}')
-    assert data2["rewritten_prompt"] == "x"
-    fields = rt.validate_result(data, edit_mode=False)
-    assert "ratio_follow" not in fields
-    fields2 = rt.validate_result({"rewritten_prompt": "x", "wh_ratio": "16:9", "ratio_follow": "true"}, edit_mode=True)
-    assert fields2["ratio_follow"] == "true"
-    for bad in ('{"rewritten_prompt":"","wh_ratio":"1:1"}', "not json at all"):
-        try:
-            if bad.startswith("{"):
-                rt.validate_result(rt.extract_json(bad), edit_mode=False)
-            else:
-                rt.extract_json(bad)
-            raise AssertionError(f"应报错：{bad}")
-        except ValueError:
-            pass
-    print("ok extract and validate")
+class _ComfyNode:
+    pass
 
 
-def test_collect_images():
-    import torch
-
-    batch = torch.rand(2, 8, 8, 3)
-    assert len(rt.collect_images({"图像_01": batch, "图像_02": None, "其他": 1})) == 2
-    assert len(rt.collect_images({"image_05": torch.rand(1, 8, 8, 3)})) == 1
-    try:
-        rt.collect_images({f"图像_{i:02d}": torch.rand(1, 4, 4, 3) for i in range(1, 12)})
-        raise AssertionError("超过10张应报错")
-    except ValueError:
-        pass
-    print("ok collect images")
-
-
-def test_transparency():
-    value = rt.append_transparency("a red apple on a white background", True)
-    assert value.startswith(rt.TRANSPARENT_HEAD) and value.endswith(rt.TRANSPARENT_TAIL)
-    assert "white background" not in value
-    # 引号内画面文字不动
-    kept = rt.append_transparency('a can with "BLUE BACKGROUND" label, blue background', True)
-    assert '"BLUE BACKGROUND"' in kept
-    # 不开启时原样返回
-    assert rt.append_transparency("a cat", False) == "a cat"
-    print("ok transparency")
-
-
-def test_runtime_states():
-    rt.close_model()
-    assert rt._slot.llm is None
-    plan = rt._context_plan(1, True)
-    assert plan == (16384, 1536)
-    assert rt._context_plan(0, False) == (8192, 0)
-    assert rt._context_plan(3, False) == (16384, 512)
-    assert rt._context_plan(6, False) == (32768, 256)
-    print("ok runtime states")
-
-
-def test_node_full_import_with_stubs():
-    """桩替 folder_paths/server,真实导入节点模块:验证路由注册、LLM 目录注册与 INPUT_TYPES。"""
+def _load_optimizer():
     folder_paths = types.ModuleType("folder_paths")
-    folder_paths.models_dir = str(ROOT / "_fake_models")
+    folder_paths.models_dir = str(ROOT / "models")
     folder_paths.folder_names_and_paths = {}
-    folder_paths.get_filename_list = lambda category: []
-    folder_paths.get_full_path = lambda category, name: None
+    names = ["Qwen-Image-2.1-PE-T2I.gguf", "Qwen-Image-2.1-PE-I2I.gguf", "mmproj-Qwen.gguf"]
+    folder_paths.get_filename_list = lambda category: list(names)
+    folder_paths.get_folder_paths = lambda category: [str(ROOT / "models")]
+    paths = {name: str(ROOT / "models" / name) for name in names}
+    # The resolver deliberately returns a path outside its allowed root.
+    paths["outside.gguf"] = str(ROOT / "outside.gguf")
+    paths["sibling.gguf"] = str(ROOT / "models-other" / "sibling.gguf")
+    folder_paths.get_full_path = lambda category, name: paths.get(name) if category == "LLM" else None
+
+    routes = {}
 
     class _Routes:
-        def get(self, _path):
-            return lambda fn: fn
+        def get(self, path):
+            return self._register("GET", path)
 
-        def post(self, _path):
-            return lambda fn: fn
+        def post(self, path):
+            return self._register("POST", path)
+
+        @staticmethod
+        def _register(method, path):
+            def decorator(fn):
+                routes[(method, path)] = fn
+                return fn
+            return decorator
 
     server = types.ModuleType("server")
     server.PromptServer = types.SimpleNamespace(instance=types.SimpleNamespace(routes=_Routes()))
-    sys.modules.setdefault("folder_paths", folder_paths)
-    sys.modules.setdefault("server", server)
+    aiohttp = types.ModuleType("aiohttp")
+    aiohttp.web = types.SimpleNamespace(json_response=lambda data, **kwargs: (data, kwargs))
+    comfy_api = types.ModuleType("comfy_api")
+    comfy_api.__path__ = []
+    latest = types.ModuleType("comfy_api.latest")
+    latest.io = types.SimpleNamespace(
+        ComfyNode=_ComfyNode, Schema=_Schema,
+        String=types.SimpleNamespace(Input=_Input, Output=_Input),
+        Combo=types.SimpleNamespace(Input=_Input),
+        Boolean=types.SimpleNamespace(Input=_Input, Output=_Input),
+        Int=types.SimpleNamespace(Input=_Input),
+        Image=types.SimpleNamespace(Input=_ImageInput),
+        Autogrow=types.SimpleNamespace(Input=_AutogrowInput, TemplatePrefix=_TemplatePrefix, Type=dict),
+        ControlAfterGenerate=types.SimpleNamespace(fixed="fixed"),
+        NodeOutput=lambda *values, **kwargs: values,
+    )
+    model_management = types.ModuleType("comfy.model_management")
+    model_management.throw_exception_if_processing_interrupted = lambda: None
+    model_management.get_torch_device = lambda: "cpu"
+    model_management.free_memory = lambda *args: None
+    comfy = types.ModuleType("comfy")
+    comfy.__path__ = []
+    comfy.model_management = model_management
+    llama_cpp = types.ModuleType("llama_cpp")
+    llama_cpp.Llama = object
+    chat_format = types.ModuleType("llama_cpp.llama_chat_format")
+    chat_format.Qwen35ChatHandler = object
+    stubs = {
+        "folder_paths": folder_paths, "server": server, "aiohttp": aiohttp,
+        "comfy_api": comfy_api, "comfy_api.latest": latest,
+        "comfy": comfy, "comfy.model_management": model_management,
+        "llama_cpp": llama_cpp, "llama_cpp.llama_chat_format": chat_format,
+    }
+    spec = importlib.util.spec_from_file_location(
+        "naiba_qwen_prompt_optimizer_test_target", ROOT / "naiba_qwen_prompt_optimizer.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    with patch.dict(sys.modules, stubs):
+        spec.loader.exec_module(module)
+    return module, folder_paths, routes
 
-    optimizer = load_module("naiba_qwen_prompt_optimizer.py")
-    assert "NaibaQwenPromptOptimizer" in optimizer.NODE_CLASS_MAPPINGS
-    assert optimizer.NODE_DISPLAY_NAME_MAPPINGS["NaibaQwenPromptOptimizer"] == "Naiba Qwen 提示词工作台"
-    assert "LLM" in folder_paths.folder_names_and_paths
-    inputs = optimizer.NaibaQwenPromptOptimizer.INPUT_TYPES()
-    assert inputs["required"]["文生图模型"][0] == ["未找到 GGUF 模型"]
-    assert inputs["required"]["视觉模型"][0] == ["未找到 mmproj GGUF 模型"]
-    assert "图像_01" in inputs["optional"] and "图像_10" in inputs["optional"]
-    assert optimizer.NaibaQwenPromptOptimizer.CATEGORY == "naiba-node"
-    assert optimizer.NaibaQwenPromptOptimizer.RETURN_TYPES == ("STRING", "STRING", "BOOLEAN")
-    # 依赖状态函数可用
-    status = optimizer.llama_dependency_status()
-    assert "needs_install" in status and "supported" in status
-    print("ok node full import with stubs")
+
+optimizer, folder_paths, ROUTES = _load_optimizer()
 
 
-def test_js_contract():
-    """JS 与 Python 的接口契约:节点类名、路由路径、widget 名。"""
-    js = (ROOT / "js" / "naiba_qwen_prompt_optimizer.js").read_text(encoding="utf-8")
-    assert 'NaibaQwenPromptOptimizer' in js
-    for route in ("/naiba/qwen_prompt_optimizer/llama_status", "/naiba/qwen_prompt_optimizer/install_llama"):
-        assert route in js
-    for name in ("用户提示词", "输出语言", "种子值", "种子模式"):
-        assert name in js
-    source = (ROOT / "naiba_qwen_prompt_optimizer.py").read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    routes = [
-        n.func.attr
-        for n in ast.walk(tree)
-        if isinstance(n, ast.Call)
-        and isinstance(n.func, ast.Attribute)
-        and n.func.attr in ("get", "post")
-        and isinstance(n.func.value, ast.Attribute)
-        and n.func.value.attr == "routes"
-    ]
-    assert "get" in routes and "post" in routes
-    print("ok js contract")
+class QwenPromptTests(unittest.TestCase):
+    def test_v3_schema_and_mapping(self):
+        node = optimizer.NaibaQwenPromptOptimizer
+        self.assertTrue(issubclass(node, _ComfyNode))
+        self.assertIs(optimizer.NODE_CLASS_MAPPINGS["NaibaQwenPromptOptimizer"], node)
+        schema = node.define_schema()
+        self.assertEqual(schema.node_id, "NaibaQwenPromptOptimizer")
+        self.assertEqual(schema.display_name, "Naiba Qwen 提示词工作台")
+        self.assertEqual(schema.category, "naiba-node")
+        self.assertEqual([output.name for output in schema.outputs], ["prompt", "json", "是否反推"])
+        inputs = {item.name: item for item in schema.inputs}
+        self.assertEqual(inputs["用户提示词"].kwargs["default"], "")
+        self.assertTrue(inputs["用户提示词"].kwargs["multiline"])
+        images = inputs["图像"]
+        self.assertIsInstance(images, _AutogrowInput)
+        self.assertTrue(images.kwargs["optional"])
+        template = images.kwargs["template"]
+        self.assertIsInstance(template, _TemplatePrefix)
+        self.assertIsInstance(template.template, _ImageInput)
+        self.assertEqual(template.kwargs, {"prefix": "图像_", "min": 0, "max": 100})
+        self.assertEqual(inputs["文生图模型"].kwargs["default"], "Qwen-Image-2.1-PE-T2I.gguf")
+        self.assertEqual(inputs["图生图模型"].kwargs["default"], "Qwen-Image-2.1-PE-I2I.gguf")
+        self.assertEqual(inputs["视觉模型"].kwargs["options"], ["mmproj-Qwen.gguf"])
+        self.assertEqual(inputs["输出语言"].kwargs["options"], ["自动", "中文", "English"])
+        self.assertFalse(inputs["透明背景"].kwargs["default"])
+        self.assertEqual(inputs["种子值"].kwargs["control_after_generate"], "fixed")
+        self.assertEqual(inputs["种子值"].kwargs["default"], 0)
+        self.assertNotIn("种子模式", inputs)
+        self.assertNotIn("卸载模型", inputs)
+
+    def test_routes_and_model_path_containment(self):
+        self.assertIn(("GET", "/naiba/qwen_prompt_optimizer/llama_status"), ROUTES)
+        self.assertIn(("POST", "/naiba/qwen_prompt_optimizer/install_llama"), ROUTES)
+        self.assertIn("LLM", folder_paths.folder_names_and_paths)
+        self.assertEqual(Path(optimizer._model_path("mmproj-Qwen.gguf", True)), ROOT / "models" / "mmproj-Qwen.gguf")
+        self.assertEqual(Path(optimizer._model_path("Qwen-Image-2.1-PE-T2I.gguf", False)), ROOT / "models" / "Qwen-Image-2.1-PE-T2I.gguf")
+        for name, vision in (("outside.gguf", False), ("sibling.gguf", False), ("missing.gguf", False),
+                             ("mmproj-Qwen.gguf", False), ("Qwen-Image-2.1-PE-T2I.gguf", True)):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                optimizer._model_path(name, vision)
+
+    def test_templates_and_prompt_helpers(self):
+        t2i, edit, reverse = optimizer.t2i_prompt(), optimizer.edit_prompt(), optimizer.reverse_prompt()
+        self.assertIn("rewritten_prompt", t2i)
+        self.assertIn("wh_ratio", t2i)
+        self.assertIn("ratio_follow", edit)
+        self.assertTrue(reverse.startswith(t2i))
+        self.assertIn("Reverse-prompting mode", reverse)
+        self.assertEqual(optimizer.select_language("自动", "一只猫"), "Chinese")
+        self.assertEqual(optimizer.select_language("自动", "a cat"), "English")
+        self.assertEqual(optimizer.select_language("自动", "", True), "Chinese")
+        self.assertEqual(optimizer.select_language("English", "你好", True), "English")
+        system = optimizer.build_system_prompt(t2i, "English", True, True)
+        self.assertTrue(system.startswith(t2i))
+        self.assertIn("OUTPUT LANGUAGE LOCK", system)
+        self.assertIn("TRANSPARENT BACKGROUND OVERRIDE", system)
+        self.assertIn("never add ratio_follow", system)
+        user = optimizer.build_user_turn("换成雪山", [object(), object()], "Chinese", False, False)
+        self.assertIn("<image1>", user)
+        self.assertIn("<image2>", user)
+        self.assertIn("换成雪山", user)
+        parsed = optimizer.extract_json('<think>thinking</think>```json\n{"rewritten_prompt":"cat","wh_ratio":"1:1"}\n```')
+        self.assertEqual(optimizer.validate_result(parsed, False), {"rewritten_prompt": "cat", "wh_ratio": "1:1"})
+        for bad in ({"rewritten_prompt": "", "wh_ratio": "1:1"}, {"rewritten_prompt": "cat"}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                optimizer.validate_result(bad, False)
+
+    def test_collect_images_has_no_custom_frame_cap(self):
+        torch = optimizer.torch
+
+        self.assertEqual(optimizer.collect_images({}), [])
+        frames = optimizer.collect_images({f"图像_{i:03d}": torch.zeros(1, 2, 2, 3) for i in range(1, 12)})
+        self.assertEqual(len(frames), 11)
+        # Socket count does not cap batch-expanded image frames.
+        self.assertEqual(len(optimizer.collect_images({"图像_001": torch.zeros(101, 2, 2, 3)})), 101)
+        frames = optimizer.collect_images({"图像_010": torch.ones(1, 2, 2, 3), "图像_002": torch.zeros(2, 2, 2, 3)})
+        self.assertEqual([frame[0, 0, 0].item() for frame in frames], [0, 0, 1])
+
+    def test_transparency_keeps_subject_clause(self):
+        value = optimizer.append_transparency("A red apple on a white background, with a small green leaf", True)
+        self.assertTrue(value.startswith(optimizer.TRANSPARENT_HEAD))
+        self.assertTrue(value.endswith(optimizer.TRANSPARENT_TAIL))
+        self.assertNotIn("white background", value)
+        self.assertIn("red apple", value)
+        self.assertIn("small green leaf", value)
+        quoted = optimizer.append_transparency('A can with "BLUE BACKGROUND" label, blue background', True)
+        self.assertIn('"BLUE BACKGROUND"', quoted)
+        self.assertEqual(optimizer.append_transparency("a cat", False), "a cat")
+
+    def test_json_retry_and_finally_cleanup(self):
+        for failure in (None, "encoding", "invalid_retry"):
+            with self.subTest(failure=failure):
+                calls, closed, resets, streams_closed = [], [], [], []
+                result = json.dumps({"rewritten_prompt": "subject", "wh_ratio": "1:1", "ratio_follow": "true"})
+                replies = iter(["invalid", "invalid" if failure == "invalid_retry" else result])
+
+                class Stream:
+                    def __iter__(self):
+                        yield {"choices": [{"delta": {"content": next(replies)}}]}
+
+                    def close(self):
+                        streams_closed.append(True)
+
+                class Llama:
+                    def __init__(self, **kwargs):
+                        pass
+
+                    def create_chat_completion(self, **kwargs):
+                        calls.append(kwargs)
+                        return Stream()
+
+                    def reset(self):
+                        resets.append(True)
+
+                    def close(self):
+                        closed.append("llm")
+
+                class Handler:
+                    def __init__(self, **kwargs):
+                        pass
+
+                    def close(self):
+                        closed.append("handler")
+
+                def encode(frame, max_side):
+                    if failure == "encoding":
+                        raise RuntimeError("encode failed")
+                    return "data:image/jpeg;base64,test"
+
+                # Real file only supplies a byte count; stubbed constructors never read weights.
+                with patch.object(optimizer, "Llama", Llama), patch.object(optimizer, "Qwen35ChatHandler", Handler), patch.object(
+                    optimizer, "_image_data_url", encode
+                ), patch.object(optimizer.torch.cuda, "is_available", return_value=False):
+                    kwargs = dict(model_path=__file__, mmproj_path=__file__, system_prompt="system",
+                                  user_prompt="prompt", images=[object()], edit_mode=True, seed=7)
+                    if failure == "encoding":
+                        with self.assertRaisesRegex(RuntimeError, "encode failed"):
+                            optimizer.complete(**kwargs)
+                    elif failure == "invalid_retry":
+                        with self.assertRaises(ValueError):
+                            optimizer.complete(**kwargs)
+                    else:
+                        self.assertEqual(optimizer.complete(**kwargs)["ratio_follow"], "true")
+                self.assertEqual(closed, ["llm", "handler"])
+                if failure == "encoding":
+                    self.assertEqual(calls, [])
+                else:
+                    self.assertEqual(len(calls), 2)
+                    self.assertNotIn("response_format", calls[0])
+                    self.assertEqual(calls[1]["response_format"], {"type": "json_object"})
+                    self.assertEqual(calls[1]["seed"], 7)
+                    self.assertEqual(resets, [True])
+                    self.assertEqual(streams_closed, [True, True])
 
 
 if __name__ == "__main__":
-    test_templates()
-    test_select_language()
-    test_prompts_build()
-    test_extract_and_validate()
-    test_collect_images()
-    test_transparency()
-    test_runtime_states()
-    test_node_full_import_with_stubs()
-    test_js_contract()
-    print("ALL TESTS PASSED")
+    unittest.main(verbosity=2)
