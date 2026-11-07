@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### 新增功能
+- **Naiba Qwen 提示词工作台（新节点）**：参考 goohai 同名节点功能、代码全新实现（未复制其代码；文生图/图片编辑 system prompt 取自 Qwen-Image 官方模板原文，反推规则自行撰写），用 `models/LLM` 下的 GGUF + mmproj 把口语化需求改写成 Qwen Image 2.1 长提示词；无图=文生图 / 有图+提示词=图生图 / 有图无提示词=反推，三模式自动判定；输出 prompt / json / 是否反推；前端 UI（方案A「分段工作台」）：模式徽章条、图像 chip 条带、自适应提示词区（字数/清空/随模式占位文案）、模型/参数分区、🎲 随机种子按钮、llama-cpp 依赖状态横幅一键安装；后端新增 `/naiba/qwen_prompt_optimizer/llama_status` 与 `/install_llama` 路由，自动注册 `models/LLM` 目录；种子随机模式在出队时自动换新种子
 - **Visual LoRA Loader 选择器支持按修改时间倒序排序**：工具栏新增「排序: 字母序 / 最新优先」切换按钮（选择持久化到 localStorage），时间模式最新 LoRA 排最前，便于快速添加最新 LoRA；后端新增 `/naiba/lora/mtimes` 路由（10 秒 TTL 缓存）
 - **Visual LoRA Loader 已选列表行内移除按钮**：节点显示区每行开关右侧新增 ✕ 按钮，点击直接从已选列表删除该 LoRA 并写回 `lora_data`，无需打开选择器
 - **NAIBA LoRA 浏览器同等排序能力**：Lora Data Preview 弹窗工具栏新增「排序: 字母序 / 最新优先」切换按钮，行为与可视化选择器一致

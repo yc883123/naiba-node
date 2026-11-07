@@ -1,6 +1,6 @@
 # Naiba Test Custom Nodes for ComfyUI
 
-自定义ComfyUI节点集合，包含WAN模型优化、Multi LoRA Loader、Multi LoRA Loader (only model)、Visual LoRA Loader、List LoRA Loader、Lora Testing Converter、Save Text File、Lora Data Preview、Civitai Info Reader、Custom Data Reader、Power LoRA Config Reader、**Naiba Tag Picker（Danbooru 标签画廊/扭蛋）**和**Naiba Gelbooru Tag Picker（Gelbooru 标签画廊/扭蛋）**功能。
+自定义ComfyUI节点集合，包含WAN模型优化、Multi LoRA Loader、Multi LoRA Loader (only model)、Visual LoRA Loader、List LoRA Loader、Lora Testing Converter、Save Text File、Lora Data Preview、Civitai Info Reader、Custom Data Reader、Power LoRA Config Reader、**Naiba Tag Picker（Danbooru 标签画廊/扭蛋）**、**Naiba Gelbooru Tag Picker（Gelbooru 标签画廊/扭蛋）**和**Naiba Qwen 提示词工作台（Qwen Image 2.1 提示词优化）**功能。
 
 ## v3.8.0 更新亮点（2026-10-16）
 
@@ -680,6 +680,54 @@
 - 凭据文件 `data/gelbooru_auth.json` 与缓存目录 `preview_cache_gelbooru/` 已在 `.gitignore` 中忽略，不会提交
 
 ---
+
+### 15. Naiba Qwen 提示词工作台 (Qwen Image 2.1 提示词优化)
+
+**节点名称**: `NaibaQwenPromptOptimizer`
+
+用 `models/LLM` 目录下的 GGUF 语言模型（搭配 mmproj 视觉模型）把口语化需求改写成 Qwen Image 2.1 可直接使用的长提示词。三种模式自动判定：
+
+- **文生图 T2I**：无图像输入 → 按官方文生图模板扩写
+- **图生图 I2I**：有图像 + 有提示词 → 按官方图片编辑模板重写编辑指令
+- **反推 REVERSE**：有图像 + 无提示词 → 反推输入图像的生成提示词
+
+#### 输入
+
+| 输入 | 类型 | 说明 |
+|------|------|------|
+| 用户提示词 | STRING | 口语化需求（反推模式留空即触发反推） |
+| 图像_01~10 | IMAGE | 可选参考图（最多 10 张，前端 chip 条带动态增删端口） |
+| 文生图模型 / 图生图模型 | COMBO | models/LLM 下的主模型 GGUF（默认优先选 PE-T2I / PE-I2I） |
+| 视觉模型 | COMBO | mmproj GGUF |
+| 输出语言 | COMBO | 自动（随输入语言）/ 中文 / English |
+| 透明背景 | BOOLEAN | 输出改写为透明背景 RGBA 描述（自动剔除矛盾背景描述） |
+| 种子值 / 种子模式 | INT/COMBO | 固定 / 随机（随机模式下每次出队自动换新种子，节点上还有 🎲 按钮） |
+| 卸载模型 | COMBO | 自动 / 保持加载 / 运行后自动卸载 / 运行前后自动卸载 |
+
+#### 输出
+
+| 输出 | 类型 | 说明 |
+|------|------|------|
+| prompt | STRING | 改写后的提示词 |
+| json | STRING | `{rewritten_prompt, wh_ratio[, ratio_follow]}` JSON 串（可接 ratio 解析类节点） |
+| 是否反推 | BOOLEAN | 本次执行是否为反推模式 |
+
+#### 节点 UI（与原版 goohai 版的差异）
+
+- 顶部**模式徽章条**随连接与输入自动变色（T2I 紫 / I2I 蓝 / 反推橙），右侧实时显示 llama-cpp 依赖状态
+- **图像 chip 条带**：已连图像显示缩略与计数（N/10），「＋加端口」一键扩位
+- **自适应高度提示词编辑区**：字数统计、一键清空、占位文案随模式变化
+- 参数分「模型 / 参数」两区收纳；输出语言挪进提示词操作行；种子一行内聚 + 🎲 随机按钮
+- 依赖未就绪时显示**安装横幅**，支持一键自动安装匹配当前 Python/CUDA 的 llama-cpp-python wheel（≥0.3.48）
+
+#### 注意事项
+- 需要 `models/LLM`（或 `models/llm`）目录下的 GGUF 模型与 mmproj 文件（`.gguf`），无该目录时节点自动注册
+- 依赖 `llama-cpp-python>=0.3.48` 与 `diskcache`（JamePeng fork，带 Qwen3.5 视觉处理器）；未安装时节点横幅可一键安装，装完需完全重启 ComfyUI
+- 显存不足时运行前会自动释放其它 ComfyUI 已加载模型；「自动」卸载策略在空闲显存低于一半时运行后卸载
+- 功能设计参考 goohai 同名节点的思路，代码为本项目全新实现；文生图/图片编辑 system prompt 取自 Qwen-Image 官方模板原文（Apache-2.0），反推模式规则自行撰写
+
+---
+
 
 ## 安装方法
 
