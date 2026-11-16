@@ -11,6 +11,7 @@
 - **同步排除名单**：云端没有数据的 LoRA 可在「未同步」页一键永久排除（可恢复），批量同步两种模式（含"同步全部"）都跳过，不再反复重试注定失败的条目；后端新增 `GET /naiba/lora/unsynced` 与 `POST /naiba/lora/sync-excluded`，名单持久化在 `naiba_sync_excluded.json`
 
 ### 优化改进
+- **Visual LoRA Loader 的 `trigger_words` 合并自定义提示词**：在 Civitai 触发词之后追加 `.custom.info.json` 的 `custom_prompt`（Lora Data Preview 编辑面板保存），无 Civitai 元数据时也会输出；`IS_CHANGED` 同步追踪 `.custom.info.json`，保存后无需重启即可刷新
 - **NAIBA LoRA 浏览器封面改为最长边适应不裁切**：网格卡片封面 `object-fit: cover → contain`，与可视化 LoRA 选择器显示行为一致
 - **单个 Civitai 同步也回填全局 sha256 缓存**：与批量同步一致，同步成功后相关统计即时更新
 

@@ -148,12 +148,51 @@ def _load_lora_trigger_words(lora_name: str) -> list[str]:
     return words
 
 
+def _load_lora_custom_prompt(lora_name: str) -> str:
+    """
+    读取 LoRA 的 .custom.info.json 中的自定义提示词（custom_prompt）。
+
+    Args:
+        lora_name: 已解析的 LoRA 名称
+
+    Returns:
+        str: 折叠空白后的自定义提示词；无自定义数据/字段为空/解析失败时返回空字符串
+    """
+    if not lora_name:
+        return ""
+    try:
+        lora_path = folder_paths.get_full_path("loras", lora_name)
+        if not lora_path:
+            return ""
+        custom_data_path = os.path.splitext(lora_path)[0] + ".custom.info.json"
+        if not os.path.exists(custom_data_path):
+            return ""
+        with open(custom_data_path, "r", encoding="utf-8") as f:
+            custom_data = json.load(f)
+    except (OSError, ValueError, TypeError) as e:
+        print(
+            f"[VisualLoRALoader] 读取自定义提示词失败 {lora_name}: "
+            f"{type(e).__name__}: {e}"
+        )
+        return ""
+
+    if not isinstance(custom_data, dict):
+        print(f"[VisualLoRALoader] 自定义提示词数据格式无效 {lora_name}: 顶层不是对象")
+        return ""
+
+    prompt = custom_data.get("custom_prompt", "")
+    if not isinstance(prompt, str):
+        prompt = str(prompt) if prompt else ""
+    return " ".join(prompt.split())
+
+
 def _build_trigger_words_text(lora_configs: list) -> str:
     """
-    汇总所有已启用 LoRA 的 Civitai 触发词。
+    汇总所有已启用 LoRA 的 Civitai 触发词与自定义提示词。
 
     判定只看 enabled 开关（不要求实际加载成功或权重非 0）。按配置顺序收集，
-    重复词保留首次出现，最终以英文逗号+空格连接。
+    每个 LoRA 先取其 Civitai 触发词，再取 .custom.info.json 的 custom_prompt，
+    重复内容保留首次出现，最终以英文逗号+空格连接。
     """
     words = []
     seen = set()
@@ -171,6 +210,10 @@ def _build_trigger_words_text(lora_configs: list) -> str:
             if word not in seen:
                 seen.add(word)
                 words.append(word)
+        custom_prompt = _load_lora_custom_prompt(str(lora_name))
+        if custom_prompt and custom_prompt not in seen:
+            seen.add(custom_prompt)
+            words.append(custom_prompt)
     return ", ".join(words)
 
 
@@ -240,9 +283,11 @@ class VisualLoRALoader:
 
     @classmethod
     def IS_CHANGED(cls, lora_data="[]", model=None, clip=None):
-        """把已启用 LoRA 的 .civitai.info.json 的 mtime+size 纳入缓存签名。
+        """把已启用 LoRA 的 .civitai.info.json 与 .custom.info.json 的 mtime+size
+        纳入缓存签名。
 
-        Civitai 同步更新触发词后，本节点会重新执行，trigger_words 输出不会停留在旧缓存。
+        Civitai 同步更新触发词或保存自定义提示词后，本节点会重新执行，
+        trigger_words 输出不会停留在旧缓存。
         """
         try:
             loras = parse_lora_list(lora_data, "lora_data")
@@ -263,12 +308,15 @@ class VisualLoRALoader:
             if not lora_path:
                 parts.append(f"{lora_name}=missing")
                 continue
-            metadata_path = os.path.splitext(lora_path)[0] + ".civitai.info.json"
-            try:
-                stat = os.stat(metadata_path)
-                parts.append(f"{lora_name}={stat.st_mtime_ns}:{stat.st_size}")
-            except OSError:
-                parts.append(f"{lora_name}=no-metadata")
+            base_path = os.path.splitext(lora_path)[0]
+            signatures = []
+            for suffix in (".civitai.info.json", ".custom.info.json"):
+                try:
+                    stat = os.stat(base_path + suffix)
+                    signatures.append(f"{suffix}:{stat.st_mtime_ns}:{stat.st_size}")
+                except OSError:
+                    signatures.append(f"{suffix}:none")
+            parts.append(f"{lora_name}=" + ",".join(signatures))
         return "|".join(parts)
 
     RETURN_TYPES = ("MODEL", "CLIP", "STRING", "STRING", "STRING", "STRING")
@@ -280,7 +328,7 @@ class VisualLoRALoader:
         "弹窗支持图片预览、搜索导航、文件夹浏览、网格/列表视图切换。\n"
         "每个LoRA都有独立的启用开关和M/C权重控制（M=Model, C=CLIP）。\n"
         "配置会自动保存到工作流中，支持预设管理。\n"
-        "trigger_words 输出所有已启用 LoRA 的 Civitai 触发词，英文逗号分隔。"
+        "trigger_words 输出所有已启用 LoRA 的 Civitai 触发词与自定义提示词，英文逗号分隔。"
     )
     SEARCH_ALIASES = ["naiba", "visual lora", "lora picker", "lora browser", "lora gallery"]
 

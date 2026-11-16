@@ -17,8 +17,8 @@ LORA_DIR = Path(TEMP_DIR.name)
 LORA_PATHS = {}
 
 
-def add_lora(name, metadata=None, raw_metadata=None):
-    """在临时目录创建假 LoRA 文件及其 .civitai.info.json。"""
+def add_lora(name, metadata=None, raw_metadata=None, custom_metadata=None):
+    """在临时目录创建假 LoRA 文件及其 .civitai.info.json/.custom.info.json。"""
     path = LORA_DIR / name
     path.write_bytes(b"fake lora")
     LORA_PATHS[name] = str(path)
@@ -26,6 +26,9 @@ def add_lora(name, metadata=None, raw_metadata=None):
         metadata_path = Path(str(path.with_suffix("")) + ".civitai.info.json")
         text = raw_metadata if raw_metadata is not None else json.dumps(metadata, ensure_ascii=False)
         metadata_path.write_text(text, encoding="utf-8")
+    if custom_metadata is not None:
+        custom_path = Path(str(path.with_suffix("")) + ".custom.info.json")
+        custom_path.write_text(json.dumps(custom_metadata, ensure_ascii=False), encoding="utf-8")
     return name
 
 
@@ -170,6 +173,44 @@ def test_enabled_flag_alone_decides_membership():
     assert json.loads(result[2]) == []
 
 
+def test_custom_prompt_included_after_civitai_words():
+    add_lora(
+        "meta.safetensors",
+        {"trigger_words": ["meta tag"]},
+        custom_metadata={"custom_prompt": "meta custom"},
+    )
+    # 没有 Civitai 元数据时，自定义提示词仍应输出
+    add_lora("custom-only.safetensors", custom_metadata={"custom_prompt": "  custom\n only  "})
+    add_lora(
+        "off.safetensors",
+        custom_metadata={"custom_prompt": "off custom"},
+    )
+
+    result = execute([
+        enabled_item("meta.safetensors"),
+        {**enabled_item("off.safetensors"), "enabled": False},
+        enabled_item("custom-only.safetensors"),
+    ])
+
+    assert trigger_output(result) == "meta tag, meta custom, custom only"
+
+
+def test_custom_prompt_dedupes_with_trigger_words():
+    add_lora("dedupe-a.safetensors", {"trigger_words": ["shared"]})
+    add_lora(
+        "dedupe-b.safetensors",
+        {"trigger_words": ["beta tag"]},
+        custom_metadata={"custom_prompt": "shared"},
+    )
+
+    result = execute([
+        enabled_item("dedupe-a.safetensors"),
+        enabled_item("dedupe-b.safetensors"),
+    ])
+
+    assert trigger_output(result) == "shared, beta tag"
+
+
 def test_output_names_expose_trigger_words_at_end():
     assert VISUAL.VisualLoRALoader.RETURN_NAMES == (
         "model",
@@ -198,11 +239,32 @@ def test_is_changed_tracks_metadata_content():
     assert loader.IS_CHANGED("{").startswith("invalid-json:")
 
 
+def test_is_changed_tracks_custom_prompt_content():
+    name = add_lora(
+        "custom-cache.safetensors",
+        custom_metadata={"custom_prompt": "first custom"},
+    )
+    items = [enabled_item(name)]
+    loader = VISUAL.VisualLoRALoader()
+
+    first_signature = loader.IS_CHANGED(json.dumps(items))
+    add_lora(
+        name,
+        custom_metadata={"custom_prompt": "second custom with more text"},
+    )
+    second_signature = loader.IS_CHANGED(json.dumps(items))
+
+    assert first_signature != second_signature
+
+
 if __name__ == "__main__":
     test_trigger_words_follow_node_order_and_dedupe()
     test_trained_words_fallback_and_string_value()
     test_missing_or_invalid_metadata_is_skipped_without_failing_load()
     test_enabled_flag_alone_decides_membership()
+    test_custom_prompt_included_after_civitai_words()
+    test_custom_prompt_dedupes_with_trigger_words()
     test_output_names_expose_trigger_words_at_end()
     test_is_changed_tracks_metadata_content()
+    test_is_changed_tracks_custom_prompt_content()
     print("visual lora trigger words tests passed")
