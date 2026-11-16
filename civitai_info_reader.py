@@ -480,11 +480,17 @@ class CivitaiInfoReader:
                 print(f"[CivitaiInfoReader] LoRA file not found: {lora_name}")
                 continue
             
+            # 自定义提示词来自 .custom.info.json，与是否有 Civitai 元数据无关
+            custom_data = load_custom_data(lora_path)
+            custom_prompt = custom_data.get("custom_prompt", "") if custom_data else ""
+
             info_path = find_civitai_info_file(lora_path)
             if not info_path:
                 # 没有元数据文件，但可能有预览格式备注
                 if lora_name in preview_notes:
                     all_model_info.append(f"[{i+1}] {lora_name}\n⚠ {preview_notes[lora_name]}")
+                if custom_prompt:
+                    all_custom_prompts.append(f"[{i+1}] {lora_name}: {custom_prompt}")
                 continue
             
             try:
@@ -492,6 +498,8 @@ class CivitaiInfoReader:
                     metadata = json.load(f)
             except Exception as e:
                 print(f"[CivitaiInfoReader] Failed to read JSON for {lora_name}: {e}")
+                if custom_prompt:
+                    all_custom_prompts.append(f"[{i+1}] {lora_name}: {custom_prompt}")
                 continue
             
             # 提取各字段
@@ -560,10 +568,8 @@ class CivitaiInfoReader:
             # 原始 JSON
             all_raw_jsons.append(json.dumps(metadata, ensure_ascii=False, indent=2))
             
-            # 自定义数据中的 custom_prompt
-            custom_data = load_custom_data(lora_path)
-            if custom_data and custom_data.get("custom_prompt"):
-                all_custom_prompts.append(f"[{i+1}] {model_name}: {custom_data['custom_prompt']}")
+            if custom_prompt:
+                all_custom_prompts.append(f"[{i+1}] {model_name}: {custom_prompt}")
         
         # 合并输出
         model_info = "\n\n".join(all_model_info) if all_model_info else self.EMPTY_MODEL_INFO
