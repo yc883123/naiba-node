@@ -60,14 +60,14 @@ function ensurePresetStyles() {
 .nps-sort-btn:hover{color:#dfe3ff;border-color:rgba(108,92,231,.5);}
 .nps-sort-btn.active{color:#dfe3ff;border-color:rgba(108,92,231,.65);background:rgba(108,92,231,.14);}
 .nps-cat-panel{position:absolute;top:calc(100% + 6px);left:20px;width:248px;max-height:min(420px,60vh);overflow-y:auto;padding:6px;border-radius:12px;border:1px solid rgba(139,123,255,.5);background:#26284a;box-shadow:0 18px 50px rgba(0,0,0,.6);z-index:20;}
-.nps-cat-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;color:#c9cee0;font-size:12px;cursor:pointer;transition:.12s;user-select:none;}
+.nps-cat-item{display:flex;align-items:center;gap:9px;padding:8px 62px 8px 10px;min-height:36px;box-sizing:border-box;border-radius:8px;color:#c9cee0;font-size:12px;cursor:pointer;user-select:none;position:relative;}
 .nps-cat-item:hover{background:rgba(255,255,255,.06);color:#fff;}
 .nps-cat-item.active{background:rgba(108,92,231,.18);color:#e6e3ff;}
 .nps-cat-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .nps-cat-count{font-size:10px;color:#7b819b;background:rgba(255,255,255,.05);padding:1px 7px;border-radius:999px;}
 .nps-cat-item.active .nps-cat-count{color:#cfc9ff;background:rgba(108,92,231,.28);}
-.nps-cat-actions{display:none;align-items:center;gap:2px;}
-.nps-cat-item:hover .nps-cat-actions{display:flex;}
+.nps-cat-actions{position:absolute;right:8px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:2px;opacity:0;pointer-events:none;}
+.nps-cat-item:hover .nps-cat-actions{opacity:1;pointer-events:auto;}
 .nps-cat-actions button{display:flex;align-items:center;justify-content:center;width:22px;height:22px;border:none;border-radius:6px;background:transparent;color:#8d93ab;cursor:pointer;}
 .nps-cat-actions button:hover{background:rgba(255,255,255,.1);color:#fff;}
 .nps-cat-actions button.danger:hover{background:rgba(255,107,107,.16);color:#ff8b8b;}
@@ -116,6 +116,10 @@ function ensurePresetStyles() {
 .nps-field-hint{color:#5d6684;font-size:10px;}
 .nps-input{width:100%;height:32px;padding:0 10px;box-sizing:border-box;border-radius:8px;border:1px solid #2a3a5c;background:#0b1120;color:#e0e0e0;font-size:12px;outline:none;transition:.15s;}
 .nps-input:focus{border-color:rgba(108,92,231,.7);box-shadow:0 0 0 3px rgba(108,92,231,.12);}
+.nps-cat-inline .nps-input{width:auto;flex:1;min-width:0;}
+.nps-mini-btn{display:flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;flex-shrink:0;border-radius:7px;border:1px solid #3d3f68;background:#1f2140;color:#c9cee0;cursor:pointer;}
+.nps-mini-btn:hover{filter:brightness(1.15);}
+.nps-mini-btn.primary{border-color:#6c5ce7;background:#6c5ce7;color:#fff;}
 .nps-chips{display:flex;flex-wrap:wrap;gap:6px;min-height:24px;}
 .nps-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;border:1px solid #2a3a5c;background:#121a2e;color:#a9afc7;font-size:11px;cursor:pointer;transition:.12s;user-select:none;}
 .nps-chip:hover{border-color:rgba(108,92,231,.6);color:#e0ddff;}
@@ -160,6 +164,7 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const ICON_PATHS = {
     search: '<circle cx="11" cy="11" r="6"/><path d="m20 20-4.2-4.2"/>',
     folder: '<path d="M3 6h6l2 2h10v11H3z"/>',
+    star: '<path d="m12 3.5 2.6 5.4 5.9.9-4.3 4.2 1 5.9-5.2-2.8-5.2 2.8 1-5.9L3.5 9.8l5.9-.9z"/>',
     chevron: '<path d="m6 9 6 6 6-6"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     close: '<path d="m6 6 12 12M18 6 6 18"/>',
@@ -866,7 +871,7 @@ export function createPresetsModal(node, onImport = null) {
     const categoryBtn = el("button", "nps-cat-btn");
     categoryBtn.type = "button";
     categoryBtn.title = "按分类筛选 / 管理分类";
-    categoryBtn.appendChild(icon("folder", 15));
+    categoryBtn.appendChild(icon("star", 15));
     const categoryLabelEl = el("span", "nps-cat-label", "全部预设");
     categoryBtn.appendChild(categoryLabelEl);
     const chevronIcon = icon("chevron", 14);
@@ -1123,8 +1128,14 @@ export function createPresetsModal(node, onImport = null) {
         const input = el("input", "nps-input");
         input.type = "text";
         input.value = category;
-        const okBtn = el("button", "nps-mini-btn primary", "保存");
-        const cancelBtn = el("button", "nps-mini-btn", "取消");
+        const okBtn = el("button", "nps-mini-btn primary");
+        okBtn.type = "button";
+        okBtn.title = "保存";
+        okBtn.appendChild(icon("check", 13));
+        const cancelBtn = el("button", "nps-mini-btn");
+        cancelBtn.type = "button";
+        cancelBtn.title = "取消";
+        cancelBtn.appendChild(icon("close", 13));
         wrap.append(input, okBtn, cancelBtn);
         categoryPanelEl.replaceChild(wrap, row);
         input.focus();
@@ -1186,8 +1197,14 @@ export function createPresetsModal(node, onImport = null) {
         const input = el("input", "nps-input");
         input.type = "text";
         input.placeholder = "分类名称";
-        const okBtn = el("button", "nps-mini-btn primary", "添加");
-        const cancelBtn = el("button", "nps-mini-btn", "取消");
+        const okBtn = el("button", "nps-mini-btn primary");
+        okBtn.type = "button";
+        okBtn.title = "添加";
+        okBtn.appendChild(icon("plus", 13));
+        const cancelBtn = el("button", "nps-mini-btn");
+        cancelBtn.type = "button";
+        cancelBtn.title = "取消";
+        cancelBtn.appendChild(icon("close", 13));
         wrap.append(input, okBtn, cancelBtn);
         categoryPanelEl.replaceChild(wrap, newRow);
         input.focus();
@@ -1224,7 +1241,7 @@ export function createPresetsModal(node, onImport = null) {
 
     function makeCategoryRow(label, count, value, { onRename = null, onDelete = null } = {}) {
         const row = el("div", "nps-cat-item" + (activeCategory === value ? " active" : ""));
-        row.appendChild(icon(activeCategory === value ? "check" : "folder", 14));
+        row.appendChild(icon(activeCategory === value ? "check" : "star", 14));
         row.appendChild(el("span", "nps-cat-name", label));
         row.appendChild(el("span", "nps-cat-count", String(count)));
 
@@ -1436,7 +1453,7 @@ export function createPresetsModal(node, onImport = null) {
     function buildEmptyState() {
         const wrap = el("div", "nps-empty");
         const iconWrap = el("div", "nps-empty-icon");
-        iconWrap.appendChild(icon("folder", 26));
+        iconWrap.appendChild(icon("star", 26));
         wrap.appendChild(iconWrap);
         wrap.appendChild(el("div", "", "还没有预设"));
         if (!hasNode) {
