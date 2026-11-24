@@ -21,6 +21,15 @@ from .naiba_network import (
     proxy_context,
     proxy_settings_from_request,
 )
+from .preset_categories import (
+    create_category,
+    delete_category,
+    load_store as load_category_store,
+    remove_preset as remove_preset_categories,
+    rename_category,
+    rename_preset as rename_preset_categories,
+    set_preset_categories,
+)
 
 
 def with_naiba_proxy(handler):
@@ -515,8 +524,28 @@ async def save_preset_handler(request):
         # 保存预设
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(enriched, f, indent=2, ensure_ascii=False)
-        
-        return web.json_response({"success": True})
+
+        # 分类由独立元数据文件维护；仅当请求携带 categories 时更新，
+        # 保持其它调用方（如纯导出）的原有行为
+        response = {"success": True}
+        if "categories" in body:
+            try:
+                categories = body.get("categories") or []
+                if not isinstance(categories, list):
+                    raise ValueError("categories 需要是数组")
+                response["categories"] = set_preset_categories(
+                    PRESETS_DIR, name, categories
+                )
+            except Exception as category_error:
+                print(
+                    f"[Naiba] 保存预设分类失败 {name}: "
+                    f"{type(category_error).__name__}: {category_error}"
+                )
+                response["category_error"] = (
+                    f"{type(category_error).__name__}: {category_error}"
+                )
+
+        return web.json_response(response)
     except Exception as e:
         print(f"Error saving preset: {e}")
         return web.json_response({"error": str(e)}, status=500)
@@ -611,7 +640,18 @@ async def delete_preset_handler(request):
         os.remove(file_path)
         # 同步删除该预设的封面图
         delete_preset_image(name)
-        return web.json_response({"success": True})
+        response = {"success": True}
+        try:
+            remove_preset_categories(PRESETS_DIR, name)
+        except Exception as category_error:
+            print(
+                f"[Naiba] 删除预设分类失败 {name}: "
+                f"{type(category_error).__name__}: {category_error}"
+            )
+            response["warning"] = (
+                f"预设已删除，但分类清理失败: {type(category_error).__name__}: {category_error}"
+            )
+        return web.json_response(response)
     except Exception as e:
         print(f"Error deleting preset {name}: {e}")
         return web.json_response({"error": str(e)}, status=500)
@@ -653,7 +693,18 @@ async def rename_preset_handler(request):
         os.replace(old_path, new_path)
         # 同步重命名封面图（若存在）
         rename_preset_image(old_name, new_name)
-        return web.json_response({"success": True})
+        response = {"success": True}
+        try:
+            rename_preset_categories(PRESETS_DIR, old_name, new_name)
+        except Exception as category_error:
+            print(
+                f"[Naiba] 重命名预设分类失败 {old_name}->{new_name}: "
+                f"{type(category_error).__name__}: {category_error}"
+            )
+            response["warning"] = (
+                f"预设已重命名，但分类迁移失败: {type(category_error).__name__}: {category_error}"
+            )
+        return web.json_response(response)
     except Exception as e:
         print(f"Error renaming preset: {e}")
         return web.json_response({"error": str(e)}, status=500)
@@ -742,6 +793,74 @@ async def get_preset_image_handler(request):
         return web.Response(status=404, text="No preset image")
     except Exception as e:
         return web.Response(status=500, text=str(e))
+
+
+# ============================================================
+# API 路由：预设分类（元数据存于 presets/.meta/categories.json）
+# ============================================================
+@PromptServer.instance.routes.get('/naiba/presets/categories')
+async def get_preset_categories_handler(request):
+    """返回分类列表与「预设 -> 分类」分配表；未出现在分配表中的预设即未分类。"""
+    try:
+        return web.json_response(load_category_store(PRESETS_DIR))
+    except Exception as e:
+        print(f"Error loading preset categories: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.post('/naiba/presets/categories')
+async def mutate_preset_categories_handler(request):
+    """新增 / 重命名 / 删除分类。
+
+    删除分类仅从各预设的分类列表中移除该项：预设仍属于其它分类时保留，
+    仅当分类列表清空时才自动归为未分类。
+    """
+    try:
+        body = await request.json()
+        action = str(body.get("action", "")).strip()
+        name = body.get("name", "")
+        if action == "create":
+            store = create_category(PRESETS_DIR, name)
+        elif action == "rename":
+            store = rename_category(PRESETS_DIR, name, body.get("new_name", ""))
+        elif action == "delete":
+            store = delete_category(PRESETS_DIR, name)
+        else:
+            return web.json_response(
+                {"error": f"未知的分类操作: {action}"}, status=400
+            )
+        return web.json_response({"success": True, **store})
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    except Exception as e:
+        print(f"Error mutating preset categories: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.post('/naiba/presets/set-categories')
+async def set_preset_categories_handler(request):
+    """覆盖某个预设的分类集合；空列表表示归入未分类。"""
+    try:
+        body = await request.json()
+        name = (body.get("name", "") or "").strip()
+        is_valid, error_msg = validate_preset_name(name)
+        if not is_valid:
+            return web.json_response({"error": error_msg}, status=400)
+        if not os.path.exists(os.path.join(PRESETS_DIR, f"{name}.json")):
+            return web.json_response({"error": "预设不存在"}, status=404)
+
+        categories = body.get("categories", [])
+        if not isinstance(categories, list):
+            return web.json_response(
+                {"error": "categories 需要是数组"}, status=400
+            )
+        assigned = set_preset_categories(PRESETS_DIR, name, categories)
+        return web.json_response({"success": True, "categories": assigned})
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    except Exception as e:
+        print(f"Error setting preset categories: {e}")
+        return web.json_response({"error": str(e)}, status=500)
 
 
 # ============================================================
