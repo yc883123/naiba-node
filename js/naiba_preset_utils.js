@@ -59,7 +59,7 @@ function ensurePresetStyles() {
 .nps-sort-btn{display:flex;align-items:center;gap:6px;height:34px;padding:0 11px;border-radius:9px;border:1px solid #2a3a5c;background:transparent;color:#8d93ab;font-size:12px;cursor:pointer;transition:.15s;white-space:nowrap;flex-shrink:0;}
 .nps-sort-btn:hover{color:#dfe3ff;border-color:rgba(108,92,231,.5);}
 .nps-sort-btn.active{color:#dfe3ff;border-color:rgba(108,92,231,.65);background:rgba(108,92,231,.14);}
-.nps-cat-panel{position:absolute;top:calc(100% + 6px);left:20px;width:248px;max-height:min(420px,60vh);overflow-y:auto;padding:6px;border-radius:12px;border:1px solid rgba(108,92,231,.38);background:#191a30;box-shadow:0 18px 50px rgba(0,0,0,.6);z-index:20;}
+.nps-cat-panel{position:absolute;top:calc(100% + 6px);left:20px;width:248px;max-height:min(420px,60vh);overflow-y:auto;padding:6px;border-radius:12px;border:1px solid rgba(139,123,255,.5);background:#26284a;box-shadow:0 18px 50px rgba(0,0,0,.6);z-index:20;}
 .nps-cat-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;color:#c9cee0;font-size:12px;cursor:pointer;transition:.12s;user-select:none;}
 .nps-cat-item:hover{background:rgba(255,255,255,.06);color:#fff;}
 .nps-cat-item.active{background:rgba(108,92,231,.18);color:#e6e3ff;}
@@ -94,7 +94,7 @@ function ensurePresetStyles() {
 .nps-empty-icon{width:52px;height:52px;border-radius:16px;display:flex;align-items:center;justify-content:center;background:rgba(108,92,231,.12);color:#8b7bff;}
 .nps-empty-actions{display:flex;gap:8px;margin-top:4px;}
 .nps-empty-sub{font-size:11px;color:#6d7490;}
-.nps-menu{position:fixed;min-width:196px;padding:6px;border-radius:12px;border:1px solid rgba(108,92,231,.42);background:#1b1c33;box-shadow:0 20px 50px rgba(0,0,0,.62);z-index:10100;}
+.nps-menu{position:fixed;min-width:196px;max-height:calc(100vh - 20px);overflow-y:auto;padding:6px;border-radius:12px;border:1px solid rgba(139,123,255,.5);background:#2b2a4e;box-shadow:0 20px 50px rgba(0,0,0,.62);z-index:10100;}
 .nps-menu-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;color:#d3d6e4;font-size:12px;cursor:pointer;transition:.12s;user-select:none;}
 .nps-menu-item:hover{background:rgba(255,255,255,.07);color:#fff;}
 .nps-menu-item.danger{color:#ff8b8b;}
@@ -102,7 +102,7 @@ function ensurePresetStyles() {
 .nps-menu-item.disabled{opacity:.42;cursor:not-allowed;}
 .nps-menu-item.disabled:hover{background:transparent;color:#d3d6e4;}
 .nps-menu-icon{display:flex;width:16px;justify-content:center;color:currentColor;opacity:.9;}
-.nps-menu-sep-line{height:1px;margin:5px 8px;background:#2a2f4d;}
+.nps-menu-sep-line{height:1px;margin:5px 8px;background:#3d3f68;}
 .nps-toast{position:absolute;left:50%;bottom:18px;transform:translate(-50%,10px);padding:8px 16px;border-radius:9px;background:rgba(10,16,30,.94);border:1px solid #2a3a5c;color:#cfe9d8;font-size:12px;box-shadow:0 10px 30px rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:.2s;z-index:30;max-width:80%;text-align:center;}
 .nps-toast.show{opacity:1;transform:translate(-50%,0);}
 .nps-toast.error{color:#ffb1b1;border-color:rgba(255,107,107,.5);}
@@ -1578,15 +1578,28 @@ export function createPresetsModal(node, onImport = null) {
         const rect = card.getBoundingClientRect();
         const menuWidth = menu.offsetWidth;
         const menuHeight = menu.offsetHeight;
-        let left = rect.left + 4;
-        let top = rect.bottom + 8;
-        if (left + menuWidth > window.innerWidth - 10) {
-            left = window.innerWidth - menuWidth - 10;
+        const gap = 8;
+        let left;
+        let top;
+        if (rect.right + gap + menuWidth <= window.innerWidth - 10) {
+            // 优先浮现在卡片右侧
+            left = rect.right + gap;
+            top = rect.top;
+        } else if (rect.left - gap - menuWidth >= 10) {
+            // 右侧放不下时翻到卡片左侧
+            left = rect.left - gap - menuWidth;
+            top = rect.top;
+        } else {
+            // 两侧都放不下（窄窗口）时退回卡片下方/上方
+            left = Math.max(10, Math.min(rect.left, window.innerWidth - menuWidth - 10));
+            top = rect.bottom + gap;
+            if (top + menuHeight > window.innerHeight - 10) {
+                top = Math.max(10, rect.top - menuHeight - gap);
+            }
         }
-        if (top + menuHeight > window.innerHeight - 10) {
-            top = Math.max(10, rect.top - menuHeight - 8);
-        }
-        menu.style.left = `${Math.max(10, left)}px`;
+        left = Math.max(10, Math.min(left, window.innerWidth - menuWidth - 10));
+        top = Math.max(10, Math.min(top, window.innerHeight - menuHeight - 10));
+        menu.style.left = `${left}px`;
         menu.style.top = `${top}px`;
 
         menuOutsideHandler = (e) => {
