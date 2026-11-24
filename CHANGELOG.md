@@ -9,6 +9,7 @@
 - **NAIBA LoRA 浏览器同等排序能力**：Lora Data Preview 弹窗工具栏新增「排序: 字母序 / 最新优先」切换按钮，行为与可视化选择器一致
 - **NAIBA LoRA 浏览器新增「未同步」标签页**：带计数，单独列出尚未从 Civitai 同步的 LoRA（与批量同步"同步未同步的"模式同口径），便于逐个同步
 - **同步排除名单**：云端没有数据的 LoRA 可在「未同步」页一键永久排除（可恢复），批量同步两种模式（含"同步全部"）都跳过，不再反复重试注定失败的条目；后端新增 `GET /naiba/lora/unsynced` 与 `POST /naiba/lora/sync-excluded`，名单持久化在 `naiba_sync_excluded.json`
+- **LoRA 预设管理页重构 + 分类管理**：所有操作收进「点击预设卡片」弹出的菜单（导入、保存 / 覆盖、更换封面、编辑分类、重命名、导出到文件、从文件导入、删除），移除悬浮换封面按钮与双击重命名，保留拖拽图片更换封面；新增分类筛选与分类管理（新增 / 重命名 / 删除分类，一个预设可属多个分类，未分类自动归组），保存对话框支持分类多选并默认未分类；分类元数据独立存放于 `presets/.meta/categories.json`，新增 `GET/POST /naiba/presets/categories` 与 `POST /naiba/presets/set-categories`
 
 ### 优化改进
 - **Visual LoRA Loader 的 `trigger_words` 合并自定义提示词**：在 Civitai 触发词之后追加 `.custom.info.json` 的 `custom_prompt`（Lora Data Preview 编辑面板保存），无 Civitai 元数据时也会输出；`IS_CHANGED` 同步追踪 `.custom.info.json`，保存后无需重启即可刷新
