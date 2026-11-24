@@ -80,9 +80,9 @@ function ensurePresetStyles() {
 .nps-card{display:flex;flex-direction:column;gap:8px;padding:9px;border-radius:12px;background:#151b2e;border:1px solid rgba(42,58,92,.75);cursor:pointer;position:relative;}
 .nps-card:hover{border-color:rgba(108,92,231,.65);}
 .nps-card.drop-active{border-color:#6c5ce7;background:#1b2238;}
-.nps-card-more{position:absolute;top:14px;right:14px;z-index:2;width:24px;height:24px;border-radius:8px;display:flex;align-items:center;justify-content:center;background:rgba(6,10,20,.72);color:#c9cee0;opacity:0;pointer-events:none;font-size:14px;line-height:1;}
+.nps-card-more{position:absolute;top:12px;right:12px;z-index:2;box-sizing:border-box;width:32px;height:32px;border-radius:10px;border:1px solid rgba(255,255,255,.16);display:flex;align-items:center;justify-content:center;background:rgba(6,10,20,.72);color:#c9cee0;opacity:0;pointer-events:none;font-size:18px;line-height:1;}
 .nps-card:hover .nps-card-more{opacity:1;}
-.nps-card-import{position:absolute;top:14px;left:14px;z-index:2;display:flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:none;border-radius:8px;background:rgba(6,10,20,.72);color:#c9cee0;opacity:0;pointer-events:none;cursor:pointer;}
+.nps-card-import{position:absolute;top:12px;left:12px;z-index:2;box-sizing:border-box;display:flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:rgba(6,10,20,.72);color:#c9cee0;opacity:0;pointer-events:none;cursor:pointer;}
 .nps-card:hover .nps-card-import{opacity:1;pointer-events:auto;}
 .nps-card-import:hover{background:rgba(108,92,231,.9);color:#fff;}
 .nps-card.drop-active .nps-card-import{opacity:0;pointer-events:none;}
@@ -1360,7 +1360,7 @@ export function createPresetsModal(node, onImport = null) {
             const quickImportBtn = el("button", "nps-card-import");
             quickImportBtn.type = "button";
             quickImportBtn.title = "导入预设";
-            quickImportBtn.appendChild(icon("importPreset", 14));
+            quickImportBtn.appendChild(icon("importPreset", 17));
             quickImportBtn.addEventListener("click", (e) => {
                 e.stopPropagation();
                 importPreset(name);
