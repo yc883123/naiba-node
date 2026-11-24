@@ -428,7 +428,7 @@ export function renderPresetDiff(container, diff, {
                 parts.push(`clip强度 ${fmtStrength(change.from.strength_clip)}→${fmtStrength(change.to.strength_clip)}`);
             }
             if ((change.from.enabled !== false) !== (change.to.enabled !== false)) {
-                parts.push(`启用状态 ${(change.from.enabled !== false) ? "开" : "关"}→${(change.to.enabled !== false) ? "开" : "关"}`);
+                parts.push(change.to.enabled !== false ? "打开" : "关闭");
             }
             mkRow(
                 "~",
