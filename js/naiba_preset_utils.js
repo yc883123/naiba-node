@@ -82,6 +82,10 @@ function ensurePresetStyles() {
 .nps-card.drop-active{border-color:#6c5ce7;background:#1b2238;}
 .nps-card-more{position:absolute;top:14px;right:14px;z-index:2;width:24px;height:24px;border-radius:8px;display:flex;align-items:center;justify-content:center;background:rgba(6,10,20,.72);color:#c9cee0;opacity:0;pointer-events:none;font-size:14px;line-height:1;}
 .nps-card:hover .nps-card-more{opacity:1;}
+.nps-card-import{position:absolute;top:14px;left:14px;z-index:2;display:flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:none;border-radius:8px;background:rgba(6,10,20,.72);color:#c9cee0;opacity:0;pointer-events:none;cursor:pointer;}
+.nps-card:hover .nps-card-import{opacity:1;pointer-events:auto;}
+.nps-card-import:hover{background:rgba(108,92,231,.9);color:#fff;}
+.nps-card.drop-active .nps-card-import{opacity:0;pointer-events:none;}
 .nps-cover{position:relative;width:100%;aspect-ratio:1/1;border-radius:9px;overflow:hidden;background:#0b1120;display:flex;align-items:center;justify-content:center;}
 .nps-cover img{width:100%;height:100%;object-fit:contain;display:none;}
 .nps-cover-ph{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:6px;color:#5d6684;font-size:11px;}
@@ -1351,6 +1355,18 @@ export function createPresetsModal(node, onImport = null) {
         card._name = name;
 
         card.appendChild(el("div", "nps-card-more", "⋯"));
+
+        if (hasNode) {
+            const quickImportBtn = el("button", "nps-card-import");
+            quickImportBtn.type = "button";
+            quickImportBtn.title = "导入预设";
+            quickImportBtn.appendChild(icon("importPreset", 14));
+            quickImportBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                importPreset(name);
+            });
+            card.appendChild(quickImportBtn);
+        }
 
         const cover = el("div", "nps-cover");
         const coverImg = document.createElement("img");
