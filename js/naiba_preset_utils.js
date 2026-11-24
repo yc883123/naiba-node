@@ -1527,6 +1527,10 @@ export function createPresetsModal(node, onImport = null) {
     // ========== 卡片菜单 ==========
     function closeCardMenu() {
         if (!menuEl) return;
+        if (menuEl._menuHoverCleanup) {
+            menuEl._menuHoverCleanup();
+            menuEl._menuHoverCleanup = null;
+        }
         menuEl.remove();
         menuEl = null;
         if (menuOutsideHandler) {
@@ -1574,6 +1578,32 @@ export function createPresetsModal(node, onImport = null) {
 
         document.body.appendChild(menu);
         menuEl = menu;
+
+        // 指针离开卡片或菜单后延时收起，避免菜单长期遮住右侧卡片；
+        // 期间移入卡片/菜单会取消收起
+        let menuHideTimer = null;
+        const cancelMenuHide = () => {
+            if (menuHideTimer) {
+                clearTimeout(menuHideTimer);
+                menuHideTimer = null;
+            }
+        };
+        const scheduleMenuHide = () => {
+            cancelMenuHide();
+            menuHideTimer = setTimeout(() => {
+                menuHideTimer = null;
+                if (menuEl === menu) closeCardMenu();
+            }, 100);
+        };
+        card.addEventListener("mouseleave", scheduleMenuHide);
+        menu.addEventListener("mouseenter", cancelMenuHide);
+        menu.addEventListener("mouseleave", scheduleMenuHide);
+        menu._menuHoverCleanup = () => {
+            cancelMenuHide();
+            card.removeEventListener("mouseleave", scheduleMenuHide);
+            menu.removeEventListener("mouseenter", cancelMenuHide);
+            menu.removeEventListener("mouseleave", scheduleMenuHide);
+        };
 
         const rect = card.getBoundingClientRect();
         const menuWidth = menu.offsetWidth;
