@@ -71,7 +71,7 @@ function ensurePresetStyles() {
 .nps-cat-actions button{display:flex;align-items:center;justify-content:center;width:22px;height:22px;border:none;border-radius:6px;background:transparent;color:#8d93ab;cursor:pointer;}
 .nps-cat-actions button:hover{background:rgba(255,255,255,.1);color:#fff;}
 .nps-cat-actions button.danger:hover{background:rgba(255,107,107,.16);color:#ff8b8b;}
-.nps-menu-sep{height:1px;margin:5px 8px;background:#262b46;}
+.nps-menu-sep{height:1px;margin:5px 8px;background:rgba(255,255,255,.28);}
 .nps-cat-inline{display:flex;align-items:center;gap:6px;padding:6px 7px;}
 .nps-cat-new{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;color:#8f96b5;font-size:12px;cursor:pointer;transition:.12s;}
 .nps-cat-new:hover{background:rgba(108,92,231,.12);color:#c9c4ff;}
@@ -165,6 +165,7 @@ const ICON_PATHS = {
     search: '<circle cx="11" cy="11" r="6"/><path d="m20 20-4.2-4.2"/>',
     folder: '<path d="M3 6h6l2 2h10v11H3z"/>',
     star: '<path d="m12 3.5 2.6 5.4 5.9.9-4.3 4.2 1 5.9-5.2-2.8-5.2 2.8 1-5.9L3.5 9.8l5.9-.9z"/>',
+    dot: '<circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/>',
     chevron: '<path d="m6 9 6 6 6-6"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     close: '<path d="m6 6 12 12M18 6 6 18"/>',
@@ -1239,9 +1240,9 @@ export function createPresetsModal(node, onImport = null) {
         });
     }
 
-    function makeCategoryRow(label, count, value, { onRename = null, onDelete = null } = {}) {
+    function makeCategoryRow(label, count, value, { onRename = null, onDelete = null, iconName = "star" } = {}) {
         const row = el("div", "nps-cat-item" + (activeCategory === value ? " active" : ""));
-        row.appendChild(icon(activeCategory === value ? "check" : "star", 14));
+        row.appendChild(icon(activeCategory === value ? "check" : iconName, 14));
         row.appendChild(el("span", "nps-cat-name", label));
         row.appendChild(el("span", "nps-cat-count", String(count)));
 
@@ -1283,7 +1284,9 @@ export function createPresetsModal(node, onImport = null) {
         const uncategorized = presetNames.filter((name) => getVisibleCategories(name).length === 0).length;
 
         categoryPanelEl.appendChild(makeCategoryRow("全部预设", presetNames.length, "all"));
-        categoryPanelEl.appendChild(makeCategoryRow("未分类", uncategorized, UNCATEGORIZED_FILTER));
+        categoryPanelEl.appendChild(
+            makeCategoryRow("未分类", uncategorized, UNCATEGORIZED_FILTER, { iconName: "dot" })
+        );
         categoryPanelEl.appendChild(el("div", "nps-menu-sep"));
 
         for (const category of categoryStore.categories) {
