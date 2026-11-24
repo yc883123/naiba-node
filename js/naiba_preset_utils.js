@@ -1427,8 +1427,7 @@ export function createPresetsModal(node, onImport = null) {
         };
         card._applyCover = applyCover;
 
-        cover.title = "可将图片拖入卡片更换封面";
-        card.addEventListener("dragenter", (e) => {
+                card.addEventListener("dragenter", (e) => {
             e.preventDefault();
             dragDepth += 1;
             if (!coverBusy) setDropActive(true);
