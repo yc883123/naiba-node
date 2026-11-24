@@ -5,7 +5,7 @@
 
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { createPresetsModal, openSavePresetDialog, getLoadedPresetName, setLoadedPresetName } from "./naiba_preset_utils.js";
+import { createPresetsModal, openSavePresetDialog, openResetToPresetDialog, getLoadedPresetName, setLoadedPresetName } from "./naiba_preset_utils.js";
 
 // ========== 颜色常量 ==========
 const COLORS = {
@@ -1671,9 +1671,9 @@ app.registerExtension({
 
             buttonRow.appendChild(presetBtn);
 
-            // 保存预设按钮（预填最近导入的预设名与封面，方便覆盖迭代）
+            // 保存按钮（预填最近导入的预设名与封面，方便覆盖迭代）
             const savePresetBtn = document.createElement("button");
-            savePresetBtn.textContent = "保存预设";
+            savePresetBtn.textContent = "保存";
             savePresetBtn.title = "保存当前选择为预设";
             savePresetBtn.style.cssText = `
                 padding:10px 16px;margin:8px 0;
@@ -1693,6 +1693,31 @@ app.registerExtension({
             });
 
             buttonRow.appendChild(savePresetBtn);
+
+            // 重置按钮：恢复为来源预设保存时的状态（先展示差异再确认）
+            const RESET_BTN_BG = "#356a6f";
+            const RESET_BTN_BG_HOVER = "#3f7d83";
+            const resetBtn = document.createElement("button");
+            resetBtn.textContent = "重置";
+            resetBtn.title = "重置为来源预设的保存状态";
+            resetBtn.style.cssText = `
+                padding:10px 16px;margin:8px 0;
+                background:${RESET_BTN_BG};color:white;
+                border:none;border-radius:6px;cursor:pointer;
+                font-size:13px;font-weight:500;
+                transition:background 0.2s;
+            `;
+            resetBtn.addEventListener("mouseenter", () => {
+                resetBtn.style.background = RESET_BTN_BG_HOVER;
+            });
+            resetBtn.addEventListener("mouseleave", () => {
+                resetBtn.style.background = RESET_BTN_BG;
+            });
+            resetBtn.addEventListener("click", () => {
+                openResetToPresetDialog(node, getLoadedPresetName(node));
+            });
+
+            buttonRow.appendChild(resetBtn);
 
             buttonRow.appendChild(clearBtn);
 
@@ -2191,7 +2216,7 @@ app.registerExtension({
             `;
             const refreshToggleAllLabel = () => {
                 const allOn = toggleAllState();
-                toggleAllBtn.textContent = allOn ? "全部关闭" : "全部开启";
+                toggleAllBtn.textContent = allOn ? "全关" : "全开";
                 toggleAllBtn.title = allOn ? "一键关闭所有已选 LoRA" : "一键开启所有已选 LoRA";
                 toggleAllBtn.style.background = toggleAllBg(allOn);
             };

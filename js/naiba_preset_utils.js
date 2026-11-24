@@ -148,8 +148,10 @@ function ensurePresetStyles() {
 .nps-diff-row{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .nps-diff-head{color:#e0e0e0;}
 .nps-diff-add{color:#2ed573;}
+.nps-diff-add.off{color:rgba(46,213,115,.5);}
 .nps-diff-del{color:#ff6b6b;}
 .nps-diff-chg{color:#ffb347;}
+.nps-diff-chg.off{color:rgba(255,179,71,.5);}
 .nps-hidden-input{display:none;}
 .nps-svg{display:block;flex-shrink:0;}
 `;
@@ -289,7 +291,7 @@ async function fetchPresetNames() {
     }
 }
 
-async function fetchPresetData(name) {
+export async function fetchPresetData(name) {
     try {
         const resp = await api.fetchApi(`/naiba/presets/load?name=${encodeURIComponent(name)}`);
         const result = await resp.json();
@@ -352,7 +354,7 @@ function normLoraPath(name) {
     return String(name || "").replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase();
 }
 
-function diffPresetData(oldData, newData) {
+export function diffPresetData(oldData, newData) {
     const oldList = Array.isArray(oldData) ? oldData : [];
     const newList = Array.isArray(newData) ? newData : [];
     const oldBySha = new Map();
@@ -384,6 +386,58 @@ function diffPresetData(oldData, newData) {
         if (!matchedOld.has(o)) removed.push(o);
     }
     return { added, removed, changed };
+}
+
+const fmtStrength = (v) => Number(v ?? 1).toFixed(2);
+const dispName = (e) => String(e?.name || "?").split(/[\\/]/).pop();
+
+// 通用 git 风格差异渲染：新增/修改按条目启用状态区分亮色（开）与暗色（关），删除固定亮红
+export function renderPresetDiff(container, diff, {
+    headerText = "将产生以下变更（+ 新增  − 移除  ~ 修改）：",
+    emptyText = "内容一致",
+} = {}) {
+    container.innerHTML = "";
+    const noChange = diff.added.length === 0 && diff.removed.length === 0 && diff.changed.length === 0;
+    if (noChange) {
+        const row = el("div", "nps-diff-row", emptyText);
+        row.style.color = COLORS.textDim;
+        container.appendChild(row);
+    } else {
+        container.appendChild(el("div", "nps-diff-row nps-diff-head", headerText));
+        const mkRow = (sign, text, className) => {
+            const row = el("div", `nps-diff-row ${className}`, `${sign} ${text}`);
+            row.title = text;
+            container.appendChild(row);
+        };
+        for (const entry of diff.added) {
+            mkRow(
+                "+",
+                `${dispName(entry)}（model强度 ${fmtStrength(entry.strength_model)}）`,
+                "nps-diff-add" + (entry?.enabled !== false ? "" : " off"),
+            );
+        }
+        for (const entry of diff.removed) {
+            mkRow("−", `${dispName(entry)}（model强度 ${fmtStrength(entry.strength_model)}）`, "nps-diff-del");
+        }
+        for (const change of diff.changed) {
+            const parts = [];
+            if ((change.from.strength_model ?? 1) !== (change.to.strength_model ?? 1)) {
+                parts.push(`model强度 ${fmtStrength(change.from.strength_model)}→${fmtStrength(change.to.strength_model)}`);
+            }
+            if ((change.from.strength_clip ?? 1) !== (change.to.strength_clip ?? 1)) {
+                parts.push(`clip强度 ${fmtStrength(change.from.strength_clip)}→${fmtStrength(change.to.strength_clip)}`);
+            }
+            if ((change.from.enabled !== false) !== (change.to.enabled !== false)) {
+                parts.push(`启用状态 ${(change.from.enabled !== false) ? "开" : "关"}→${(change.to.enabled !== false) ? "开" : "关"}`);
+            }
+            mkRow(
+                "~",
+                `${dispName(change.to)}: ${parts.join("，")}`,
+                "nps-diff-chg" + (change.to?.enabled !== false ? "" : " off"),
+            );
+        }
+    }
+    container.style.display = "block";
 }
 
 // 保存预设数据，返回 { ok, error?, coverError?, categoryError?, categories? }；错误由调用方决定如何展示
@@ -432,6 +486,64 @@ async function savePresetData(node, trimmedName, coverFile = null, categories = 
     } catch (e) {
         return { ok: false, error: e.message };
     }
+}
+
+async function resolvePresetData(data) {
+    try {
+        const resp = await api.fetchApi("/naiba/presets/resolve", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ data }),
+        });
+        const result = await resp.json();
+        if (result.error) return data;
+        return result.data ?? data;
+    } catch (e) {
+        console.warn("[Presets] resolve failed, use raw data:", e);
+        return data;
+    }
+}
+
+function applyPresetDataToNode(node, data) {
+    if (!node) return;
+    const loraDataWidget = node.widgets?.find((w) => w.name === "lora_data");
+    if (!loraDataWidget) return;
+
+    const serialized = JSON.stringify(data);
+
+    if (node._clearAllEntries) {
+        node._clearAllEntries();
+    }
+
+    loraDataWidget.value = serialized;
+
+    if (node._addLoraEntry && data.length > 0) {
+        for (const item of data) {
+            node._addLoraEntry(item);
+        }
+    }
+
+    // Multi Loader 的逐条重建会在内部序列化；最后恢复完整导入数据，
+    // 确保路径、SHA256 和未知字段不会被中间状态覆盖。
+    loraDataWidget.value = serialized;
+
+    if (node._updateVisualLoraDisplay) {
+        node._updateVisualLoraDisplay();
+    }
+    if (node._updateLoraDataPreview) {
+        node._updateLoraDataPreview();
+    }
+    if (node._visualModalReload) {
+        node._visualModalReload();
+    }
+    if (node._triggerVisualLoraResize) {
+        node._triggerVisualLoraResize();
+    }
+
+    loraDataWidget.callback?.(loraDataWidget.value, app.canvas, node);
+    node.graph?.change?.();
+    node.setDirtyCanvas?.(true, true);
+    node.graph?.setDirtyCanvas(true, true);
 }
 
 /**
@@ -699,46 +811,6 @@ export async function openSavePresetDialog(node, {
     }
 
     // ========== 覆盖差异对比（git 风格） ==========
-    const fmtStrength = (v) => Number(v ?? 1).toFixed(2);
-    const dispName = (e) => String(e?.name || "?").split(/[\\/]/).pop();
-
-    function renderDiffBox(diff, name) {
-        diffBox.innerHTML = "";
-        const noChange = diff.added.length === 0 && diff.removed.length === 0 && diff.changed.length === 0;
-        if (noChange) {
-            const row = el("div", "nps-diff-row", `与已保存预设「${name}」内容一致`);
-            row.style.color = COLORS.textDim;
-            diffBox.appendChild(row);
-        } else {
-            diffBox.appendChild(el("div", "nps-diff-row nps-diff-head", "覆盖将产生以下变更（+ 新增  − 移除  ~ 强度修改）："));
-            const mkRow = (sign, text, className) => {
-                const row = el("div", `nps-diff-row ${className}`, `${sign} ${text}`);
-                row.title = text;
-                diffBox.appendChild(row);
-            };
-            for (const e of diff.added) {
-                mkRow("+", `${dispName(e)}（model强度 ${fmtStrength(e.strength_model)}）`, "nps-diff-add");
-            }
-            for (const e of diff.removed) {
-                mkRow("−", `${dispName(e)}（model强度 ${fmtStrength(e.strength_model)}）`, "nps-diff-del");
-            }
-            for (const c of diff.changed) {
-                const parts = [];
-                if ((c.from.strength_model ?? 1) !== (c.to.strength_model ?? 1)) {
-                    parts.push(`model强度 ${fmtStrength(c.from.strength_model)}→${fmtStrength(c.to.strength_model)}`);
-                }
-                if ((c.from.strength_clip ?? 1) !== (c.to.strength_clip ?? 1)) {
-                    parts.push(`clip强度 ${fmtStrength(c.from.strength_clip)}→${fmtStrength(c.to.strength_clip)}`);
-                }
-                if ((c.from.enabled !== false) !== (c.to.enabled !== false)) {
-                    parts.push(`启用状态 ${(c.from.enabled !== false) ? "开" : "关"}→${(c.to.enabled !== false) ? "开" : "关"}`);
-                }
-                mkRow("~", `${dispName(c.to)}: ${parts.join("，")}`, "nps-diff-chg");
-            }
-        }
-        diffBox.style.display = "block";
-    }
-
     async function refreshDiff() {
         const seq = ++diffSeq;
         const name = input.value.trim();
@@ -752,7 +824,10 @@ export async function openSavePresetDialog(node, {
             diffBox.style.display = "none";
             return;
         }
-        renderDiffBox(diffPresetData(presetData, getCurrentData(node)), name);
+        renderPresetDiff(diffBox, diffPresetData(presetData, getCurrentData(node)), {
+            headerText: "覆盖将产生以下变更（+ 新增  − 移除  ~ 强度修改）：",
+            emptyText: `与已保存预设「${name}」内容一致`,
+        });
     }
 
     const keyHandler = (e) => {
@@ -835,6 +910,139 @@ export async function openSavePresetDialog(node, {
     input.focus();
     input.select();
     updateWarn();
+}
+
+/**
+ * 打开「重置到预设」对话框：先展示当前节点数据与来源预设保存状态的差异，
+ * 确认后把节点恢复为该预设保存时的内容。
+ * @param {Object} node - ComfyUI 节点实例
+ * @param {string} presetName - 来源预设名（通常取 node.properties.naiba_loaded_preset）
+ * @param {Object} [opts]
+ * @param {Function} [opts.onApplied] - 重置成功后的回调
+ */
+export async function openResetToPresetDialog(node, presetName, { onApplied = null } = {}) {
+    ensurePresetStyles();
+    const name = String(presetName || "").trim();
+
+    const overlay = el("div", "nps-dialog-overlay");
+    const box = el("div", "nps-dialog");
+    const titleEl = el("div", "nps-dialog-title", "重置到预设");
+    if (name) titleEl.appendChild(el("span", "nps-dialog-sub", name));
+    box.appendChild(titleEl);
+
+    const keyHandler = (e) => {
+        if (e.key === "Escape") {
+            e.stopPropagation();
+            e.preventDefault();
+            close();
+        }
+    };
+    const close = () => {
+        document.removeEventListener("keydown", keyHandler, true);
+        overlay.remove();
+    };
+
+    if (!node || !name) {
+        box.appendChild(el("div", "nps-note", "当前节点没有来源预设，无法重置。请先导入或保存预设。"));
+        const buttons = el("div", "nps-buttons");
+        const closeBtn = el("button", "nps-btn primary", "知道了");
+        closeBtn.type = "button";
+        closeBtn.addEventListener("click", close);
+        buttons.appendChild(closeBtn);
+        box.appendChild(buttons);
+        overlay.appendChild(box);
+        document.addEventListener("keydown", keyHandler, true);
+        document.body.appendChild(overlay);
+        return;
+    }
+
+    box.appendChild(el("div", "nps-note", "将节点恢复为该预设保存时的 LoRA 列表、权重与开关状态。"));
+    const diffBox = el("div", "nps-diff", "正在读取预设...");
+    diffBox.style.display = "block";
+    const warn = el("div", "nps-warn", "重置会丢弃当前未保存的 LoRA 调整。");
+    warn.style.display = "block";
+    const status = el("div", "nps-form-error");
+    box.append(diffBox, warn, status);
+
+    const buttons = el("div", "nps-buttons");
+    const cancelBtn = el("button", "nps-btn", "取消");
+    cancelBtn.type = "button";
+    const confirmBtn = el("button", "nps-btn primary", "重置");
+    confirmBtn.type = "button";
+    confirmBtn.disabled = true;
+    buttons.append(cancelBtn, confirmBtn);
+    box.appendChild(buttons);
+    overlay.appendChild(box);
+    document.addEventListener("keydown", keyHandler, true);
+    document.body.appendChild(overlay);
+
+    cancelBtn.addEventListener("click", close);
+
+    let resolvedData = null;
+    let hasDiff = false;
+    let applying = false;
+
+    try {
+        const presetData = await fetchPresetData(name);
+        if (!presetData) {
+            throw new Error("预设不存在或读取失败");
+        }
+        showShaProgress();
+        try {
+            resolvedData = await resolvePresetData(presetData);
+        } finally {
+            hideShaProgress();
+        }
+
+        const diff = diffPresetData(getCurrentData(node), resolvedData);
+        hasDiff = diff.added.length > 0 || diff.removed.length > 0 || diff.changed.length > 0;
+        renderPresetDiff(diffBox, diff, {
+            headerText: "重置将产生以下变更（+ 新增  − 移除  ~ 修改）：",
+            emptyText: `当前状态与预设「${name}」一致`,
+        });
+        confirmBtn.disabled = false;
+        if (!hasDiff) confirmBtn.textContent = "关闭";
+    } catch (e) {
+        console.error("[Presets] 读取重置目标失败:", e);
+        diffBox.textContent = "";
+        diffBox.style.display = "none";
+        status.textContent = "读取预设失败: " + e.message;
+        status.style.display = "block";
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "关闭";
+        hasDiff = false;
+    }
+
+    confirmBtn.addEventListener("click", () => {
+        if (applying) return;
+        if (!hasDiff) {
+            close();
+            return;
+        }
+        applying = true;
+        confirmBtn.disabled = true;
+        try {
+            if (!node.widgets?.find((w) => w.name === "lora_data")) {
+                throw new Error("节点缺少 lora_data 数据控件");
+            }
+            applyPresetDataToNode(node, resolvedData);
+            setLoadedPresetName(node, name);
+            close();
+            if (typeof onApplied === "function") {
+                try {
+                    onApplied(name);
+                } catch (e) {
+                    console.error("[Presets] onApplied callback failed:", e);
+                }
+            }
+        } catch (e) {
+            console.error("[Presets] 重置失败:", e);
+            status.textContent = "重置失败: " + e.message;
+            status.style.display = "block";
+            confirmBtn.disabled = false;
+            applying = false;
+        }
+    });
 }
 
 /**
@@ -1020,64 +1228,7 @@ export function createPresetsModal(node, onImport = null) {
             : `共 ${presetNames.length} 个`;
     }
 
-    // ========== 节点数据 ==========
-    async function resolvePreset(data) {
-        try {
-            const resp = await api.fetchApi("/naiba/presets/resolve", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ data }),
-            });
-            const r = await resp.json();
-            if (r.error) return data;
-            return r.data ?? data;
-        } catch (e) {
-            console.warn("[Presets] resolve failed, use raw data:", e);
-            return data;
-        }
-    }
-
-    function setNodeData(data) {
-        const loraDataWidget = node.widgets?.find((w) => w.name === "lora_data");
-        if (!loraDataWidget) return;
-
-        const serialized = JSON.stringify(data);
-
-        if (node._clearAllEntries) {
-            node._clearAllEntries();
-        }
-
-        loraDataWidget.value = serialized;
-
-        if (node._addLoraEntry && data.length > 0) {
-            for (const item of data) {
-                node._addLoraEntry(item);
-            }
-        }
-
-        // Multi Loader 的逐条重建会在内部序列化；最后恢复完整导入数据，
-        // 确保路径、SHA256 和未知字段不会被中间状态覆盖。
-        loraDataWidget.value = serialized;
-
-        if (node._updateVisualLoraDisplay) {
-            node._updateVisualLoraDisplay();
-        }
-        if (node._updateLoraDataPreview) {
-            node._updateLoraDataPreview();
-        }
-        if (node._visualModalReload) {
-            node._visualModalReload();
-        }
-        if (node._triggerVisualLoraResize) {
-            node._triggerVisualLoraResize();
-        }
-
-        loraDataWidget.callback?.(loraDataWidget.value, app.canvas, node);
-        node.graph?.change?.();
-        node.setDirtyCanvas?.(true, true);
-        node.graph?.setDirtyCanvas(true, true);
-    }
-
+    
     // ========== 分类面板 ==========
     function countCategories() {
         const counts = new Map();
@@ -1719,8 +1870,8 @@ export function createPresetsModal(node, onImport = null) {
             }
             showShaProgress();
             try {
-                const resolved = await resolvePreset(result.data);
-                setNodeData(resolved);
+                const resolved = await resolvePresetData(result.data);
+                applyPresetDataToNode(node, resolved);
                 setLoadedPresetName(node, name);
                 closeModal();
                 if (typeof onImport === "function") onImport();
@@ -2047,8 +2198,8 @@ export function createPresetsModal(node, onImport = null) {
 
                 showShaProgress();
                 try {
-                    const resolved = await resolvePreset(data);
-                    setNodeData(resolved);
+                    const resolved = await resolvePresetData(data);
+                    applyPresetDataToNode(node, resolved);
                     setLoadedPresetName(node, null);
                     closeModal();
                     if (typeof onImport === "function") onImport();
