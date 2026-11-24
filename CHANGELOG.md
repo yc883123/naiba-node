@@ -15,6 +15,7 @@
 - **Visual LoRA Loader 的 `trigger_words` 合并自定义提示词**：在 Civitai 触发词之后追加 `.custom.info.json` 的 `custom_prompt`（Lora Data Preview 编辑面板保存），无 Civitai 元数据时也会输出；`IS_CHANGED` 同步追踪 `.custom.info.json`，保存后无需重启即可刷新
 - **NAIBA LoRA 浏览器封面改为最长边适应不裁切**：网格卡片封面 `object-fit: cover → contain`，与可视化 LoRA 选择器显示行为一致
 - **单个 Civitai 同步也回填全局 sha256 缓存**：与批量同步一致，同步成功后相关统计即时更新
+- **预设分类筛选按节点记忆**：左上角选择的分类记录在节点属性并随工作流保存，下次从同一节点打开预设页自动恢复；分类被删除时回退到「全部预设」
 
 ### 优化改进
 - **保存预设覆盖时展示并保留原封面**：保存对话框名称命中已有预设时直接显示其当前封面并提示「覆盖后将保留原封面」，消除「覆盖必须重设封面」的误解（后端保存本就保留封面文件）

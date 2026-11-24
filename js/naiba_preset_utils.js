@@ -923,7 +923,9 @@ export function createPresetsModal(node, onImport = null) {
     let presetMtimes = {};
     let categoryStore = normalizeCategoryStore(null);
     let cardEls = [];
-    let activeCategory = "all";
+    let activeCategory = hasNode && node.properties?.naiba_preset_category
+        ? node.properties.naiba_preset_category
+        : "all";
     let searchQuery = "";
     let categoryPanelEl = null;
     let coverTargetName = null;
@@ -1087,8 +1089,20 @@ export function createPresetsModal(node, onImport = null) {
         return counts;
     }
 
+    // 分类筛选按节点记忆（node.properties 随工作流序列化），"all" 不落属性
+    function persistCategoryFilter() {
+        if (!hasNode) return;
+        if (activeCategory && activeCategory !== "all") {
+            if (!node.properties) node.properties = {};
+            node.properties.naiba_preset_category = activeCategory;
+        } else if (node.properties) {
+            delete node.properties.naiba_preset_category;
+        }
+    }
+
     function selectCategory(value) {
         activeCategory = value;
+        persistCategoryFilter();
         refreshCategoryButton();
         closeCategoryPanel();
         applyFilters();
@@ -1155,7 +1169,10 @@ export function createPresetsModal(node, onImport = null) {
             }
             try {
                 await mutateCategories({ action: "rename", name: category, new_name: value });
-                if (activeCategory === category) activeCategory = value;
+                if (activeCategory === category) {
+                    activeCategory = value;
+                    persistCategoryFilter();
+                }
                 afterCategoryMutation();
                 showStatus("分类已重命名");
             } catch (e) {
@@ -1186,7 +1203,10 @@ export function createPresetsModal(node, onImport = null) {
         if (!ok) return;
         try {
             await mutateCategories({ action: "delete", name: category });
-            if (activeCategory === category) activeCategory = "all";
+            if (activeCategory === category) {
+                activeCategory = "all";
+                persistCategoryFilter();
+            }
             afterCategoryMutation();
             showStatus("分类已删除");
         } catch (e) {
@@ -1539,17 +1559,22 @@ export function createPresetsModal(node, onImport = null) {
                 return;
             }
             const categoryResult = await catResp.json();
+            let categoriesLoaded = false;
             if (categoryResult.error) {
                 console.warn("[Presets] 加载分类失败:", categoryResult.error);
             } else {
                 categoryStore = normalizeCategoryStore(categoryResult);
+                categoriesLoaded = true;
             }
 
             presetMtimes = list.mtimes || {};
             presetNames = Array.isArray(list.presets) ? list.presets : [];
-            if (activeCategory !== "all" && activeCategory !== UNCATEGORIZED_FILTER
-                && !categoryStore.categories.includes(activeCategory)) {
-                activeCategory = "all";
+            if (activeCategory !== "all" && activeCategory !== UNCATEGORIZED_FILTER) {
+                if (!categoriesLoaded || !categoryStore.categories.includes(activeCategory)) {
+                    // 分类已删除或本次无法校验分类时回到全部；分类可校验为已删除才清理记忆
+                    activeCategory = "all";
+                    if (categoriesLoaded) persistCategoryFilter();
+                }
             }
             refreshCategoryButton();
             renderGrid();
